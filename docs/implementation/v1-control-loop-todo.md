@@ -135,37 +135,37 @@ add_request
 
 ### `src/micro_vllm/core/scheduler_output.py`
 
-- [ ] 定义 frozen `ScheduledRequest`。
-- [ ] 包含 `request_id`。
-- [ ] 包含本轮输入 token IDs 的只读快照。
-- [ ] 包含本轮起始 `num_computed_tokens`。
-- [ ] 包含 `num_scheduled_tokens`。
-- [ ] 包含是否需要采样的显式、可推导信息；避免新增持久化 phase。
-- [ ] 定义 frozen `SchedulerOutput`。
-- [ ] 使用不可变 scheduled request collection。
-- [ ] 以 computed property 提供 `total_num_scheduled_tokens`，不存储重复计数。
-- [ ] 不包含 Request 引用。
-- [ ] 不包含 GPU/CPU tensor。
+- [x] 定义 frozen `ScheduledRequest`。
+- [x] 包含 `request_id`。
+- [x] 包含本轮输入 token IDs 的只读快照。
+- [x] 包含本轮起始 `num_computed_tokens`。
+- [x] 包含 `num_scheduled_tokens`。
+- [x] 包含是否需要采样的显式、可推导信息；避免新增持久化 phase。
+- [x] 定义 frozen `SchedulerOutput`。
+- [x] 使用不可变 scheduled request collection。
+- [x] 以 computed property 提供 `total_num_scheduled_tokens`，不存储重复计数。
+- [x] 不包含 Request 引用。
+- [x] 不包含 GPU/CPU tensor。
 
 ### Executor result contract
 
-- [ ] 在 `src/micro_vllm/executor/interface.py` 定义最小 `ModelRunnerOutput` 或等价结果类型。
-- [ ] sampled token 以 request ID 显式关联。
-- [ ] 允许请求本轮没有 sampled token。
-- [ ] 拒绝未知 request ID、重复 request ID 或每请求多个非预期 token。
+- [x] 在 `src/micro_vllm/executor/interface.py` 定义最小 `ModelRunnerOutput` 或等价结果类型。
+- [x] sampled token 以 request ID 显式关联。
+- [x] 允许请求本轮没有 sampled token。
+- [x] 拒绝未知 request ID、重复 request ID 或每请求多个非预期 token。
 
 ### Executor boundary
 
-- [ ] 定义 Engine 所需的最小 Executor protocol。
-- [ ] protocol 只包含当前实际使用的 `execute(plan)`。
-- [ ] 暂不加入显存探测、KV 初始化和 shutdown 等未使用方法。
+- [x] 定义 Engine 所需的最小 Executor protocol。
+- [x] protocol 只包含当前实际使用的 `execute(plan)`。
+- [x] 暂不加入显存探测、KV 初始化和 shutdown 等未使用方法。
 
 ### 测试
 
-- [ ] ScheduledRequest 和 SchedulerOutput 不可修改。
-- [ ] 修改原始 token list 不影响计划快照。
-- [ ] total token 数计算正确。
-- [ ] 非法 token 数、重复 request ID 和不一致总数被拒绝。
+- [x] ScheduledRequest 和 SchedulerOutput 不可修改。
+- [x] 修改原始 token list 不影响计划快照。
+- [x] total token 数计算正确。
+- [x] 非法 token 数、重复 request ID 和不一致总数被拒绝。
 
 ## 8. Phase 4：统一 Scheduler
 
