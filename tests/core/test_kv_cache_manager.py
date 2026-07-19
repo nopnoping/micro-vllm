@@ -398,7 +398,7 @@ def test_num_blocks_to_allocate_only_counts_blocks_missing_from_table(
 ) -> None:
     manager = make_manager()
     manager.register_request("request-1")
-    manager._block_tables["request-1"].append(0)
+    manager._block_tables["request-1"].extend((0,))
 
     assert (
         manager.get_num_blocks_to_allocate(
@@ -413,7 +413,7 @@ def test_num_blocks_to_allocate_only_counts_blocks_missing_from_table(
 def test_num_blocks_to_allocate_is_a_read_only_calculation() -> None:
     manager = make_manager()
     manager.register_request("request-1")
-    manager._block_tables["request-1"].append(0)
+    manager._block_tables["request-1"].extend((0,))
     table_before = manager.get_block_table("request-1")
     num_free_blocks_before = manager._block_pool.num_free_blocks
 
@@ -607,9 +607,11 @@ def test_free_request_releases_one_reference_from_shared_block() -> None:
     manager.register_request("request-2")
     shared_block_ids = manager._block_pool.allocate(1)
     assert shared_block_ids == (0,)
-    manager._block_pool.retain(0)
-    manager._block_tables["request-1"].append(0)
-    manager._block_tables["request-2"].append(0)
+    block_hash = b"a" * 32
+    manager._block_pool.cache_block(0, block_hash)
+    assert manager._block_pool.acquire_cached_block(block_hash) is not None
+    manager._block_tables["request-1"].extend((0,))
+    manager._block_tables["request-2"].extend((0,))
 
     manager.free_request("request-1")
 

@@ -94,15 +94,6 @@ class BlockPool:
         block.ref_count += 1
         return block
 
-    def evict_cached_block(self, block_hash: BlockHash) -> KVCacheBlock | None:
-        """Remove one hash mapping without changing request references."""
-
-        block = self._cached_blocks.pop(block_hash, None)
-        if block is None:
-            return None
-        block.block_hash = None
-        return block
-
     def allocate(
         self,
         count: int,
@@ -134,11 +125,6 @@ class BlockPool:
 
         return tuple(new_block_ids)
 
-    def retain(self, block_id: int) -> None:
-        """Add one reference to an allocated physical block."""
-
-        self._blocks[block_id].ref_count += 1
-
     def release(self, block_id: int) -> None:
         """Release one reference and recycle the block when it reaches zero."""
 
@@ -156,34 +142,16 @@ class BlockTable:
     neither validates IDs against a BlockPool nor changes block refcounts.
     """
 
-    __slots__ = ("_block_size", "_physical_block_ids")
+    __slots__ = ("_physical_block_ids",)
 
-    def __init__(self, block_size: int) -> None:
-        self._block_size = block_size
+    def __init__(self) -> None:
         self._physical_block_ids: list[int | None] = []
-
-    @property
-    def block_size(self) -> int:
-        """Number of token slots represented by each logical block."""
-
-        return self._block_size
 
     @property
     def num_logical_blocks(self) -> int:
         """Number of logical block entries currently in the table."""
 
         return len(self._physical_block_ids)
-
-    @property
-    def capacity_tokens(self) -> int:
-        """Number of token positions covered by the current mappings."""
-
-        return self.num_logical_blocks * self._block_size
-
-    def append(self, physical_block_id: int | None) -> None:
-        """Append one physical mapping at the next logical block index."""
-
-        self._physical_block_ids.append(physical_block_id)
 
     def extend(self, physical_block_ids: Iterable[int | None]) -> None:
         """Atomically append multiple physical mappings in input order."""
@@ -206,37 +174,16 @@ class BlockTable:
         self._physical_block_ids[logical_block_index] = physical_block_id
         return previous_block_id
 
-    def token_slot(self, token_position: int) -> tuple[int, int] | None:
-        """Map a token position to ``(physical_block_id, block_offset)``."""
-
-        if token_position < 0 or token_position >= self.capacity_tokens:
-            return None
-        logical_block_index, block_offset = divmod(
-            token_position, self._block_size
-        )
-        physical_block_id = self._physical_block_ids[logical_block_index]
-        if physical_block_id is None:
-            return None
-        return physical_block_id, block_offset
-
-    def truncate(self, num_tokens: int) -> tuple[int, ...]:
-        """Remove mappings beyond ``num_tokens`` and return mapped block IDs."""
-
-        num_blocks_to_keep = (
-            num_tokens + self._block_size - 1
-        ) // self._block_size
-        removed_mappings = self._physical_block_ids[num_blocks_to_keep:]
-        del self._physical_block_ids[num_blocks_to_keep:]
-        return tuple(
-            physical_block_id
-            for physical_block_id in removed_mappings
-            if physical_block_id is not None
-        )
-
     def clear(self) -> tuple[int, ...]:
         """Remove all mappings and return their non-empty physical block IDs."""
 
-        return self.truncate(0)
+        physical_block_ids = tuple(
+            block_id
+            for block_id in self._physical_block_ids
+            if block_id is not None
+        )
+        self._physical_block_ids.clear()
+        return physical_block_ids
 
     def snapshot(self) -> tuple[int | None, ...]:
         """Return an immutable snapshot of logical-to-physical mappings."""

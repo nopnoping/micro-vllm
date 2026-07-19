@@ -85,7 +85,7 @@ V1 必须回答以下问题：
 ### BlockTable
 
 - [ ] 每个请求维护 logical block 到 physical block 的映射。
-- [ ] 支持追加 block、查询 slot、截断和完整释放。
+- [x] 支持追加、替换、查询 logical block mapping 和完整释放。
 - [ ] 支持用 null/unmapped block 表示 local attention 已经淘汰的逻辑位置。
 - [ ] block table 的逻辑 token 范围与 block size 计算只有一个实现来源。
 

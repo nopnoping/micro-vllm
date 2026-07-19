@@ -43,12 +43,18 @@ class KVCacheManager:
     def register_request(self, request_id: str) -> None:
         """Create an empty BlockTable owned by ``request_id``."""
 
-        self._block_tables[request_id] = BlockTable(self._block_size)
+        self._block_tables[request_id] = BlockTable()
 
     def get_block_table(self, request_id: str) -> tuple[int | None, ...]:
         """Return an immutable snapshot for a registered request."""
 
         return self._require_block_table(request_id).snapshot()
+
+    @property
+    def num_free_blocks(self) -> int:
+        """Number of physical blocks currently available for allocation."""
+
+        return self._block_pool.num_free_blocks
 
     def find_prefix_hit(
         self,
@@ -189,6 +195,13 @@ class KVCacheManager:
             new_block_ids=new_block_ids,
         )
 
+    def free_request_blocks(self, request_id: str) -> None:
+        """Release all block references while keeping an empty request table."""
+
+        block_table = self._require_block_table(request_id)
+        for block_id in block_table.clear():
+            self._block_pool.release(block_id)
+
     def free_request(self, request_id: str) -> None:
         """Release all request block references and remove its owned table.
 
@@ -196,9 +209,7 @@ class KVCacheManager:
         it has already been freed.
         """
 
-        block_table = self._require_block_table(request_id)
-        for block_id in block_table.clear():
-            self._block_pool.release(block_id)
+        self.free_request_blocks(request_id)
         del self._block_tables[request_id]
 
     def _require_block_table(self, request_id: str) -> BlockTable:

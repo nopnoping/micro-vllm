@@ -109,6 +109,10 @@ class Scheduler:
                     num_scheduled_tokens,
                 )
             if scheduled_request is None:
+                if not scheduled_requests:
+                    raise RuntimeError(
+                        f"request {request.request_id} cannot fit in KV cache"
+                    )
                 cache_capacity_exhausted = True
                 break
             scheduled_requests.append(scheduled_request)
@@ -137,6 +141,10 @@ class Scheduler:
                 cached_block_ids=hit_block_ids,
             )
             if scheduled_request is None:
+                if not scheduled_requests:
+                    raise RuntimeError(
+                        f"request {request.request_id} cannot fit in KV cache"
+                    )
                 break
             scheduled_requests.append(scheduled_request)
             remaining_token_budget -= scheduled_request.num_scheduled_tokens

@@ -2,8 +2,6 @@
 
 import random
 
-import pytest
-
 from micro_vllm.core.block import BlockPool, BlockTable, KVCacheBlock
 
 
@@ -95,37 +93,6 @@ def test_allocate_allows_zero_new_blocks() -> None:
     assert BlockPool(2).allocate(0) == ()
 
 
-def test_retain_and_release_shared_block() -> None:
-    pool = BlockPool(2)
-    assert pool.allocate(1) == (0,)
-
-    pool.retain(0)
-    assert pool.ref_count(0) == 2
-    assert pool.free_block_ids == (1,)
-
-    pool.release(0)
-    assert pool.ref_count(0) == 1
-    assert pool.free_block_ids == (1,)
-
-    pool.release(0)
-    assert pool.ref_count(0) == 0
-    assert pool.free_block_ids == (1, 0)
-    assert pool.allocate(2) == (1, 0)
-
-
-def test_release_only_recycles_block_whose_refcount_reaches_zero() -> None:
-    pool = BlockPool(3)
-    assert pool.allocate(2) == (0, 1)
-    pool.retain(0)
-
-    pool.release(0)
-    pool.release(1)
-
-    assert pool.ref_count(0) == 1
-    assert pool.ref_count(1) == 0
-    assert pool.free_block_ids == (2, 1)
-
-
 def test_cached_block_remains_indexed_until_free_block_is_reused() -> None:
     pool = BlockPool(1)
     block_hash = b"a" * 32
@@ -181,19 +148,6 @@ def test_acquire_cached_active_block_adds_request_reference() -> None:
     assert pool.num_free_blocks == 0
 
 
-def test_evict_cached_block_only_removes_hash_mapping() -> None:
-    pool = BlockPool(1)
-    block_hash = b"a" * 32
-    assert pool.allocate(1) == (0,)
-    block = pool.cache_block(0, block_hash)
-
-    assert pool.evict_cached_block(block_hash) is block
-    assert pool.evict_cached_block(block_hash) is None
-    assert pool.num_cached_blocks == 0
-    assert pool.block_hash(0) is None
-    assert pool.ref_count(0) == 1
-
-
 def test_free_block_snapshot_is_immutable_and_stable() -> None:
     pool = BlockPool(3)
     snapshot = pool.free_block_ids
@@ -212,7 +166,7 @@ def test_deterministic_randomized_operations_preserve_pool_invariants() -> None:
     expected_refcounts = [0] * num_blocks
 
     for _ in range(500):
-        operation = rng.choice(("allocate", "retain", "release"))
+        operation = rng.choice(("allocate", "release"))
         allocated_ids = [
             block_id
             for block_id, refcount in enumerate(expected_refcounts)
@@ -230,11 +184,7 @@ def test_deterministic_randomized_operations_preserve_pool_invariants() -> None:
                 assert allocated == expected
                 for block_id in expected:
                     expected_refcounts[block_id] = 1
-        elif operation == "retain" and allocated_ids:
-            block_id = rng.choice(allocated_ids)
-            pool.retain(block_id)
-            expected_refcounts[block_id] += 1
-        elif operation == "release" and allocated_ids:
+        elif allocated_ids:
             block_id = rng.choice(allocated_ids)
             pool.release(block_id)
             expected_refcounts[block_id] -= 1
@@ -252,20 +202,16 @@ def test_deterministic_randomized_operations_preserve_pool_invariants() -> None:
 
 
 def test_block_table_initializes_empty_zero_based_mapping() -> None:
-    table = BlockTable(block_size=4)
+    table = BlockTable()
 
-    assert table.block_size == 4
     assert table.num_logical_blocks == 0
-    assert table.capacity_tokens == 0
     assert table.snapshot() == ()
 
 
-def test_block_table_appends_single_and_multiple_mappings_in_order() -> None:
-    table = BlockTable(block_size=4)
+def test_block_table_extends_mappings_in_order() -> None:
+    table = BlockTable()
 
-    table.append(7)
-    table.append(None)
-    table.extend([11, 13])
+    table.extend([7, None, 11, 13])
 
     assert tuple(table.physical_block(index) for index in range(4)) == (
         7,
@@ -276,124 +222,50 @@ def test_block_table_appends_single_and_multiple_mappings_in_order() -> None:
 
 
 def test_replace_updates_one_mapping_and_returns_previous_block() -> None:
-    table = BlockTable(block_size=4)
+    table = BlockTable()
     table.extend([7, 11])
 
     assert table.replace(1, 13) == 11
     assert table.snapshot() == (7, 13)
 
 
-@pytest.mark.parametrize(
-    ("block_size", "token_position", "expected_slot"),
-    [
-        (1, 0, (7, 0)),
-        (1, 1, (11, 0)),
-        (4, 0, (7, 0)),
-        (4, 3, (7, 3)),
-        (4, 4, (11, 0)),
-        (4, 7, (11, 3)),
-        (8, 7, (7, 7)),
-        (8, 8, (11, 0)),
-    ],
-)
-def test_token_slot_uses_divmod_mapping(
-    block_size: int,
-    token_position: int,
-    expected_slot: tuple[int, int],
-) -> None:
-    table = BlockTable(block_size)
-    table.extend([7, 11])
-
-    assert table.token_slot(token_position) == expected_slot
-
-
-@pytest.mark.parametrize("token_position", [-1, 8])
-def test_token_slot_returns_none_outside_table_capacity(
-    token_position: int,
-) -> None:
-    table = BlockTable(block_size=4)
-    table.extend([7, 11])
-
-    assert table.token_slot(token_position) is None
-
-
-def test_unmapped_queries_consistently_return_none() -> None:
-    table = BlockTable(block_size=4)
+def test_unmapped_physical_block_is_none() -> None:
+    table = BlockTable()
     table.extend([7, None])
 
     assert table.physical_block(1) is None
-    assert table.token_slot(4) is None
-    assert table.token_slot(7) is None
 
 
 def test_block_table_snapshot_is_immutable_and_stable() -> None:
     mappings = [7, None]
-    table = BlockTable(block_size=4)
+    table = BlockTable()
     table.extend(mappings)
     snapshot = table.snapshot()
 
     mappings[0] = 99
     mappings.append(11)
-    table.append(13)
+    table.extend((13,))
 
     assert isinstance(snapshot, tuple)
     assert snapshot == (7, None)
     assert table.snapshot() == (7, None, 13)
 
 
-def test_truncate_at_block_boundary_removes_tail_mappings() -> None:
-    table = BlockTable(block_size=4)
-    table.extend([7, 11, 13])
-
-    removed_block_ids = table.truncate(8)
-
-    assert removed_block_ids == (13,)
-    assert table.snapshot() == (7, 11)
-    assert table.num_logical_blocks == 2
-    assert table.capacity_tokens == 8
-
-
-def test_truncate_to_partial_block_keeps_covering_mapping() -> None:
-    table = BlockTable(block_size=4)
-    table.extend([7, 11, 13])
-
-    removed_block_ids = table.truncate(5)
-
-    assert removed_block_ids == (13,)
-    assert table.snapshot() == (7, 11)
-    assert table.capacity_tokens == 8
-
-
-def test_truncate_to_zero_is_equivalent_to_clear() -> None:
-    truncated = BlockTable(block_size=4)
-    truncated.extend([7, None, 13])
-    cleared = BlockTable(block_size=4)
-    cleared.extend([7, None, 13])
-
-    assert truncated.truncate(0) == (7, 13)
-    assert cleared.clear() == (7, 13)
-    assert truncated.snapshot() == cleared.snapshot() == ()
-    assert truncated.capacity_tokens == cleared.capacity_tokens == 0
-
-
 def test_clear_returns_non_empty_mappings_in_logical_order() -> None:
-    table = BlockTable(block_size=4)
+    table = BlockTable()
     table.extend([7, None, 13, 17])
 
     assert table.clear() == (7, 13, 17)
     assert table.num_logical_blocks == 0
-    assert table.capacity_tokens == 0
 
 
 def test_block_table_operations_do_not_change_block_pool_refcounts() -> None:
     pool = BlockPool(3)
     assert pool.allocate(3) == (0, 1, 2)
-    table = BlockTable(block_size=4)
+    table = BlockTable()
 
     table.extend([0, None, 1, 2])
-    assert table.token_slot(0) == (0, 0)
-    assert table.truncate(8) == (1, 2)
-    assert table.clear() == (0,)
+    assert table.clear() == (0, 1, 2)
 
     assert tuple(pool.ref_count(block_id) for block_id in range(3)) == (1, 1, 1)
     assert pool.num_free_blocks == 0

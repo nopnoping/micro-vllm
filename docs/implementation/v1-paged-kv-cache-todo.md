@@ -91,9 +91,7 @@ BlockPool + BlockTable
 
 #### 引用计数
 
-- [x] 提供 `retain(block_id)`。
-- [x] 只能 retain 当前已分配的 block。
-- [x] retain 后 refcount 加一。
+- [x] `allocate(..., cached_block_ids)` 和 `acquire_cached_block()` 增加共享引用。
 - [x] 提供 `release(block_id)`。
 - [x] release 后 refcount 减一。
 - [x] refcount 降为零时 block 重新进入 free queue。
@@ -114,21 +112,21 @@ BlockPool + BlockTable
 - [x] 初始状态正确。
 - [x] 单个和批量分配顺序正确。
 - [x] 分配后 refcount 为 1。
-- [x] retain/release 状态正确。
+- [x] cached acquire/release 状态正确。
 - [x] release 到零后 block 可再次分配。
 - [x] 部分 release 不释放仍被引用的 block。
 - [x] 容量不足的批量分配是原子的。
 - [x] count=0/负数被拒绝。
 - [x] invalid block ID 被拒绝。
 - [x] double free 被拒绝。
-- [x] 固定随机种子的 allocate/retain/release 序列始终满足不变量。
+- [x] 固定随机种子的 allocate/release 序列始终满足不变量。
 - [x] 任意时刻 `allocated + free == num_blocks`，共享引用不重复计算 block 数。
 
 ## 5. Phase A：BlockTable
 
 ### 数据模型
 
-- [x] `BlockTable` 构造时接收 `block_size`。
+- [x] `BlockTable` 构造时创建空 mapping。
 - [x] logical block index 从零开始。
 - [x] mapping 元素为 `int | None`。
 - [x] `None` 表示该 logical block 当前没有 physical mapping。
@@ -137,31 +135,19 @@ BlockPool + BlockTable
 
 ### 操作
 
-- [x] 提供 append 单个或多个 mapping。
+- [x] 提供 `extend()` 追加一个或多个 mapping。
 - [x] 提供 `physical_block(logical_block_index)`。
-- [x] 提供 token position 到 `(physical_block_id, offset)` 的 slot 查询。
-- [x] token slot 使用 `divmod(token_position, block_size)` 作为唯一映射规则。
 - [x] 查询 unmapped logical block 时给出明确错误或 `None` 结果，语义统一。
-- [x] 提供按有效 token 长度 `truncate(num_tokens)`。
-- [x] truncate 只移除不再覆盖任何保留 token 的尾部 logical blocks。
-- [x] truncate 返回被移除的非空 physical block IDs，由 KVCacheManager release。
-- [x] partial last block 保持映射，不因 token 数未对齐而释放。
 - [x] 提供 `clear()` 并返回所有非空 physical block IDs。
 - [x] 提供不可变 `snapshot()`。
-- [x] 提供 `num_logical_blocks` 和 `capacity_tokens` 等只读属性。
+- [x] 提供 `num_logical_blocks` 只读属性。
 
 ### `tests/core/test_block.py`：BlockTable
 
 - [x] 空表状态正确。
-- [x] append 后 mapping 顺序正确。
+- [x] extend 后 mapping 顺序正确。
 - [x] snapshot 不随外部输入或后续修改而变化。
-- [x] 多个 block size 下 token slot 映射正确。
-- [x] block 边界前后 position 映射正确。
-- [x] negative/out-of-range position 被拒绝。
 - [x] `None` mapping 行为正确。
-- [x] truncate 到 block 边界正确释放尾部 block。
-- [x] truncate 到 partial block 保留最后一个 block。
-- [x] truncate 到零等价于清空。
 - [x] clear 返回所有非空 block ID，且 table 为空。
 - [x] BlockTable 操作不会直接改变 BlockPool refcount。
 
@@ -425,7 +411,7 @@ BlockPool + BlockTable
 
 - [ ] BlockPool 提供 free/allocated/refcount 只读 snapshot。
 - [ ] KVCacheManager 可以报告 per-request block table。
-- [ ] 记录或可测试获取 allocate/free/retain/release 事件。
+- [ ] 记录或可测试获取 allocate/acquire/release 事件。
 - [ ] 记录 prefix hit block/token 数。
 - [ ] 记录 prefix insert/evict。
 - [ ] 记录 preempt/resume 和 recompute token 数。
