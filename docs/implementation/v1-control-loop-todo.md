@@ -240,48 +240,48 @@ add_request
 
 ### `src/micro_vllm/engine/output.py`
 
-- [ ] 定义最小 `RequestOutput`。
-- [ ] 包含 request ID。
-- [ ] 包含新增或累计 output token IDs，首版选择一种并文档化。
-- [ ] 包含 finished 状态和可选 finish reason。
-- [ ] 不包含 tokenizer 文本。
+- [x] 定义最小 `RequestOutput`。
+- [x] 包含 request ID。
+- [x] 包含新增或累计 output token IDs，首版选择一种并文档化（累计）。
+- [x] 包含 finished 状态和可选 finish reason。
+- [x] 不包含 tokenizer 文本。
 
 ### `src/micro_vllm/engine/engine.py`
 
-- [ ] Engine 构造函数显式接收 Scheduler 和 Executor。
-- [ ] 提供 tokenized `add_request()`。
-- [ ] Engine 或独立 ID generator 生成稳定 request ID；首版优先允许调用方传入 ID。
-- [ ] 提供 `step()`。
-- [ ] `step()` 严格执行 `schedule -> execute -> update`。
-- [ ] 空 schedule 不调用 Executor。
-- [ ] 提供 `has_unfinished_requests()`。
-- [ ] 提供 `abort_request(request_id)`。
-- [ ] abort waiting request。
-- [ ] abort running request。
-- [ ] abort 不存在或已完成 request 时行为明确。
-- [ ] Engine 不直接修改 Scheduler 内部 collection。
+- [x] Engine 构造函数显式接收 Scheduler 和 Executor。
+- [x] 提供 tokenized `add_request()`。
+- [x] Engine 或独立 ID generator 生成稳定 request ID；首版优先允许调用方传入 ID。
+- [x] 提供 `step()`。
+- [x] `step()` 严格执行 `schedule -> execute -> update`。
+- [x] 空 schedule 不调用 Executor。
+- [x] 提供 `has_unfinished_requests()`。
+- [x] 提供 `abort_request(request_id)`。
+- [x] abort waiting request。
+- [x] abort running request。
+- [x] abort 不存在或已完成 request 时行为明确（返回 `False`）。
+- [x] Engine 不直接修改 Scheduler 内部 collection。
 
 ### FakeExecutor
 
-- [ ] 仅在 `tests/` 内实现。
-- [ ] 只读取 SchedulerOutput。
-- [ ] 不持有或修改 Request 引用。
-- [ ] 对需要采样的 request 返回确定性 token。
-- [ ] 支持按 step/request 配置返回 EOS。
-- [ ] 记录接收的 plans，便于测试执行顺序。
+- [x] 仅在 `tests/` 内实现。
+- [x] 只读取 SchedulerOutput。
+- [x] 不持有或修改 Request 引用。
+- [x] 对需要采样的 request 返回确定性 token。
+- [x] 支持按 step/request 配置返回 EOS。
+- [x] 记录接收的 plans，便于测试执行顺序。
 
 ### `tests/integration/test_engine_loop.py`
 
-- [ ] 单请求从 WAITING 到 FINISHED。
-- [ ] prompt length=10、budget=4 时调度为 4/4/2，再产生首 token。
-- [ ] running decode=1、waiting prompt=10、budget=4 时计划为 1/3。
-- [ ] 达到 max tokens 后停止调用 Executor。
-- [ ] EOS 正确结束请求。
-- [ ] ignore EOS 时继续生成。
-- [ ] Engine 运行中可动态添加请求。
-- [ ] waiting 和 running request 均可 abort。
-- [ ] 空 schedule 不执行 FakeExecutor。
-- [ ] Executor 返回非法结果时不静默污染状态。
+- [x] 单请求从 WAITING 到 FINISHED。
+- [x] prompt length=10、budget=4 时调度为 4/4/2，再产生首 token。
+- [x] running decode=1、waiting prompt=10、budget=4 时计划为 1/3。
+- [x] 达到 max tokens 后停止调用 Executor。
+- [x] EOS 正确结束请求。
+- [x] ignore EOS 时继续生成。
+- [x] Engine 运行中可动态添加请求。
+- [x] waiting 和 running request 均可 abort。
+- [x] 空 schedule 不执行 FakeExecutor。
+- [x] Executor 返回非法结果时不静默污染状态。
 
 ## 10. Phase 6：公开导出与文档同步
 
