@@ -56,6 +56,7 @@ Enforce these boundaries:
 
 ## Correctness and Testing
 
+- Run the test suite from the repository root with `python -m pytest`.
 - Performance-sensitive algorithms should have a deterministic, readable
   reference implementation or trusted baseline for parity testing.
 - Optimized paths need parity tests with documented numerical tolerances and

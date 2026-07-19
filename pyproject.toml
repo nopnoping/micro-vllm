@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "micro-vllm"
+version = "0.1.0"
+description = "A small, educational vLLM implementation."
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["micro_vllm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
