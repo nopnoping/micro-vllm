@@ -4,7 +4,15 @@ import random
 
 import pytest
 
-from micro_vllm.core.block import BlockPool, BlockTable
+from micro_vllm.core.block import BlockPool, BlockTable, KVCacheBlock
+
+
+def test_kv_cache_block_bundles_physical_lifecycle_state() -> None:
+    block = KVCacheBlock(block_id=7)
+
+    assert block.block_id == 7
+    assert block.ref_count == 0
+    assert block.block_hash is None
 
 
 def test_block_pool_initial_state() -> None:
@@ -14,6 +22,12 @@ def test_block_pool_initial_state() -> None:
     assert pool.num_free_blocks == 4
     assert pool.free_block_ids == (0, 1, 2, 3)
     assert tuple(pool.ref_count(block_id) for block_id in range(4)) == (0, 0, 0, 0)
+    assert tuple(pool.block_hash(block_id) for block_id in range(4)) == (
+        None,
+        None,
+        None,
+        None,
+    )
 
 
 @pytest.mark.parametrize("num_blocks", [0, -1])
@@ -87,6 +101,47 @@ def test_release_only_recycles_block_whose_refcount_reaches_zero() -> None:
     assert pool.ref_count(0) == 1
     assert pool.ref_count(1) == 0
     assert pool.free_block_ids == (2, 1)
+
+
+def test_block_hash_survives_shared_release_and_clears_on_recycle() -> None:
+    pool = BlockPool(2)
+    block_hash = b"a" * 32
+    assert pool.allocate(1) == (0,)
+    pool.retain(0)
+
+    pool.set_block_hash(0, block_hash)
+    pool.release(0)
+
+    assert pool.ref_count(0) == 1
+    assert pool.block_hash(0) == block_hash
+
+    pool.release(0)
+
+    assert pool.ref_count(0) == 0
+    assert pool.block_hash(0) is None
+
+
+def test_block_hash_cannot_change_while_block_is_allocated() -> None:
+    pool = BlockPool(1)
+    first_hash = b"a" * 32
+    assert pool.allocate(1) == (0,)
+
+    pool.set_block_hash(0, first_hash)
+    pool.set_block_hash(0, first_hash)
+
+    with pytest.raises(RuntimeError, match="cannot replace hash"):
+        pool.set_block_hash(0, b"b" * 32)
+
+
+def test_block_hash_rejects_free_block_and_invalid_digest() -> None:
+    pool = BlockPool(1)
+
+    with pytest.raises(RuntimeError, match="cannot set hash.*block is free"):
+        pool.set_block_hash(0, b"a" * 32)
+
+    assert pool.allocate(1) == (0,)
+    with pytest.raises(ValueError, match="block_hash must contain 32 bytes"):
+        pool.set_block_hash(0, b"short")
 
 
 @pytest.mark.parametrize("block_id", [-1, 3])

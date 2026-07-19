@@ -2,31 +2,44 @@
 
 from collections import deque
 from collections.abc import Iterable
+from dataclasses import dataclass
 from itertools import islice
+
+BlockHash = bytes
+BLOCK_HASH_BYTES = 32
+
+
+@dataclass(slots=True)
+class KVCacheBlock:
+    """Mutable lifecycle metadata for one physical KV-cache block."""
+
+    block_id: int
+    ref_count: int = 0
+    block_hash: BlockHash | None = None
 
 
 class BlockPool:
-    """Own physical block refcounts and deterministic free-block ordering.
+    """Own physical block state and deterministic free-block ordering.
 
-    Physical blocks are represented only by integer IDs in ``[0, num_blocks)``.
-    The pool does not know about requests, tokens, or device tensors.
+    External mappings use integer IDs in ``[0, num_blocks)``. The pool keeps
+    each block's mutable refcount and content hash together, but does not know
+    about requests, tokens, cache membership, or device tensors.
     """
 
-    __slots__ = ("_free_block_ids", "_num_blocks", "_ref_counts")
+    __slots__ = ("_blocks", "_free_block_ids")
 
     def __init__(self, num_blocks: int) -> None:
         if num_blocks <= 0:
             raise ValueError("num_blocks must be greater than zero")
 
-        self._num_blocks = num_blocks
+        self._blocks = [KVCacheBlock(block_id) for block_id in range(num_blocks)]
         self._free_block_ids = deque(range(num_blocks))
-        self._ref_counts = [0] * num_blocks
 
     @property
     def num_blocks(self) -> int:
         """Total number of physical blocks owned by the pool."""
 
-        return self._num_blocks
+        return len(self._blocks)
 
     @property
     def num_free_blocks(self) -> int:
@@ -43,14 +56,37 @@ class BlockPool:
     def ref_count(self, block_id: int) -> int:
         """Return the current reference count for a physical block."""
 
-        self._validate_block_id(block_id)
-        ref_count = self._ref_counts[block_id]
+        ref_count = self._require_block(block_id).ref_count
         if ref_count < 0:
             raise RuntimeError(
                 f"block pool invariant violated for block_id {block_id}: "
                 f"negative refcount {ref_count}"
             )
         return ref_count
+
+    def block_hash(self, block_id: int) -> BlockHash | None:
+        """Return the content hash currently associated with a physical block."""
+
+        return self._require_block(block_id).block_hash
+
+    def set_block_hash(self, block_id: int, block_hash: BlockHash) -> None:
+        """Associate a deterministic content hash with an allocated block."""
+
+        block = self._require_block(block_id)
+        if len(block_hash) != BLOCK_HASH_BYTES:
+            raise ValueError(
+                f"block_hash must contain {BLOCK_HASH_BYTES} bytes"
+            )
+
+        if block.ref_count == 0:
+            raise RuntimeError(
+                f"cannot set hash for block_id {block_id}: block is free"
+            )
+        if block.block_hash is not None and block.block_hash != block_hash:
+            raise RuntimeError(
+                f"cannot replace hash for allocated block_id {block_id}"
+            )
+        block.block_hash = block_hash
 
     def allocate(self, count: int) -> tuple[int, ...] | None:
         """Atomically allocate ``count`` blocks, or return ``None`` if full."""
@@ -65,7 +101,7 @@ class BlockPool:
 
         for block_id in block_ids:
             self._free_block_ids.popleft()
-            self._ref_counts[block_id] = 1
+            self._blocks[block_id].ref_count = 1
 
         return block_ids
 
@@ -76,7 +112,7 @@ class BlockPool:
         if ref_count == 0:
             raise RuntimeError(f"cannot retain block_id {block_id}: block is free")
 
-        self._ref_counts[block_id] = ref_count + 1
+        self._blocks[block_id].ref_count = ref_count + 1
 
     def release(self, block_id: int) -> None:
         """Release one reference and recycle the block when it reaches zero."""
@@ -85,16 +121,19 @@ class BlockPool:
         if ref_count == 0:
             raise RuntimeError(f"cannot release block_id {block_id}: block is free")
 
-        self._ref_counts[block_id] = ref_count - 1
-        if self._ref_counts[block_id] == 0:
+        block = self._blocks[block_id]
+        block.ref_count = ref_count - 1
+        if block.ref_count == 0:
+            block.block_hash = None
             self._free_block_ids.append(block_id)
 
-    def _validate_block_id(self, block_id: int) -> None:
-        if block_id < 0 or block_id >= self._num_blocks:
+    def _require_block(self, block_id: int) -> KVCacheBlock:
+        if block_id < 0 or block_id >= self.num_blocks:
             raise ValueError(
                 f"invalid block_id {block_id}: "
-                f"expected 0 <= block_id < {self._num_blocks}"
+                f"expected 0 <= block_id < {self.num_blocks}"
             )
+        return self._blocks[block_id]
 
     def _validate_free_candidates(self, block_ids: tuple[int, ...]) -> None:
         if len(set(block_ids)) != len(block_ids):
@@ -103,15 +142,21 @@ class BlockPool:
             )
 
         for block_id in block_ids:
-            if block_id < 0 or block_id >= self._num_blocks:
+            if block_id < 0 or block_id >= self.num_blocks:
                 raise RuntimeError(
                     f"free queue contains invalid block_id {block_id}: "
-                    f"expected 0 <= block_id < {self._num_blocks}"
+                    f"expected 0 <= block_id < {self.num_blocks}"
                 )
-            if self._ref_counts[block_id] != 0:
+            block = self._blocks[block_id]
+            if block.ref_count != 0:
                 raise RuntimeError(
                     f"block pool invariant violated for block_id {block_id}: "
-                    f"free block has refcount {self._ref_counts[block_id]}"
+                    f"free block has refcount {block.ref_count}"
+                )
+            if block.block_hash is not None:
+                raise RuntimeError(
+                    f"block pool invariant violated for block_id {block_id}: "
+                    "free block has a content hash"
                 )
 
 

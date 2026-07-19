@@ -302,14 +302,14 @@ BlockPool + BlockTable
 
 ### Cache key 与 hash
 
-- [ ] 使用确定性 cryptographic hash，例如 `hashlib.blake2b`。
-- [ ] 不使用进程随机化的 Python `hash()` 作为持久 cache identity。
-- [ ] block hash 包含 parent block hash。
-- [ ] block hash 包含当前完整 token block。
-- [ ] block hash 包含 cache namespace/model identity。
-- [ ] 为未来 cache group ID 留出明确字段，但首版固定单 group。
-- [ ] 相同 token block 但不同 parent prefix 不得误共享。
-- [ ] 相同 prefix 和 namespace 生成稳定相同 hash。
+- [x] 使用确定性 cryptographic hash，例如 `hashlib.blake2b`。
+- [x] 不使用进程随机化的 Python `hash()` 作为持久 cache identity。
+- [x] block hash 包含 parent block hash。
+- [x] block hash 包含当前完整 token block。
+- [x] block hash 包含 cache namespace/model identity。
+- [x] 为未来 cache group ID 留出明确字段，但首版固定单 group。
+- [x] 相同 token block 但不同 parent prefix 不得误共享。
+- [x] 相同 prefix 和 namespace 生成稳定相同 hash。
 
 ### Prefix cache entry
 
