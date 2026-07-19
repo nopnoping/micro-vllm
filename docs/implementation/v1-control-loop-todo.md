@@ -171,70 +171,70 @@ add_request
 
 ### `src/micro_vllm/core/scheduler.py`
 
-- [ ] Scheduler 接受 SchedulerConfig。
-- [ ] waiting queue 使用确定性 FIFO 数据结构。
-- [ ] running collection 保持稳定顺序。
-- [ ] 提供 `add_request(request)`。
-- [ ] 拒绝重复 request ID。
-- [ ] 提供 `abort_request(request_id)`，集中处理 waiting/running 状态迁移。
-- [ ] 提供 `get_request(request_id)` 或最小只读查询接口。
-- [ ] 提供 `has_unfinished_requests()`。
+- [x] Scheduler 接受 SchedulerConfig。
+- [x] waiting queue 使用确定性 FIFO 数据结构。
+- [x] running collection 保持稳定顺序。
+- [x] 提供 `add_request(request)`。
+- [x] 拒绝重复 request ID。
+- [x] 提供 `abort_request(request_id)`，集中处理 waiting/running 状态迁移。
+- [x] 提供 `get_request(request_id)` 或最小只读查询接口。
+- [x] 提供 `has_unfinished_requests()`。
 
 ### `schedule()`
 
-- [ ] 每个 step 从完整 token budget 开始。
-- [ ] 优先遍历 running requests。
-- [ ] running request 最多调度其 pending token 数。
-- [ ] running request 调度受剩余 token budget 限制。
-- [ ] waiting request 按 FIFO admission。
-- [ ] admission 受 `max_num_seqs` 限制。
-- [ ] waiting request 使用剩余 token budget。
-- [ ] prompt 大于剩余 budget 时只调度一个 chunk。
-- [ ] budget 为零时停止继续调度。
-- [ ] 没有 pending token 的非法活跃状态应被检测。
-- [ ] 生成不可变 SchedulerOutput。
-- [ ] `sum(num_scheduled_tokens) <= max_num_batched_tokens`。
-- [ ] `len(scheduled_requests) <= max_num_seqs`。
-- [ ] `schedule()` 不提前修改 `num_computed_tokens`。
+- [x] 每个 step 从完整 token budget 开始。
+- [x] 优先遍历 running requests。
+- [x] running request 最多调度其 pending token 数。
+- [x] running request 调度受剩余 token budget 限制。
+- [x] waiting request 按 FIFO admission。
+- [x] admission 受 `max_num_seqs` 限制。
+- [x] waiting request 使用剩余 token budget。
+- [x] prompt 大于剩余 budget 时只调度一个 chunk。
+- [x] budget 为零时停止继续调度。
+- [x] 没有 pending token 的非法活跃状态应被检测。
+- [x] 生成不可变 SchedulerOutput。
+- [x] `sum(num_scheduled_tokens) <= max_num_batched_tokens`。
+- [x] `len(scheduled_requests) <= max_num_seqs`。
+- [x] `schedule()` 不提前修改 `num_computed_tokens`。
 
 ### 采样边界
 
-- [ ] 当 `start_computed + scheduled == num_known_tokens` 时，本轮请求需要采样。
-- [ ] prompt 中间 chunk 不需要采样。
-- [ ] 已有一个未计算 output token 的 running request 通常调度 1 token后需要采样。
-- [ ] 采样判定由请求进度推导，不读取 `is_prefill`。
+- [x] 当 `start_computed + scheduled == num_known_tokens` 时，本轮请求需要采样。
+- [x] prompt 中间 chunk 不需要采样。
+- [x] 已有一个未计算 output token 的 running request 通常调度 1 token后需要采样。
+- [x] 采样判定由请求进度推导，不读取 `is_prefill`。
 
 ### `update(plan, result)`
 
-- [ ] 只提交 plan 中实际 scheduled 的 token 数。
-- [ ] 验证 result request ID 属于 plan。
-- [ ] 需要采样的 request 必须得到 sampled token。
-- [ ] 不需要采样的 request 不得得到 sampled token。
-- [ ] 更新 `num_computed_tokens`。
-- [ ] 将合法 sampled token 追加到 output token IDs。
-- [ ] sampled token 等于 EOS 且未 ignore EOS 时结束请求。
-- [ ] output token 数达到 max tokens 时以 LENGTH 结束。
-- [ ] 未完成请求保留在 running 中。
-- [ ] 完成请求从 running 中移除。
-- [ ] 同一个 plan 不允许重复提交。
-- [ ] update 校验失败时避免留下部分提交状态。
+- [x] 只提交 plan 中实际 scheduled 的 token 数。
+- [x] 验证 result request ID 属于 plan。
+- [x] 需要采样的 request 必须得到 sampled token。
+- [x] 不需要采样的 request 不得得到 sampled token。
+- [x] 更新 `num_computed_tokens`。
+- [x] 将合法 sampled token 追加到 output token IDs。
+- [x] sampled token 等于 EOS 且未 ignore EOS 时结束请求。
+- [x] output token 数达到 max tokens 时以 LENGTH 结束。
+- [x] 未完成请求保留在 running 中。
+- [x] 完成请求从 running 中移除。
+- [x] 同一个 plan 不允许重复提交。
+- [x] update 校验失败时避免留下部分提交状态。
 
 ### `tests/core/test_scheduler.py`
 
-- [ ] 单请求完整 prompt 在一个 step 内调度。
-- [ ] 长 prompt 被切分为多个 chunk。
-- [ ] 中间 prompt chunk 不要求 sampled token。
-- [ ] running decode 优先于 waiting prefill。
-- [ ] decode 和 prefill 进入同一个 plan。
-- [ ] token budget 永不超限。
-- [ ] sequence budget 永不超限。
-- [ ] waiting queue 保持 FIFO。
-- [ ] running 顺序保持稳定。
-- [ ] duplicate request ID 被拒绝。
-- [ ] 缺失、额外或重复 executor output 被拒绝。
-- [ ] EOS 和 ignore EOS 行为正确。
-- [ ] max tokens 行为正确。
-- [ ] plan 不能重复 update。
+- [x] 单请求完整 prompt 在一个 step 内调度。
+- [x] 长 prompt 被切分为多个 chunk。
+- [x] 中间 prompt chunk 不要求 sampled token。
+- [x] running decode 优先于 waiting prefill。
+- [x] decode 和 prefill 进入同一个 plan。
+- [x] token budget 永不超限。
+- [x] sequence budget 永不超限。
+- [x] waiting queue 保持 FIFO。
+- [x] running 顺序保持稳定。
+- [x] duplicate request ID 被拒绝。
+- [x] 缺失、额外或重复 executor output 被拒绝。
+- [x] EOS 和 ignore EOS 行为正确。
+- [x] max tokens 行为正确。
+- [x] plan 不能重复 update。
 
 ## 9. Phase 5：Engine Control Loop
 
