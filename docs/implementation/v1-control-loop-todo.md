@@ -17,25 +17,25 @@ add_request
 
 ## 2. 完成定义
 
-- [ ] 能动态添加 tokenized request。
-- [ ] Engine 能重复执行 `schedule -> execute -> update`。
-- [ ] 长 prompt 能按照 token budget 跨多个 step 计算。
-- [ ] running decode 和 waiting prefill 能进入同一个 execution plan。
-- [ ] 只有计算到最后一个已知 token 的请求才产生 sampled token。
-- [ ] 请求能因 EOS、max tokens、abort 进入终态。
-- [ ] SchedulerOutput 不包含可变 Request，也不包含设备 tensor。
-- [ ] 全部逻辑通过 CPU-only unit/integration tests。
+- [x] 能动态添加 tokenized request。
+- [x] Engine 能重复执行 `schedule -> execute -> update`。
+- [x] 长 prompt 能按照 token budget 跨多个 step 计算。
+- [x] running decode 和 waiting prefill 能进入同一个 execution plan。
+- [x] 只有计算到最后一个已知 token 的请求才产生 sampled token。
+- [x] 请求能因 EOS、max tokens、abort 进入终态。
+- [x] SchedulerOutput 不包含可变 Request，也不包含设备 tensor。
+- [x] 全部逻辑通过 CPU-only unit/integration tests。
 
 ## 3. 实现约束
 
-- [ ] 不增加 `is_prefill`、`is_decode` 等持久化 phase 字段。
-- [ ] `num_computed_tokens` 是请求计算进度的唯一权威字段。
-- [ ] Scheduler 拥有 Request 状态和状态迁移。
-- [ ] Executor 只消费执行计划并返回结果。
-- [ ] FakeExecutor 只能存在于测试代码中。
-- [ ] 本里程碑不创建或模拟 block ID、block table、slot mapping。
-- [ ] 数据结构优先使用 typed dataclass；执行计划使用 frozen dataclass。
-- [ ] 不为尚未实现的分布式、量化或模型后端增加接口字段。
+- [x] 不增加 `is_prefill`、`is_decode` 等持久化 phase 字段。
+- [x] `num_computed_tokens` 是请求计算进度的唯一权威字段。
+- [x] Scheduler 拥有 Request 状态和状态迁移。
+- [x] Executor 只消费执行计划并返回结果。
+- [x] FakeExecutor 只能存在于测试代码中。
+- [x] 本里程碑不创建或模拟 block ID、block table、slot mapping。
+- [x] 数据结构优先使用 typed dataclass；执行计划使用 frozen dataclass。
+- [x] 不为尚未实现的分布式、量化或模型后端增加接口字段。
 
 ## 4. Phase 0：工程前置
 
@@ -285,44 +285,53 @@ add_request
 
 ## 10. Phase 6：公开导出与文档同步
 
-- [ ] 从适当的 package `__init__.py` 导出稳定公共类型。
-- [ ] 不导出内部 queue、transition helper 等实现细节。
-- [ ] 为 Request、SchedulerOutput、Executor protocol 和 Engine 添加简洁 docstring。
-- [ ] 在 V1 需求清单中只勾选本里程碑实际完成且已验证的条目。
-- [ ] 不将 FakeExecutor 作为 example 或公共 API。
+- [x] 从适当的 package `__init__.py` 导出稳定公共类型。
+- [x] 不导出内部 queue、transition helper 等实现细节。
+- [x] 为 Request、SchedulerOutput、Executor protocol 和 Engine 添加简洁 docstring。
+- [x] 在 V1 需求清单中只勾选本里程碑实际完成且已验证的条目。
+- [x] 不将 FakeExecutor 作为 example 或公共 API。
 
 ## 11. 推荐实现提交顺序
 
-1. [ ] `build: add minimal Python package and pytest configuration`
-2. [ ] `feat: add request and sampling domain models`
-3. [ ] `feat: define scheduler and executor contracts`
-4. [ ] `feat: implement token-budget scheduler`
-5. [ ] `feat: add engine control loop with fake-executor tests`
-6. [ ] `docs: update completed V1 control-loop requirements`
+1. [x] `build: add minimal Python package and pytest configuration`
+2. [x] `feat: add request and sampling domain models`
+3. [x] `feat: define scheduler and executor contracts`
+4. [x] `feat: implement token-budget scheduler`
+5. [x] `feat: add engine control loop with fake-executor tests`
+6. [x] `docs: update completed V1 control-loop requirements`
 
 提交拆分用于控制 review 范围；如果实际实现规模较小，可以合并相邻步骤，但每一步都应保持测试可运行。
 
 ## 12. 本里程碑明确不实现
 
-- [ ] 不实现 BlockPool、BlockTable 和 KVCacheManager。
-- [ ] 不实现 prefix caching、preemption 和 resume。
-- [ ] 不实现 Torch、CUDA 和 physical KV tensor。
-- [ ] 不实现 Worker、ModelRunner 和 SingleProcessExecutor 的真实逻辑。
-- [ ] 不实现 tokenizer 和字符串 prompt。
-- [ ] 不实现 `LLM.generate()`。
-- [ ] 不实现 temperature、top-k、top-p sampling。
-- [ ] 不实现模型注册、权重加载和真实模型。
-- [ ] 不实现 attention backend。
-- [ ] 不实现 trace/metrics 系统，只允许测试检查 execution plan。
-- [ ] 不实现异步 API 和 streaming text。
+- [x] 不实现 BlockPool、BlockTable 和 KVCacheManager。
+- [x] 不实现 prefix caching、preemption 和 resume。
+- [x] 不实现 Torch、CUDA 和 physical KV tensor。
+- [x] 不实现 Worker、ModelRunner 和 SingleProcessExecutor 的真实逻辑。
+- [x] 不实现 tokenizer 和字符串 prompt。
+- [x] 不实现 `LLM.generate()`。
+- [x] 不实现 temperature、top-k、top-p sampling。
+- [x] 不实现模型注册、权重加载和真实模型。
+- [x] 不实现 attention backend。
+- [x] 不实现 trace/metrics 系统，只允许测试检查 execution plan。
+- [x] 不实现异步 API 和 streaming text。
 
 ## 13. 最终验证
 
-- [ ] 运行全部 CPU unit tests。
-- [ ] 运行 control-loop integration tests。
-- [ ] 运行格式化、lint 和 type check；若工具尚未配置，明确记录未运行项。
-- [ ] 运行 `python -m compileall`。
-- [ ] 检查无 Torch/CUDA 等非必要依赖。
-- [ ] 检查生产源码中不存在 FakeExecutor。
-- [ ] 检查 Scheduler 中不存在 prefill/decode 双路径状态机。
-- [ ] 检查工作区只包含当前里程碑相关变更。
+- [x] 运行全部 CPU unit tests。
+- [x] 运行 control-loop integration tests。
+- [x] 运行格式化、lint 和 type check；若工具尚未配置，明确记录未运行项。
+- [x] 运行 `python -m compileall`。
+- [x] 检查无 Torch/CUDA 等非必要依赖。
+- [x] 检查生产源码中不存在 FakeExecutor。
+- [x] 检查 Scheduler 中不存在 prefill/decode 双路径状态机。
+- [x] 检查工作区只包含当前里程碑相关变更。
+
+验证记录（2026-07-19，`aliyun-ecs:/root/micro-vllm`）：
+
+- 全量 CPU 测试：`89 passed`。
+- control-loop integration tests：`10 passed`。
+- `python -m compileall -q src tests`：通过。
+- 项目未配置 formatter、lint 和 type-check 工具；远端环境也未提供
+  Ruff、Black、Pyright 或 mypy，因此这些检查未运行。
+- 依赖、生产源码 FakeExecutor、Scheduler phase 字段和里程碑边界扫描：通过。
