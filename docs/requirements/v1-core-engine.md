@@ -25,12 +25,12 @@ V1 必须回答以下问题：
 ### P0
 
 - [ ] `LLM` 提供离线批量 `generate()` 接口。
-- [ ] Engine 提供逐 step 驱动接口，允许上层实现 streaming。
-- [ ] 支持动态添加请求，而非只能静态处理一次性 batch。
-- [ ] Request 包含稳定 ID、prompt tokens、output tokens、sampling params 和状态。
-- [ ] 请求状态至少包含 `WAITING`、`RUNNING`、`PREEMPTED`、`FINISHED`。
-- [ ] `num_computed_tokens` 是请求计算进度的唯一权威字段。
-- [ ] Engine 负责调用 `schedule -> execute -> update`，三阶段职责清晰。
+- [x] Engine 提供逐 step 驱动接口，允许上层实现 streaming。
+- [x] 支持动态添加请求，而非只能静态处理一次性 batch。
+- [x] Request 包含稳定 ID、prompt tokens、output tokens、sampling params 和状态。
+- [x] 请求状态至少包含 `WAITING`、`RUNNING`、`PREEMPTED`、`FINISHED`。
+- [x] `num_computed_tokens` 是请求计算进度的唯一权威字段。
+- [x] Engine 负责调用 `schedule -> execute -> update`，三阶段职责清晰。
 - [ ] 请求结束时释放全部非共享 KV block。
 - [ ] 支持 abort/cancel 请求并安全释放资源。
 - [ ] 明确处理空 prompt、超长 prompt、达到 max model length 等边界情况。
@@ -44,24 +44,24 @@ V1 必须回答以下问题：
 
 ### P0
 
-- [ ] Scheduler 同时维护 waiting 和 running 请求，但不维护独立 prefill/decode 执行路径。
-- [ ] 每一步以 `max_num_batched_tokens` 作为全局 token budget。
-- [ ] 每一步以 `max_num_seqs` 作为请求数上限。
-- [ ] Scheduler 为每个请求输出 `num_scheduled_tokens`。
-- [ ] running 请求优先于新 waiting 请求，避免 decode 被长 prompt 长时间阻塞。
-- [ ] 在剩余 budget 内调度 waiting 请求并执行 chunked prefill。
-- [ ] 长 prompt 可以跨多个 step 完成，且中间 step 不产生采样 token。
-- [ ] 同一个 batch 可以混合 decode token 和 prefill chunk。
-- [ ] budget 不足时，prefill chunk 必须截断而不是整请求阻塞。
+- [x] Scheduler 同时维护 waiting 和 running 请求，但不维护独立 prefill/decode 执行路径。
+- [x] 每一步以 `max_num_batched_tokens` 作为全局 token budget。
+- [x] 每一步以 `max_num_seqs` 作为请求数上限。
+- [x] Scheduler 为每个请求输出 `num_scheduled_tokens`。
+- [x] running 请求优先于新 waiting 请求，避免 decode 被长 prompt 长时间阻塞。
+- [x] 在剩余 budget 内调度 waiting 请求并执行 chunked prefill。
+- [x] 长 prompt 可以跨多个 step 完成，且中间 step 不产生采样 token。
+- [x] 同一个 batch 可以混合 decode token 和 prefill chunk。
+- [x] budget 不足时，prefill chunk 必须截断而不是整请求阻塞。
 - [ ] 每请求计划 token 数不得超过其 pending token 数和 max model length。
-- [ ] 只有当请求计算追上最后一个已知 token 时才进行采样。
+- [x] 只有当请求计算追上最后一个已知 token 时才进行采样。
 - [ ] SchedulerOutput 不包含 GPU tensor，只包含控制信息和 block ID。
-- [ ] SchedulerOutput 创建后视为不可变，Executor 不得修改 Scheduler 内部状态。
+- [x] SchedulerOutput 创建后视为不可变，Executor 不得修改 Scheduler 内部状态。
 
 ### 调度策略
 
-- [ ] V1 默认采用 FIFO admission。
-- [ ] running 列表保持稳定顺序，保证行为易复现。
+- [x] V1 默认采用 FIFO admission。
+- [x] running 列表保持稳定顺序，保证行为易复现。
 - [ ] 资源不足时优先抢占最近进入或最低优先级的请求。
 - [ ] 抢占策略封装为独立 policy，不能散落在 Scheduler 主循环中。
 - [ ] 调度决策写入 trace，包括未被选择请求的原因。
@@ -109,7 +109,7 @@ V1 必须回答以下问题：
 - [ ] allocation 是原子的：失败时不得遗留半分配 block。
 - [ ] preemption 采用释放 KV、恢复后 recompute 的策略。
 - [ ] 恢复时允许重新命中 prefix cache。
-- [ ] 不实现 CPU swap。
+- [x] 不实现 CPU swap。
 
 ## 6. Attention 与 KV Cache Spec
 
@@ -144,16 +144,16 @@ V1 必须回答以下问题：
 ### P1
 
 - [ ] 对 optimized backend 增加 CUDA Graph 或 `torch.compile` 实验开关。
-- [ ] 优化项不得进入 Scheduler 核心抽象。
+- [x] 优化项不得进入 Scheduler 核心抽象。
 
 ## 7. Executor、Worker 与 ModelRunner
 
 ### Executor
 
-- [ ] 定义稳定 Executor protocol。
+- [x] 定义稳定 Executor protocol。
 - [ ] 实现 `SingleProcessExecutor`。
 - [ ] Executor 负责初始化 Worker、探测可用显存、初始化 KV cache 和执行 plan。
-- [ ] Engine 不直接访问 CUDA device 或 model module。
+- [x] Engine 不直接访问 CUDA device 或 model module。
 
 ### Worker
 
@@ -179,7 +179,7 @@ V1 必须回答以下问题：
 - [ ] 模型实现可返回逐层 `AttentionSpec`。
 - [ ] 模型 `forward()`、`compute_logits()` 和 `load_weights()` 职责分离。
 - [ ] 公共 RMSNorm、RoPE、MLP、Embedding、Linear 和 Attention layer 可复用。
-- [ ] 不实现难以理解的万能声明式 Transformer builder。
+- [x] 不实现难以理解的万能声明式 Transformer builder。
 
 ### 模型覆盖
 
@@ -209,15 +209,15 @@ V1 必须回答以下问题：
 - [ ] top-k sampling。
 - [ ] top-p sampling。
 - [ ] per-request random generator/seed。
-- [ ] EOS、ignore EOS 和 max tokens。
+- [x] EOS、ignore EOS 和 max tokens。
 - [ ] max model length 终止原因。
 
 ### 非目标
 
-- [ ] 不实现 beam search。
-- [ ] 不实现 best-of 和 parallel sampling。
-- [ ] 不实现 structured/guided decoding。
-- [ ] 不实现用户自定义 logits processor。
+- [x] 不实现 beam search。
+- [x] 不实现 best-of 和 parallel sampling。
+- [x] 不实现 structured/guided decoding。
+- [x] 不实现用户自定义 logits processor。
 
 ## 10. 可观察性与测试
 
@@ -232,8 +232,8 @@ V1 必须回答以下问题：
 
 ### 测试
 
-- [ ] Scheduler 永不超过 token 和 sequence budget。
-- [ ] 长 prompt 能被正确切成多个 chunk。
+- [x] Scheduler 永不超过 token 和 sequence budget。
+- [x] 长 prompt 能被正确切成多个 chunk。
 - [ ] mixed batch 与分开执行结果一致。
 - [ ] prefix cache on/off 输出一致。
 - [ ] preempt/resume 与不抢占输出一致。
