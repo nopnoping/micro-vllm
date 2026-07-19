@@ -84,7 +84,7 @@ add_request
 ### `src/micro_vllm/core/request.py`
 
 - [x] 定义 `RequestStatus` enum。
-- [x] 状态至少包含 `WAITING`、`RUNNING`、`PREEMPTED`、`FINISHED`。
+- [x] 状态包含 `WAITING`、`RUNNING`、`FINISHED`；抢占后回到 `WAITING`。
 - [x] 定义 `FinishReason` enum。
 - [x] FinishReason 至少包含 `EOS`、`LENGTH`、`ABORTED`。
 - [x] 定义 Request dataclass。

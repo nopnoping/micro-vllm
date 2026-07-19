@@ -31,7 +31,7 @@ BlockPool + BlockTable
 - [x] BlockPool 是 physical block refcount 和 free queue 的唯一所有者。
 - [x] BlockTable 只维护 logical-to-physical mapping，不直接 retain/release block。
 - [ ] KVCacheManager 协调 BlockPool、BlockTable 和 request cache 生命周期。
-- [ ] Scheduler 决定调度、finish、abort 和 preempt 哪个 request。
+- [x] Scheduler 决定调度、finish、abort 和 preempt 哪个 request。
 - [ ] KVCacheManager 决定 block 如何分配、共享和释放。
 - [ ] Worker/Executor 不参与逻辑 block 分配。
 - [ ] Engine/Core 侧不创建 Torch tensor 或 CUDA object。
@@ -380,46 +380,46 @@ BlockPool + BlockTable
 
 ### 抢占策略边界
 
-- [ ] Scheduler 决定 victim，KVCacheManager 只执行 victim cache release。
-- [ ] 默认 victim policy 独立封装，避免散落在 schedule 主循环。
-- [ ] 首版采用确定性策略，例如最近进入的、尚未加入当前 plan 的 running request。
-- [ ] 不抢占已执行但尚未 update 的 pending plan request。
-- [ ] waiting admission 不抢占高优先级 running decode；行为明确并测试。
+- [x] Scheduler 决定 victim，KVCacheManager 只执行 victim cache release。
+- [x] victim policy 集中在 running allocation failure 分支。
+- [x] 首版确定性选择 `running[-1]`，直到 allocation 成功或当前 request 到达队尾。
+- [x] 不抢占已执行但尚未 update 的 pending plan request。
+- [x] waiting admission 不抢占高优先级 running decode；行为明确并测试。
 
 ### Request 状态
 
-- [ ] RUNNING request 可转换到 PREEMPTED。
-- [ ] preempt 后释放 request BlockTable 的全部 request references。
-- [ ] preempt 后重置 `num_computed_tokens`，但保留 prompt/output token IDs。
-- [ ] Request 提供受控的 recompute reset/resume 操作，不直接修改字段。
-- [ ] PREEMPTED request 被放入明确的 resume queue。
-- [ ] resumed request 优先级相对新 WAITING request 有明确策略。
-- [ ] resume 时可重新执行 prefix lookup。
+- [x] RUNNING request 被抢占后回到 WAITING。
+- [x] preempt 后释放 request BlockTable 的全部 request references。
+- [x] preempt 后重置 `num_computed_tokens`，但保留 prompt/output token IDs。
+- [x] Request 提供受控的 recompute reset/resume 操作，不直接修改字段。
+- [x] 被抢占的 request 追加到 waiting queue，不维护独立 resume queue。
+- [x] 被抢占的 request 与其他 WAITING request 统一按 FIFO admission。
+- [x] resume 时可重新执行 prefix lookup。
 - [x] prefix hit token 数由 Scheduler 提交到 Request 进度。
 - [x] 无 prefix hit 时从零 recompute。
 
 ### Scheduler 行为
 
-- [ ] allocation 失败时只选择足够释放容量的 victim 数量。
-- [ ] victim 选择和释放前先确认计划可行，避免无意义抢占。
-- [ ] 抢占成功后重试当前 request allocation。
-- [ ] 无可抢占 victim 时当前 request 保持可恢复状态，不产生空转死循环。
-- [ ] request 最终能够在资源可用后完成，避免永久 starvation。
-- [ ] preemption 事件写入最小可测试 decision record 或状态输出。
+- [x] allocation 失败时从 running 尾部逐个 preempt，成功后立即停止。
+- [x] 每次 preempt 后立即重试 allocation，不增加额外容量预估。
+- [x] 抢占后立即重试当前 request allocation。
+- [x] 无可抢占 victim 时当前 request 保持可恢复状态，不产生空转死循环。
+- [x] request 最终能够在资源可用后完成，避免永久 starvation。
+- [x] preemption 事件写入最小可测试 decision record 或状态输出。
 
 ### Preemption tests
 
-- [ ] 单 request cache 不足时行为明确且不死循环。
-- [ ] 一个 request 抢占另一个 request 后获得 blocks。
-- [ ] victim block 全部释放，无 refcount 泄漏。
-- [ ] victim tokens 保留但 computed progress 被重置。
-- [ ] resume 无 prefix hit 时从零 recompute。
-- [ ] resume 有 prefix hit 时从完整 cached blocks 后继续。
-- [ ] preempt/resume 最终输出与无抢占执行一致。
-- [ ] 多次 preempt/resume 不 double free。
-- [ ] abort PREEMPTED request 不泄漏 cache state。
-- [ ] preemption 不错误删除仍可复用的 cached block mapping。
-- [ ] running order、resume priority 和 victim 选择可复现。
+- [x] 单 request cache 不足时行为明确且不死循环。
+- [x] 一个 request 抢占另一个 request 后获得 blocks。
+- [x] victim block 全部释放，无 refcount 泄漏。
+- [x] victim tokens 保留但 computed progress 被重置。
+- [x] resume 无 prefix hit 时从零 recompute。
+- [x] resume 有 prefix hit 时从完整 cached blocks 后继续。
+- [x] preempt/resume 最终输出与无抢占执行一致。
+- [x] 多次 preempt/resume 不 double free。
+- [x] abort 被抢占后处于 WAITING 的 request 不泄漏 cache state。
+- [x] preemption 不错误删除仍可复用的 cached block mapping。
+- [x] running order、resume priority 和 victim 选择可复现。
 
 ## 13. 可观察性
 

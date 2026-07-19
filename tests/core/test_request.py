@@ -92,6 +92,23 @@ def test_advance_computed_tokens_updates_pending_tokens() -> None:
     assert request.num_pending_tokens == 1
 
 
+def test_preempt_and_resume_reset_only_computed_progress() -> None:
+    request = make_request(output_token_ids=[4], num_computed_tokens=3)
+    request.resume(3)
+
+    request.preempt()
+
+    assert request.status is RequestStatus.WAITING
+    assert request.num_computed_tokens == 0
+    assert request.all_token_ids == (1, 2, 3, 4)
+
+    request.resume(2)
+
+    assert request.status is RequestStatus.RUNNING
+    assert request.num_computed_tokens == 2
+    assert request.all_token_ids == (1, 2, 3, 4)
+
+
 @pytest.mark.parametrize("num_computed_tokens", [-1, 4])
 def test_initial_computed_tokens_must_be_within_known_tokens(
     num_computed_tokens: int,
@@ -126,8 +143,8 @@ def test_legal_status_transitions() -> None:
 
     request.transition_to(RequestStatus.RUNNING)
     assert request.status is RequestStatus.RUNNING
-    request.transition_to(RequestStatus.PREEMPTED)
-    assert request.status is RequestStatus.PREEMPTED
+    request.transition_to(RequestStatus.WAITING)
+    assert request.status is RequestStatus.WAITING
     request.transition_to(RequestStatus.RUNNING)
     assert request.status is RequestStatus.RUNNING
 
@@ -135,9 +152,15 @@ def test_legal_status_transitions() -> None:
 @pytest.mark.parametrize(
     ("operation", "target_status"),
     [
-        (lambda request: None, RequestStatus.PREEMPTED),
-        (lambda request: request.transition_to(RequestStatus.RUNNING), RequestStatus.WAITING),
-        (lambda request: request.transition_to(RequestStatus.RUNNING), RequestStatus.FINISHED),
+        (lambda request: None, RequestStatus.WAITING),
+        (
+            lambda request: request.transition_to(RequestStatus.RUNNING),
+            RequestStatus.RUNNING,
+        ),
+        (
+            lambda request: request.finish(FinishReason.LENGTH),
+            RequestStatus.RUNNING,
+        ),
     ],
 )
 def test_illegal_status_transitions(
@@ -162,14 +185,14 @@ def test_running_request_can_finish_with_each_reason(reason: FinishReason) -> No
     assert request.is_finished is True
 
 
-def test_waiting_and_preempted_requests_can_be_aborted() -> None:
+def test_waiting_requests_can_be_aborted() -> None:
     waiting = make_request(request_id="waiting")
-    preempted = make_request(request_id="preempted")
-    preempted.transition_to(RequestStatus.RUNNING)
-    preempted.transition_to(RequestStatus.PREEMPTED)
+    victim = make_request(request_id="victim")
+    victim.resume()
+    victim.preempt()
 
     waiting.finish(FinishReason.ABORTED)
-    preempted.finish(FinishReason.ABORTED)
+    victim.finish(FinishReason.ABORTED)
 
     assert waiting.finish_reason is FinishReason.ABORTED
-    assert preempted.finish_reason is FinishReason.ABORTED
+    assert victim.finish_reason is FinishReason.ABORTED

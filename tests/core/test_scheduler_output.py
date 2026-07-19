@@ -39,12 +39,18 @@ def test_scheduled_request_is_frozen(field_name: str, new_value: object) -> None
 
 
 def test_scheduler_output_is_frozen() -> None:
-    output = SchedulerOutput((make_scheduled_request(),))
+    preempted_request_ids = ["request-2"]
+    output = SchedulerOutput(
+        (make_scheduled_request(),),
+        preempted_request_ids,
+    )
+    preempted_request_ids.append("request-3")
 
     with pytest.raises(FrozenInstanceError):
         output.scheduled_requests = ()
 
     assert isinstance(output.scheduled_requests, tuple)
+    assert output.preempted_request_ids == ("request-2",)
 
 
 def test_original_token_list_does_not_change_plan_snapshot() -> None:

@@ -24,12 +24,18 @@ class SchedulerOutput:
     """Immutable execution plan produced for one scheduler step."""
 
     scheduled_requests: tuple[ScheduledRequest, ...]
+    preempted_request_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "scheduled_requests",
             tuple(self.scheduled_requests),
+        )
+        object.__setattr__(
+            self,
+            "preempted_request_ids",
+            tuple(self.preempted_request_ids),
         )
 
     @property

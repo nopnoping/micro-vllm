@@ -537,6 +537,36 @@ def test_kv_cache_allocation_is_frozen_and_canonicalizes_sequences() -> None:
         allocation.block_table = ()
 
 
+def test_free_request_blocks_keeps_an_empty_table_for_recompute() -> None:
+    manager = make_manager(num_blocks=2)
+    manager.register_request("request-1")
+    assert manager.allocate_slots("request-1", 0, 5) is not None
+
+    manager.free_request_blocks("request-1")
+
+    assert manager.get_block_table("request-1") == ()
+    assert manager.num_free_blocks == 2
+    assert manager.allocate_slots("request-1", 0, 1) is not None
+
+
+def test_repeated_recompute_cycles_release_each_reference_once() -> None:
+    manager = make_manager(num_blocks=2)
+    manager.register_request("request-1")
+
+    for _ in range(3):
+        assert manager.allocate_slots("request-1", 0, 3) is not None
+        manager.free_request_blocks("request-1")
+        assert manager.get_block_table("request-1") == ()
+        assert manager.num_free_blocks == 2
+        ref_counts = tuple(
+            manager._block_pool.ref_count(block_id) for block_id in range(2)
+        )
+        assert ref_counts == (
+            0,
+            0,
+        )
+
+
 def test_free_request_recycles_all_request_owned_blocks() -> None:
     manager = make_manager(num_blocks=4)
     manager.register_request("request-1")

@@ -21,7 +21,6 @@ class RequestStatus(Enum):
 
     WAITING = auto()
     RUNNING = auto()
-    PREEMPTED = auto()
     FINISHED = auto()
 
 
@@ -35,8 +34,7 @@ class FinishReason(Enum):
 
 _ALLOWED_STATUS_TRANSITIONS = {
     RequestStatus.WAITING: frozenset({RequestStatus.RUNNING}),
-    RequestStatus.RUNNING: frozenset({RequestStatus.PREEMPTED}),
-    RequestStatus.PREEMPTED: frozenset({RequestStatus.RUNNING}),
+    RequestStatus.RUNNING: frozenset({RequestStatus.WAITING}),
     RequestStatus.FINISHED: frozenset(),
 }
 
@@ -126,6 +124,18 @@ class Request:
         """Commit computation of a positive number of pending tokens."""
 
         self.num_computed_tokens += num_tokens
+
+    def preempt(self) -> None:
+        """Reset computed progress and wait for recompute."""
+
+        self.transition_to(RequestStatus.WAITING)
+        self.num_computed_tokens = 0
+
+    def resume(self, num_computed_tokens: int = 0) -> None:
+        """Enter RUNNING state at a recomputed or cached prefix boundary."""
+
+        self.transition_to(RequestStatus.RUNNING)
+        self.num_computed_tokens = num_computed_tokens
 
     def finish(self, reason: FinishReason) -> None:
         """Move the request to its terminal state with a legal reason."""

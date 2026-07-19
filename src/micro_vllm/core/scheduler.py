@@ -77,6 +77,7 @@ class Scheduler:
 
         remaining_token_budget = self._config.max_num_batched_tokens
         scheduled_requests: list[ScheduledRequest] = []
+        preempted_request_ids: list[str] = []
         cache_capacity_exhausted = False
 
         for request in self._running:
@@ -93,6 +94,20 @@ class Scheduler:
                 request.num_computed_tokens,
                 num_scheduled_tokens,
             )
+            while (
+                scheduled_request is None
+                and self._running[-1] is not request
+            ):
+                victim = self._running.pop()
+                victim.preempt()
+                self._kv_cache_manager.free_request_blocks(victim.request_id)
+                self._waiting.append(victim)
+                preempted_request_ids.append(victim.request_id)
+                scheduled_request = self._allocate_scheduled_request(
+                    request,
+                    request.num_computed_tokens,
+                    num_scheduled_tokens,
+                )
             if scheduled_request is None:
                 cache_capacity_exhausted = True
                 break
@@ -124,14 +139,16 @@ class Scheduler:
             if scheduled_request is None:
                 break
             scheduled_requests.append(scheduled_request)
-            remaining_token_budget -= num_scheduled_tokens
+            remaining_token_budget -= scheduled_request.num_scheduled_tokens
 
-            request.transition_to(RequestStatus.RUNNING)
-            request.num_computed_tokens = num_hit_tokens
+            request.resume(num_hit_tokens)
             self._waiting.popleft()
             self._running.append(request)
 
-        plan = SchedulerOutput(tuple(scheduled_requests))
+        plan = SchedulerOutput(
+            tuple(scheduled_requests),
+            tuple(preempted_request_ids),
+        )
         if plan.scheduled_requests:
             self._pending_plan = plan
         return plan

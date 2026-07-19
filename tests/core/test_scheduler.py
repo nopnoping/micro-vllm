@@ -202,16 +202,16 @@ def test_pending_plan_is_reused_without_allocating_blocks_twice() -> None:
     assert scheduler._kv_cache_manager._block_pool.free_block_ids == free_before
 
 
-def test_cache_capacity_failure_stops_waiting_admission_in_fifo_order() -> None:
+def test_request_larger_than_cache_fails_without_empty_schedule_loop() -> None:
     scheduler = make_scheduler(5, 2, block_size=4, num_blocks=1)
     first = make_request("first", [1, 2, 3, 4, 5])
     second = make_request("second", [6])
     scheduler.add_request(first)
     scheduler.add_request(second)
 
-    plan = scheduler.schedule()
+    with pytest.raises(RuntimeError, match="first cannot fit in KV cache"):
+        scheduler.schedule()
 
-    assert plan.scheduled_requests == ()
     assert first.status is RequestStatus.WAITING
     assert second.status is RequestStatus.WAITING
     assert scheduler._kv_cache_manager.get_block_table("first") == ()
@@ -473,7 +473,7 @@ def test_waiting_request_uses_prefix_hit_before_admission() -> None:
     assert scheduled.block_table[:2] == (0, 1)
 
 
-def test_waiting_prefix_hit_rolls_back_when_slot_allocation_fails() -> None:
+def test_prefix_hit_larger_than_cache_fails_without_claiming_blocks() -> None:
     manager = KVCacheManager(
         CacheConfig(
             block_size=2,
@@ -498,20 +498,195 @@ def test_waiting_prefix_hit_rolls_back_when_slot_allocation_fails() -> None:
     request = make_request("request-1", [1, 2, 3, 4, 5])
     scheduler.add_request(request)
 
-    assert scheduler.schedule().scheduled_requests == ()
+    with pytest.raises(RuntimeError, match="request-1 cannot fit in KV cache"):
+        scheduler.schedule()
     assert request.status is RequestStatus.WAITING
     assert request.num_computed_tokens == 0
     assert manager.get_block_table("request-1") == ()
     assert manager._block_pool.ref_count(0) == 0
     assert manager._block_pool.ref_count(1) == 0
 
-    # A retry performs a fresh read-only lookup and rolls back again.
-    assert scheduler.schedule().scheduled_requests == ()
-    assert request.status is RequestStatus.WAITING
-    assert request.num_computed_tokens == 0
-    assert manager.get_block_table("request-1") == ()
-    assert manager._block_pool.ref_count(0) == 0
-    assert manager._block_pool.ref_count(1) == 0
+
+def test_running_request_preempts_and_recomputes_newest_victim() -> None:
+    scheduler = make_scheduler(4, 2, block_size=2, num_blocks=2)
+    first = make_request("first", [1, 2], max_tokens=2)
+    second = make_request("second", [3, 4], max_tokens=2)
+    scheduler.add_request(first)
+    scheduler.add_request(second)
+
+    initial_plan = scheduler.schedule()
+    scheduler.update(initial_plan, make_output({"first": 10, "second": 20}))
+
+    preemption_plan = scheduler.schedule()
+
+    assert [
+        request.request_id for request in preemption_plan.scheduled_requests
+    ] == ["first"]
+    assert preemption_plan.preempted_request_ids == ("second",)
+    assert second.status is RequestStatus.WAITING
+    assert second.num_computed_tokens == 0
+    assert second.all_token_ids == (3, 4, 20)
+    assert scheduler._kv_cache_manager.get_block_table("second") == ()
+    assert tuple(request.request_id for request in scheduler._waiting) == (
+        "second",
+    )
+
+    scheduler.update(preemption_plan, make_output({"first": 11}))
+    waiting = make_request("waiting", [30])
+    scheduler.add_request(waiting)
+
+    resume_plan = scheduler.schedule()
+
+    assert [request.request_id for request in resume_plan.scheduled_requests] == [
+        "second"
+    ]
+    resumed = resume_plan.scheduled_requests[0]
+    assert resumed.input_token_ids == (3, 4, 20)
+    assert resumed.num_computed_tokens == 0
+    assert second.status is RequestStatus.RUNNING
+    assert waiting.status is RequestStatus.WAITING
+
+    scheduler.update(resume_plan, make_output({"second": 21}))
+
+    assert first.output_token_ids == [10, 11]
+    assert second.output_token_ids == [20, 21]
+    assert first.finish_reason is FinishReason.LENGTH
+    assert second.finish_reason is FinishReason.LENGTH
+
+
+def test_preemption_selects_most_recent_unscheduled_victim() -> None:
+    scheduler = make_scheduler(6, 3, block_size=2, num_blocks=3)
+    requests = [
+        make_request("first", [1, 2], max_tokens=2),
+        make_request("second", [3, 4], max_tokens=2),
+        make_request("third", [5, 6], max_tokens=2),
+    ]
+    for request in requests:
+        scheduler.add_request(request)
+
+    initial_plan = scheduler.schedule()
+    scheduler.update(
+        initial_plan,
+        make_output({"first": 10, "second": 20, "third": 30}),
+    )
+
+    plan = scheduler.schedule()
+
+    assert plan.preempted_request_ids == ("third",)
+    assert [request.request_id for request in plan.scheduled_requests] == ["first"]
+    assert requests[1].status is RequestStatus.RUNNING
+    assert requests[2].status is RequestStatus.WAITING
+
+
+def test_preemption_stops_when_current_request_reaches_running_tail() -> None:
+    manager = KVCacheManager(CacheConfig(block_size=2, num_blocks=2))
+    scheduler = Scheduler(SchedulerConfig(3, 2), manager)
+    current = make_request("current", [1, 2, 3, 4, 5])
+    victim = make_request("victim", [6, 7])
+    scheduler.add_request(current)
+    scheduler.add_request(victim)
+    scheduler._waiting.clear()
+    assert manager.allocate_slots("current", 0, 2) is not None
+    assert manager.allocate_slots("victim", 0, 2) is not None
+    current.resume(2)
+    victim.resume(2)
+    victim.append_sampled_token(8)
+    scheduler._running[:] = [current, victim]
+
+    with pytest.raises(RuntimeError, match="current cannot fit in KV cache"):
+        scheduler.schedule()
+
+    assert victim.status is RequestStatus.WAITING
+    assert manager.get_block_table("victim") == ()
+    assert tuple(scheduler._waiting) == (victim,)
+
+
+def test_preempted_victim_reenters_from_cached_prefix() -> None:
+    manager = KVCacheManager(
+        CacheConfig(
+            block_size=2,
+            num_blocks=4,
+            enable_prefix_cache=True,
+        )
+    )
+    scheduler = Scheduler(
+        SchedulerConfig(4, 3),
+        manager,
+        cache_namespace="model-a",
+    )
+    current = make_request("current", [9, 10], max_tokens=2)
+    holder = make_request("holder", [1, 2, 3], max_tokens=2)
+    victim = make_request("victim", [1, 2, 4], max_tokens=2)
+    for request in (current, holder, victim):
+        scheduler.add_request(request)
+    scheduler._waiting.clear()
+
+    assert manager.allocate_slots("holder", 0, 3) is not None
+    assert manager.commit_prefix_blocks(
+        "holder",
+        holder.all_token_ids,
+        3,
+        cache_namespace="model-a",
+    ) == (0,)
+    holder.resume(3)
+    holder.append_sampled_token(30)
+
+    hit_block_ids, num_hit_tokens = manager.find_prefix_hit(
+        "victim",
+        victim.all_token_ids,
+        cache_namespace="model-a",
+    )
+    assert manager.allocate_slots(
+        "victim",
+        num_hit_tokens,
+        1,
+        hit_block_ids,
+    ) is not None
+    victim.resume(3)
+    victim.append_sampled_token(40)
+
+    assert manager.allocate_slots("current", 0, 2) is not None
+    current.resume(2)
+    current.append_sampled_token(90)
+    scheduler._running[:] = [current, holder, victim]
+
+    plan = scheduler.schedule()
+
+    assert plan.preempted_request_ids == ("victim",)
+    assert manager.get_block_table("victim") == ()
+    scheduler.update(
+        plan,
+        make_output({"current": 91, "holder": 31}),
+    )
+
+    resume_plan = scheduler.schedule()
+    resumed = resume_plan.scheduled_requests[0]
+
+    assert resumed.request_id == "victim"
+    assert resumed.num_computed_tokens == 2
+    assert resumed.input_token_ids == (4, 40)
+    assert victim.status is RequestStatus.RUNNING
+
+
+def test_abort_preempted_victim_removes_waiting_state_without_double_free() -> None:
+    scheduler = make_scheduler(4, 2, block_size=2, num_blocks=2)
+    first = make_request("first", [1, 2], max_tokens=2)
+    second = make_request("second", [3, 4], max_tokens=2)
+    scheduler.add_request(first)
+    scheduler.add_request(second)
+    initial_plan = scheduler.schedule()
+    scheduler.update(initial_plan, make_output({"first": 10, "second": 20}))
+    plan = scheduler.schedule()
+    free_blocks_before = scheduler._kv_cache_manager.num_free_blocks
+
+    assert scheduler.abort_request("second") is True
+
+    assert second.finish_reason is FinishReason.ABORTED
+    assert tuple(scheduler._waiting) == ()
+    assert scheduler._kv_cache_manager.num_free_blocks == free_blocks_before
+    with pytest.raises(KeyError):
+        scheduler._kv_cache_manager.get_block_table("second")
+    scheduler.update(plan, make_output({"first": 11}))
 
 
 def test_eos_finishes_request_while_ignore_eos_continues() -> None:

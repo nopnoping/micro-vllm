@@ -28,7 +28,7 @@ V1 必须回答以下问题：
 - [x] Engine 提供逐 step 驱动接口，允许上层实现 streaming。
 - [x] 支持动态添加请求，而非只能静态处理一次性 batch。
 - [x] Request 包含稳定 ID、prompt tokens、output tokens、sampling params 和状态。
-- [x] 请求状态至少包含 `WAITING`、`RUNNING`、`PREEMPTED`、`FINISHED`。
+- [x] 请求状态包含 `WAITING`、`RUNNING`、`FINISHED`；抢占后回到 `WAITING`。
 - [x] `num_computed_tokens` 是请求计算进度的唯一权威字段。
 - [x] Engine 负责调用 `schedule -> execute -> update`，三阶段职责清晰。
 - [ ] 请求结束时释放全部非共享 KV block。
@@ -105,10 +105,10 @@ V1 必须回答以下问题：
 - [ ] 提供 `allocate_slots(request, num_tokens)`。
 - [ ] 提供 `find_prefix_hit(request)`。
 - [ ] 提供 `free_request(request)`。
-- [ ] 提供 `preempt(request)` 和 `resume(request)` 所需的状态转换。
+- [x] preempt request 释放 cache 并回到 `WAITING`，重新调度后 recompute。
 - [ ] allocation 是原子的：失败时不得遗留半分配 block。
-- [ ] preemption 采用释放 KV、恢复后 recompute 的策略。
-- [ ] 恢复时允许重新命中 prefix cache。
+- [x] preemption 采用释放 KV、恢复后 recompute 的策略。
+- [x] 恢复时允许重新命中 prefix cache。
 - [x] 不实现 CPU swap。
 
 ## 6. Attention 与 KV Cache Spec
