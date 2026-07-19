@@ -1,6 +1,7 @@
 """Logical and physical block identifiers, tables, and pool state."""
 
 from collections import deque
+from collections.abc import Iterable
 from itertools import islice
 
 
@@ -112,3 +113,123 @@ class BlockPool:
                     f"block pool invariant violated for block_id {block_id}: "
                     f"free block has refcount {self._ref_counts[block_id]}"
                 )
+
+
+class BlockTable:
+    """Maintain zero-based logical-to-physical block mappings.
+
+    Each list position is a logical block index. Its value is a physical block
+    ID, or ``None`` when that logical block has no physical mapping. The table
+    neither validates IDs against a BlockPool nor changes block refcounts.
+    """
+
+    __slots__ = ("_block_size", "_physical_block_ids")
+
+    def __init__(self, block_size: int) -> None:
+        if block_size <= 0:
+            raise ValueError("block_size must be greater than zero")
+
+        self._block_size = block_size
+        self._physical_block_ids: list[int | None] = []
+
+    @property
+    def block_size(self) -> int:
+        """Number of token slots represented by each logical block."""
+
+        return self._block_size
+
+    @property
+    def num_logical_blocks(self) -> int:
+        """Number of logical block entries currently in the table."""
+
+        return len(self._physical_block_ids)
+
+    @property
+    def capacity_tokens(self) -> int:
+        """Number of token positions covered by the current mappings."""
+
+        return self.num_logical_blocks * self._block_size
+
+    def append(self, physical_block_id: int | None) -> None:
+        """Append one physical mapping at the next logical block index."""
+
+        self._validate_mapping(physical_block_id)
+        self._physical_block_ids.append(physical_block_id)
+
+    def extend(self, physical_block_ids: Iterable[int | None]) -> None:
+        """Atomically append multiple physical mappings in input order."""
+
+        mappings = tuple(physical_block_ids)
+        for physical_block_id in mappings:
+            self._validate_mapping(physical_block_id)
+        self._physical_block_ids.extend(mappings)
+
+    def physical_block(self, logical_block_index: int) -> int | None:
+        """Return a physical mapping, or ``None`` when it is unmapped."""
+
+        if (
+            logical_block_index < 0
+            or logical_block_index >= len(self._physical_block_ids)
+        ):
+            raise ValueError(
+                f"invalid logical_block_index {logical_block_index}: expected "
+                f"0 <= logical_block_index < {len(self._physical_block_ids)}"
+            )
+        return self._physical_block_ids[logical_block_index]
+
+    def token_slot(self, token_position: int) -> tuple[int, int] | None:
+        """Map a token position to ``(physical_block_id, block_offset)``."""
+
+        if token_position < 0:
+            raise ValueError("token_position must be non-negative")
+
+        logical_block_index, block_offset = divmod(
+            token_position, self._block_size
+        )
+        if logical_block_index >= len(self._physical_block_ids):
+            raise ValueError(
+                f"token_position {token_position} is outside table capacity "
+                f"{len(self._physical_block_ids) * self._block_size}"
+            )
+
+        physical_block_id = self._physical_block_ids[logical_block_index]
+        if physical_block_id is None:
+            return None
+        return physical_block_id, block_offset
+
+    def truncate(self, num_tokens: int) -> tuple[int, ...]:
+        """Remove mappings beyond ``num_tokens`` and return mapped block IDs."""
+
+        if num_tokens < 0:
+            raise ValueError("num_tokens must be non-negative")
+        if num_tokens > self.capacity_tokens:
+            raise ValueError(
+                f"num_tokens {num_tokens} exceeds table capacity "
+                f"{self.capacity_tokens}"
+            )
+
+        num_blocks_to_keep = (
+            num_tokens + self._block_size - 1
+        ) // self._block_size
+        removed_mappings = self._physical_block_ids[num_blocks_to_keep:]
+        del self._physical_block_ids[num_blocks_to_keep:]
+        return tuple(
+            physical_block_id
+            for physical_block_id in removed_mappings
+            if physical_block_id is not None
+        )
+
+    def clear(self) -> tuple[int, ...]:
+        """Remove all mappings and return their non-empty physical block IDs."""
+
+        return self.truncate(0)
+
+    def snapshot(self) -> tuple[int | None, ...]:
+        """Return an immutable snapshot of logical-to-physical mappings."""
+
+        return tuple(self._physical_block_ids)
+
+    @staticmethod
+    def _validate_mapping(physical_block_id: int | None) -> None:
+        if physical_block_id is not None and physical_block_id < 0:
+            raise ValueError("physical_block_id must be non-negative or None")

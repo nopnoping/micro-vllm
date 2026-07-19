@@ -27,9 +27,9 @@ BlockPool + BlockTable
 
 ## 2. 固定设计原则
 
-- [ ] physical block 使用非负整数 ID，不引入可变 block 对象作为公共 API。
-- [ ] BlockPool 是 physical block refcount 和 free queue 的唯一所有者。
-- [ ] BlockTable 只维护 logical-to-physical mapping，不直接 retain/release block。
+- [x] physical block 使用非负整数 ID，不引入可变 block 对象作为公共 API。
+- [x] BlockPool 是 physical block refcount 和 free queue 的唯一所有者。
+- [x] BlockTable 只维护 logical-to-physical mapping，不直接 retain/release block。
 - [ ] KVCacheManager 协调 BlockPool、BlockTable、PrefixCache 和 request cache 生命周期。
 - [ ] Scheduler 决定调度、finish、abort 和 preempt 哪个 request。
 - [ ] KVCacheManager 决定 block 如何分配、共享和释放。
@@ -128,50 +128,50 @@ BlockPool + BlockTable
 
 ### 数据模型
 
-- [ ] `BlockTable` 构造时接收 `block_size`。
-- [ ] logical block index 从零开始。
-- [ ] mapping 元素为 `int | None`。
-- [ ] `None` 表示该 logical block 当前没有 physical mapping。
-- [ ] BlockTable 不验证 physical ID 是否属于某个 BlockPool。
-- [ ] BlockTable 不修改 refcount。
+- [x] `BlockTable` 构造时接收 `block_size`。
+- [x] logical block index 从零开始。
+- [x] mapping 元素为 `int | None`。
+- [x] `None` 表示该 logical block 当前没有 physical mapping。
+- [x] BlockTable 不验证 physical ID 是否属于某个 BlockPool。
+- [x] BlockTable 不修改 refcount。
 
 ### 操作
 
-- [ ] 提供 append 单个或多个 mapping。
-- [ ] 提供 `physical_block(logical_block_index)`。
-- [ ] 提供 token position 到 `(physical_block_id, offset)` 的 slot 查询。
-- [ ] token slot 使用 `divmod(token_position, block_size)` 作为唯一映射规则。
-- [ ] 查询 unmapped logical block 时给出明确错误或 `None` 结果，语义统一。
-- [ ] 提供按有效 token 长度 `truncate(num_tokens)`。
-- [ ] truncate 只移除不再覆盖任何保留 token 的尾部 logical blocks。
-- [ ] truncate 返回被移除的非空 physical block IDs，由 KVCacheManager release。
-- [ ] partial last block 保持映射，不因 token 数未对齐而释放。
-- [ ] 提供 `clear()` 并返回所有非空 physical block IDs。
-- [ ] 提供不可变 `snapshot()`。
-- [ ] 提供 `num_logical_blocks` 和 `capacity_tokens` 等只读属性。
+- [x] 提供 append 单个或多个 mapping。
+- [x] 提供 `physical_block(logical_block_index)`。
+- [x] 提供 token position 到 `(physical_block_id, offset)` 的 slot 查询。
+- [x] token slot 使用 `divmod(token_position, block_size)` 作为唯一映射规则。
+- [x] 查询 unmapped logical block 时给出明确错误或 `None` 结果，语义统一。
+- [x] 提供按有效 token 长度 `truncate(num_tokens)`。
+- [x] truncate 只移除不再覆盖任何保留 token 的尾部 logical blocks。
+- [x] truncate 返回被移除的非空 physical block IDs，由 KVCacheManager release。
+- [x] partial last block 保持映射，不因 token 数未对齐而释放。
+- [x] 提供 `clear()` 并返回所有非空 physical block IDs。
+- [x] 提供不可变 `snapshot()`。
+- [x] 提供 `num_logical_blocks` 和 `capacity_tokens` 等只读属性。
 
 ### `tests/core/test_block.py`：BlockTable
 
-- [ ] 空表状态正确。
-- [ ] append 后 mapping 顺序正确。
-- [ ] snapshot 不随外部输入或后续修改而变化。
-- [ ] 多个 block size 下 token slot 映射正确。
-- [ ] block 边界前后 position 映射正确。
-- [ ] negative/out-of-range position 被拒绝。
-- [ ] `None` mapping 行为正确。
-- [ ] truncate 到 block 边界正确释放尾部 block。
-- [ ] truncate 到 partial block 保留最后一个 block。
-- [ ] truncate 到零等价于清空。
-- [ ] clear 返回所有非空 block ID，且 table 为空。
-- [ ] BlockTable 操作不会直接改变 BlockPool refcount。
+- [x] 空表状态正确。
+- [x] append 后 mapping 顺序正确。
+- [x] snapshot 不随外部输入或后续修改而变化。
+- [x] 多个 block size 下 token slot 映射正确。
+- [x] block 边界前后 position 映射正确。
+- [x] negative/out-of-range position 被拒绝。
+- [x] `None` mapping 行为正确。
+- [x] truncate 到 block 边界正确释放尾部 block。
+- [x] truncate 到 partial block 保留最后一个 block。
+- [x] truncate 到零等价于清空。
+- [x] clear 返回所有非空 block ID，且 table 为空。
+- [x] BlockTable 操作不会直接改变 BlockPool refcount。
 
 ## 6. Phase A 验收
 
 - [x] `core/block.py` 不导入 Request、Scheduler、Executor 或 Torch。
-- [ ] BlockPool 和 BlockTable 可独立使用。
-- [ ] 所有 block primitive tests 为 CPU-only。
+- [x] BlockPool 和 BlockTable 可独立使用。
+- [x] 所有 block primitive tests 为 CPU-only。
 - [x] deterministic randomized invariant test 通过。
-- [ ] BlockPool/BlockTable 的所有权和职责 docstring 完整。
+- [x] BlockPool/BlockTable 的所有权和职责 docstring 完整。
 
 ## 7. Phase B：基础 KVCacheManager
 
