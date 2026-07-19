@@ -65,12 +65,47 @@ def test_insufficient_allocation_is_atomic() -> None:
     assert tuple(pool.ref_count(block_id) for block_id in range(3)) == refcounts_before
 
 
-@pytest.mark.parametrize("count", [0, -1])
-def test_allocate_rejects_non_positive_count(count: int) -> None:
+def test_allocate_retains_cached_blocks_and_allocates_new_blocks_atomically() -> None:
+    pool = BlockPool(4)
+    assert pool.allocate(2) == (0, 1)
+    pool.cache_block(0, b"a" * 32)
+    pool.cache_block(1, b"b" * 32)
+    pool.release(0)
+
+    assert pool.allocate(1, (0, 1)) == (2,)
+
+    assert pool.free_block_ids == (3,)
+    assert tuple(pool.ref_count(block_id) for block_id in range(4)) == (1, 2, 1, 0)
+    assert pool.get_cached_block(b"a" * 32) is not None
+    assert pool.get_cached_block(b"b" * 32) is not None
+
+
+def test_cached_free_blocks_count_towards_atomic_allocation_capacity() -> None:
+    pool = BlockPool(2)
+    assert pool.allocate(2) == (0, 1)
+    pool.cache_block(0, b"a" * 32)
+    pool.cache_block(1, b"b" * 32)
+    pool.release(0)
+    pool.release(1)
+    free_before = pool.free_block_ids
+    hashes_before = tuple(pool.block_hash(block_id) for block_id in range(2))
+
+    assert pool.allocate(1, (0, 1)) is None
+
+    assert pool.free_block_ids == free_before
+    assert tuple(pool.ref_count(block_id) for block_id in range(2)) == (0, 0)
+    assert tuple(pool.block_hash(block_id) for block_id in range(2)) == hashes_before
+
+
+def test_allocate_allows_zero_new_blocks() -> None:
+    assert BlockPool(2).allocate(0) == ()
+
+
+def test_allocate_rejects_negative_count() -> None:
     pool = BlockPool(2)
 
-    with pytest.raises(ValueError, match="count must be greater than zero"):
-        pool.allocate(count)
+    with pytest.raises(ValueError, match="count must be non-negative"):
+        pool.allocate(-1)
 
 
 def test_retain_and_release_shared_block() -> None:
@@ -326,6 +361,28 @@ def test_physical_block_rejects_out_of_range_logical_index(
         ValueError, match=rf"invalid logical_block_index {logical_block_index}"
     ):
         table.physical_block(logical_block_index)
+
+
+def test_replace_updates_one_mapping_and_returns_previous_block() -> None:
+    table = BlockTable(block_size=4)
+    table.extend([7, 11])
+
+    assert table.replace(1, 13) == 11
+    assert table.snapshot() == (7, 13)
+
+
+def test_replace_rejects_invalid_index_or_mapping_without_mutation() -> None:
+    table = BlockTable(block_size=4)
+    table.extend([7, 11])
+
+    with pytest.raises(ValueError, match="invalid logical_block_index 2"):
+        table.replace(2, 13)
+    with pytest.raises(
+        ValueError, match="physical_block_id must be non-negative or None"
+    ):
+        table.replace(1, -1)
+
+    assert table.snapshot() == (7, 11)
 
 
 @pytest.mark.parametrize(

@@ -16,9 +16,12 @@ class Scheduler:
         self,
         config: SchedulerConfig,
         kv_cache_manager: KVCacheManager,
+        *,
+        cache_namespace: str = "default",
     ) -> None:
         self._config = config
         self._kv_cache_manager = kv_cache_manager
+        self._cache_namespace = cache_namespace
         self._waiting: deque[Request] = deque()
         self._running: list[Request] = []
         self._requests: dict[str, Request] = {}
@@ -107,6 +110,7 @@ class Scheduler:
             )
             scheduled_request = self._allocate_scheduled_request(
                 request,
+                request.num_computed_tokens,
                 num_scheduled_tokens,
             )
             if scheduled_request is None:
@@ -122,12 +126,20 @@ class Scheduler:
             and len(self._running) < self._config.max_num_seqs
         ):
             request = self._waiting[0]
+            hit_block_ids, num_hit_tokens = self._kv_cache_manager.find_prefix_hit(
+                request.request_id,
+                request.all_token_ids,
+                cache_namespace=self._cache_namespace,
+            )
             num_scheduled_tokens = min(
-                request.num_pending_tokens, remaining_token_budget
+                request.num_known_tokens - num_hit_tokens,
+                remaining_token_budget,
             )
             scheduled_request = self._allocate_scheduled_request(
                 request,
+                num_hit_tokens,
                 num_scheduled_tokens,
+                cached_block_ids=hit_block_ids,
             )
             if scheduled_request is None:
                 break
@@ -135,6 +147,7 @@ class Scheduler:
             remaining_token_budget -= num_scheduled_tokens
 
             request.transition_to(RequestStatus.RUNNING)
+            request.num_computed_tokens = num_hit_tokens
             self._waiting.popleft()
             self._running.append(request)
 
@@ -187,6 +200,13 @@ class Scheduler:
                     request.finish(finish_reason)
                     finished_request_ids.append(request.request_id)
 
+            self._kv_cache_manager.commit_prefix_blocks(
+                request.request_id,
+                request.all_token_ids,
+                request.num_computed_tokens,
+                cache_namespace=self._cache_namespace,
+            )
+
         if finished_request_ids:
             finished_request_id_set = set(finished_request_ids)
             self._running[:] = [
@@ -201,22 +221,27 @@ class Scheduler:
     def _allocate_scheduled_request(
         self,
         request: Request,
+        num_computed_tokens: int,
         num_scheduled_tokens: int,
+        *,
+        cached_block_ids: tuple[int, ...] = (),
     ) -> ScheduledRequest | None:
         allocation = self._kv_cache_manager.allocate_slots(
             request.request_id,
-            request.num_computed_tokens,
+            num_computed_tokens,
             num_scheduled_tokens,
+            cached_block_ids,
         )
         if allocation is None:
             return None
 
-        start_computed = request.num_computed_tokens
-        end_computed = start_computed + num_scheduled_tokens
+        end_computed = num_computed_tokens + num_scheduled_tokens
         return ScheduledRequest(
             request_id=request.request_id,
-            input_token_ids=request.all_token_ids[start_computed:end_computed],
-            num_computed_tokens=start_computed,
+            input_token_ids=request.all_token_ids[
+                num_computed_tokens:end_computed
+            ],
+            num_computed_tokens=num_computed_tokens,
             num_scheduled_tokens=num_scheduled_tokens,
             requires_sampling=end_computed == request.num_known_tokens,
             block_table=allocation.block_table,

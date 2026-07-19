@@ -3,7 +3,6 @@
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
-from itertools import islice
 
 BlockHash = bytes
 BLOCK_HASH_BYTES = 32
@@ -152,25 +151,38 @@ class BlockPool:
         block.block_hash = None
         return block
 
-    def allocate(self, count: int) -> tuple[int, ...] | None:
-        """Atomically allocate ``count`` blocks, or return ``None`` if full."""
+    def allocate(
+        self,
+        count: int,
+        cached_block_ids: Iterable[int] = (),
+    ) -> tuple[int, ...] | None:
+        """Atomically retain cached blocks and allocate ``count`` new blocks."""
 
-        if count <= 0:
-            raise ValueError(f"count must be greater than zero, got {count}")
-        if count > self.num_free_blocks:
+        if count < 0:
+            raise ValueError(f"count must be non-negative, got {count}")
+
+        cached_blocks = [self._blocks[block_id] for block_id in cached_block_ids]
+        num_cached_free_blocks = sum(
+            block.ref_count == 0 for block in cached_blocks
+        )
+        if count + num_cached_free_blocks > self.num_free_blocks:
             return None
 
-        block_ids = tuple(islice(self._free_block_ids, count))
-        self._validate_free_candidates(block_ids)
+        for block in cached_blocks:
+            if block.ref_count == 0:
+                self._free_block_ids.remove(block.block_id)
+            block.ref_count += 1
 
-        for block_id in block_ids:
-            self._free_block_ids.popleft()
+        new_block_ids: list[int] = []
+        for _ in range(count):
+            block_id = self._free_block_ids.popleft()
             block = self._blocks[block_id]
             if block.block_hash is not None:
                 self._evict_block_hash(block)
             block.ref_count = 1
+            new_block_ids.append(block_id)
 
-        return block_ids
+        return tuple(new_block_ids)
 
     def retain(self, block_id: int) -> None:
         """Add one reference to an allocated physical block."""
@@ -200,33 +212,6 @@ class BlockPool:
                 f"expected 0 <= block_id < {self.num_blocks}"
             )
         return self._blocks[block_id]
-
-    def _validate_free_candidates(self, block_ids: tuple[int, ...]) -> None:
-        if len(set(block_ids)) != len(block_ids):
-            raise RuntimeError(
-                f"free queue contains duplicate block IDs: {block_ids}"
-            )
-
-        for block_id in block_ids:
-            if block_id < 0 or block_id >= self.num_blocks:
-                raise RuntimeError(
-                    f"free queue contains invalid block_id {block_id}: "
-                    f"expected 0 <= block_id < {self.num_blocks}"
-                )
-            block = self._blocks[block_id]
-            if block.ref_count != 0:
-                raise RuntimeError(
-                    f"block pool invariant violated for block_id {block_id}: "
-                    f"free block has refcount {block.ref_count}"
-                )
-            if (
-                block.block_hash is not None
-                and self._cached_blocks.get(block.block_hash) is not block
-            ):
-                raise RuntimeError(
-                    f"block pool invariant violated for block_id {block_id}: "
-                    "free block has an unindexed hash"
-                )
 
     def _evict_block_hash(self, block: KVCacheBlock) -> None:
         block_hash = block.block_hash
@@ -294,15 +279,21 @@ class BlockTable:
     def physical_block(self, logical_block_index: int) -> int | None:
         """Return a physical mapping, or ``None`` when it is unmapped."""
 
-        if (
-            logical_block_index < 0
-            or logical_block_index >= len(self._physical_block_ids)
-        ):
-            raise ValueError(
-                f"invalid logical_block_index {logical_block_index}: expected "
-                f"0 <= logical_block_index < {len(self._physical_block_ids)}"
-            )
+        self._validate_logical_block_index(logical_block_index)
         return self._physical_block_ids[logical_block_index]
+
+    def replace(
+        self,
+        logical_block_index: int,
+        physical_block_id: int | None,
+    ) -> int | None:
+        """Replace one mapping and return its previous physical block ID."""
+
+        self._validate_logical_block_index(logical_block_index)
+        self._validate_mapping(physical_block_id)
+        previous_block_id = self._physical_block_ids[logical_block_index]
+        self._physical_block_ids[logical_block_index] = physical_block_id
+        return previous_block_id
 
     def token_slot(self, token_position: int) -> tuple[int, int] | None:
         """Map a token position to ``(physical_block_id, block_offset)``."""
@@ -360,3 +351,13 @@ class BlockTable:
     def _validate_mapping(physical_block_id: int | None) -> None:
         if physical_block_id is not None and physical_block_id < 0:
             raise ValueError("physical_block_id must be non-negative or None")
+
+    def _validate_logical_block_index(self, logical_block_index: int) -> None:
+        if (
+            logical_block_index < 0
+            or logical_block_index >= len(self._physical_block_ids)
+        ):
+            raise ValueError(
+                f"invalid logical_block_index {logical_block_index}: expected "
+                f"0 <= logical_block_index < {len(self._physical_block_ids)}"
+            )

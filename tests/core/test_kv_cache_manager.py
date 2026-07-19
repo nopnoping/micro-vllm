@@ -87,7 +87,7 @@ def test_register_request_rejects_duplicate_id_without_replacing_table() -> None
     assert manager._block_tables["request-1"] is original_table
 
 
-def test_find_prefix_hit_acquires_contiguous_complete_blocks() -> None:
+def test_find_then_allocate_prefix_hit_separates_discovery_from_ownership() -> None:
     manager = make_manager(
         block_size=2,
         num_blocks=4,
@@ -104,7 +104,19 @@ def test_find_prefix_hit_acquires_contiguous_complete_blocks() -> None:
 
     assert hit_block_ids == (0, 1)
     assert num_hit_tokens == 4
-    assert manager.get_block_table("request-1") == (0, 1)
+    assert manager.get_block_table("request-1") == ()
+    assert manager._block_pool.ref_count(0) == 0
+    assert manager._block_pool.ref_count(1) == 0
+
+    allocation = manager.allocate_slots(
+        "request-1",
+        num_hit_tokens,
+        1,
+        hit_block_ids,
+    )
+
+    assert allocation == KVCacheAllocation((0, 1, 2), (2,))
+    assert manager.get_block_table("request-1") == (0, 1, 2)
     assert manager._block_pool.ref_count(0) == 1
     assert manager._block_pool.ref_count(1) == 1
 
@@ -177,37 +189,32 @@ def test_find_prefix_hit_stops_at_first_missing_parent_chain_block() -> None:
         (1, 2, 3, 4, 5, 6, 7),
         cache_namespace="model-a",
     ) == ((0,), 2)
-    assert manager.get_block_table("request-1") == (0,)
-    assert manager._block_pool.ref_count(0) == 1
+    assert manager.get_block_table("request-1") == ()
+    assert manager._block_pool.ref_count(0) == 0
     assert manager._block_pool.ref_count(1) == 0
 
 
-def test_find_prefix_hit_rolls_back_acquired_blocks_on_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manager = make_manager(block_size=2, enable_prefix_cache=True)
+def test_allocate_prefix_hit_is_atomic_when_capacity_is_insufficient() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=2,
+        enable_prefix_cache=True,
+    )
     block_hashes = cache_token_blocks(manager, ((1, 2), (3, 4)))
     manager.register_request("request-1")
-    num_hash_calls = 0
-
-    def fail_on_second_hash(*args: object, **kwargs: object) -> bytes:
-        nonlocal num_hash_calls
-        num_hash_calls += 1
-        if num_hash_calls == 2:
-            raise RuntimeError("injected hash failure")
-        return hash_block(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(
-        "micro_vllm.core.kv_cache_manager.hash_block",
-        fail_on_second_hash,
+    hit_block_ids, num_hit_tokens = manager.find_prefix_hit(
+        "request-1",
+        (1, 2, 3, 4, 5),
+        cache_namespace="model-a",
     )
+    assert hit_block_ids == (0, 1)
 
-    with pytest.raises(RuntimeError, match="injected hash failure"):
-        manager.find_prefix_hit(
-            "request-1",
-            (1, 2, 3, 4, 5),
-            cache_namespace="model-a",
-        )
+    assert manager.allocate_slots(
+        "request-1",
+        num_hit_tokens,
+        1,
+        hit_block_ids,
+    ) is None
 
     assert manager.get_block_table("request-1") == ()
     assert manager._block_pool.ref_count(0) == 0
@@ -251,10 +258,95 @@ def test_find_prefix_hit_keeps_last_aligned_block_for_model_computation(
         token_ids,
         cache_namespace="model-a",
     ) == expected_hit
-    assert manager.get_block_table("request-1") == expected_hit[0]
-    assert manager._block_pool.ref_count(0) == (1 if expected_hit[0] else 0)
+    assert manager.get_block_table("request-1") == ()
+    assert manager._block_pool.ref_count(0) == 0
     if len(token_blocks) == 2:
         assert manager._block_pool.ref_count(1) == 0
+
+
+def test_commit_prefix_blocks_caches_only_complete_blocks_and_is_idempotent() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=4,
+        enable_prefix_cache=True,
+    )
+    manager.register_request("request-1")
+    assert manager.allocate_slots("request-1", 0, 5) is not None
+
+    first_commit = manager.commit_prefix_blocks(
+        "request-1",
+        (1, 2, 3, 4, 5),
+        5,
+        cache_namespace="model-a",
+    )
+    second_commit = manager.commit_prefix_blocks(
+        "request-1",
+        (1, 2, 3, 4, 5),
+        5,
+        cache_namespace="model-a",
+    )
+
+    assert first_commit == second_commit == (0, 1)
+    assert manager.get_block_table("request-1") == (0, 1, 2)
+    assert manager._block_pool.num_cached_blocks == 2
+    assert manager._block_pool.block_hash(0) is not None
+    assert manager._block_pool.block_hash(1) is not None
+    assert manager._block_pool.block_hash(2) is None
+    assert tuple(manager._block_pool.ref_count(block_id) for block_id in range(3)) == (
+        1,
+        1,
+        1,
+    )
+
+
+def test_commit_prefix_blocks_reuses_canonical_block_and_releases_duplicate() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=2,
+        enable_prefix_cache=True,
+    )
+    manager.register_request("request-1")
+    assert manager.allocate_slots("request-1", 0, 2) is not None
+    assert manager.commit_prefix_blocks(
+        "request-1",
+        (1, 2),
+        2,
+        cache_namespace="model-a",
+    ) == (0,)
+    manager.free_request("request-1")
+
+    manager.register_request("request-2")
+    allocation = manager.allocate_slots("request-2", 0, 2)
+    assert allocation == KVCacheAllocation((1,), (1,))
+
+    canonical_block_ids = manager.commit_prefix_blocks(
+        "request-2",
+        (1, 2),
+        2,
+        cache_namespace="model-a",
+    )
+
+    assert canonical_block_ids == (0,)
+    assert manager.get_block_table("request-2") == (0,)
+    assert manager._block_pool.ref_count(0) == 1
+    assert manager._block_pool.ref_count(1) == 0
+    assert manager._block_pool.free_block_ids == (1,)
+    assert manager._block_pool.num_cached_blocks == 1
+
+
+def test_commit_prefix_blocks_is_disabled_by_cache_config() -> None:
+    manager = make_manager(block_size=2, enable_prefix_cache=False)
+    manager.register_request("request-1")
+    assert manager.allocate_slots("request-1", 0, 2) is not None
+
+    assert manager.commit_prefix_blocks(
+        "request-1",
+        (1, 2),
+        2,
+        cache_namespace="model-a",
+    ) == ()
+    assert manager._block_pool.num_cached_blocks == 0
+    assert manager._block_pool.block_hash(0) is None
 
 
 @pytest.mark.parametrize("operation", ["get_block_table", "free_request"])

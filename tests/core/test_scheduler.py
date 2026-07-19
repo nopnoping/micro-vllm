@@ -4,6 +4,7 @@ import pytest
 
 from micro_vllm.config import CacheConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
+from micro_vllm.core.prefix_cache import hash_block
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.core.scheduler_output import SchedulerOutput
@@ -45,6 +46,8 @@ def make_scheduler(
     *,
     block_size: int = 4,
     num_blocks: int = 128,
+    enable_prefix_cache: bool = False,
+    cache_namespace: str = "default",
 ) -> Scheduler:
     return Scheduler(
         SchedulerConfig(token_budget, sequence_budget),
@@ -52,9 +55,10 @@ def make_scheduler(
             CacheConfig(
                 block_size=block_size,
                 num_blocks=num_blocks,
-                enable_prefix_cache=False,
+                enable_prefix_cache=enable_prefix_cache,
             )
         ),
+        cache_namespace=cache_namespace,
     )
 
 
@@ -388,6 +392,126 @@ def test_invalid_executor_outputs_fail_atomically_and_can_be_retried() -> None:
 
     scheduler.update(plan, make_output({"first": 3, "second": 4}))
     assert first.num_computed_tokens == second.num_computed_tokens == 1
+
+
+def test_successful_update_commits_prefix_before_finished_request_release() -> None:
+    scheduler = make_scheduler(
+        2,
+        1,
+        block_size=2,
+        num_blocks=2,
+        enable_prefix_cache=True,
+        cache_namespace="model-a",
+    )
+    request = make_request("request-1", [1, 2], max_tokens=1)
+    scheduler.add_request(request)
+    plan = scheduler.schedule()
+    pool = scheduler._kv_cache_manager._block_pool
+
+    with pytest.raises(ValueError, match="missing sampled token"):
+        scheduler.update(plan, ModelRunnerOutput())
+    assert pool.num_cached_blocks == 0
+
+    scheduler.update(plan, make_output({"request-1": 7}))
+
+    block_hash = hash_block(
+        None,
+        (1, 2),
+        block_size=2,
+        cache_namespace="model-a",
+    )
+    cached_block = pool.get_cached_block(block_hash)
+    assert request.finish_reason is FinishReason.LENGTH
+    assert cached_block is not None
+    assert cached_block.block_id == 0
+    assert cached_block.ref_count == 0
+    assert pool.free_block_ids == (1, 0)
+
+
+def test_successful_update_does_not_commit_partial_block() -> None:
+    scheduler = make_scheduler(
+        1,
+        1,
+        block_size=2,
+        enable_prefix_cache=True,
+    )
+    request = make_request("request-1", [1], max_tokens=2)
+    scheduler.add_request(request)
+    plan = scheduler.schedule()
+
+    scheduler.update(plan, make_output({"request-1": 7}))
+
+    assert scheduler._kv_cache_manager._block_pool.num_cached_blocks == 0
+
+
+def test_waiting_request_uses_prefix_hit_before_admission() -> None:
+    scheduler = make_scheduler(
+        5,
+        1,
+        block_size=2,
+        num_blocks=4,
+        enable_prefix_cache=True,
+        cache_namespace="model-a",
+    )
+    first = make_request("first", [1, 2, 3, 4, 5], max_tokens=1)
+    scheduler.add_request(first)
+    first_plan = scheduler.schedule()
+    scheduler.update(first_plan, make_output({"first": 9}))
+
+    second = make_request("second", [1, 2, 3, 4, 5], max_tokens=1)
+    scheduler.add_request(second)
+    second_plan = scheduler.schedule()
+
+    assert second.status is RequestStatus.RUNNING
+    assert second.num_computed_tokens == 4
+    assert len(second_plan.scheduled_requests) == 1
+    scheduled = second_plan.scheduled_requests[0]
+    assert scheduled.input_token_ids == (5,)
+    assert scheduled.num_computed_tokens == 4
+    assert scheduled.num_scheduled_tokens == 1
+    assert scheduled.requires_sampling is True
+    assert scheduled.block_table[:2] == (0, 1)
+
+
+def test_waiting_prefix_hit_rolls_back_when_slot_allocation_fails() -> None:
+    manager = KVCacheManager(
+        CacheConfig(
+            block_size=2,
+            num_blocks=2,
+            enable_prefix_cache=True,
+        )
+    )
+    manager.register_request("seed")
+    assert manager.allocate_slots("seed", 0, 4) is not None
+    assert manager.commit_prefix_blocks(
+        "seed",
+        (1, 2, 3, 4),
+        4,
+        cache_namespace="model-a",
+    ) == (0, 1)
+    manager.free_request("seed")
+    scheduler = Scheduler(
+        SchedulerConfig(1, 1),
+        manager,
+        cache_namespace="model-a",
+    )
+    request = make_request("request-1", [1, 2, 3, 4, 5])
+    scheduler.add_request(request)
+
+    assert scheduler.schedule().scheduled_requests == ()
+    assert request.status is RequestStatus.WAITING
+    assert request.num_computed_tokens == 0
+    assert manager.get_block_table("request-1") == ()
+    assert manager._block_pool.ref_count(0) == 0
+    assert manager._block_pool.ref_count(1) == 0
+
+    # A retry performs a fresh read-only lookup and rolls back again.
+    assert scheduler.schedule().scheduled_requests == ()
+    assert request.status is RequestStatus.WAITING
+    assert request.num_computed_tokens == 0
+    assert manager.get_block_table("request-1") == ()
+    assert manager._block_pool.ref_count(0) == 0
+    assert manager._block_pool.ref_count(1) == 0
 
 
 def test_eos_finishes_request_while_ignore_eos_continues() -> None:

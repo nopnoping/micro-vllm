@@ -337,10 +337,12 @@ BlockPool + BlockTable
 - [x] `find_prefix_hit()` 只按完整 token block 顺序查找。
 - [x] 命中必须从第一个 logical block 连续开始。
 - [x] 遇到第一个 miss 后停止，不跳过中间 block。
-- [x] 命中 block 为 request 增加 refcount。
-- [x] 命中 block append 到 request BlockTable。
-- [x] lookup 失败或中途异常时回滚本次已 retain blocks。
-- [x] 返回命中 block IDs 和命中 token 数，不直接修改 Request。
+- [x] `find_prefix_hit()` 不增加 refcount，不修改 BlockTable 或 Request。
+- [x] cached block IDs 传入 `allocate_slots()` 与新 block 一起原子认领。
+- [x] refcount 为零的 cached blocks 计入本次 free block 容量消耗。
+- [x] allocation 成功后才 append cached blocks 到 request BlockTable。
+- [x] 返回候选 block IDs 和命中 token 数，不直接修改 Request。
+- [x] `num_computed_tokens` 由 Scheduler 在 allocation 成功后更新。
 
 ### 保留采样所需 token
 
@@ -352,13 +354,13 @@ BlockPool + BlockTable
 
 ### 计算提交
 
-- [ ] 只有 Scheduler.update 成功后调用 prefix commit。
-- [ ] 只提交 `num_computed_tokens // block_size` 范围内完整 computed blocks。
-- [ ] partial block 不进入 cache。
-- [ ] 同一 request/block 不重复插入 hash mapping。
-- [ ] 相同 block hash 已存在时复用 canonical cached block 的策略明确。
-- [ ] 若 newly computed block 与已缓存 canonical block 重复，处理替换/释放而不泄漏引用。
-- [ ] request finish 前先完成可缓存 block commit，再释放 request references。
+- [x] 只有 Scheduler.update 成功后调用 prefix commit。
+- [x] 只提交 `num_computed_tokens // block_size` 范围内完整 computed blocks。
+- [x] partial block 不进入 cache。
+- [x] 同一 request/block 不重复插入 hash mapping。
+- [x] 相同 block hash 已存在时复用 canonical cached block 的策略明确。
+- [x] 若 newly computed block 与已缓存 canonical block 重复，处理替换/释放而不泄漏引用。
+- [x] request finish 前先完成可缓存 block commit，再释放 request references。
 
 ### Prefix tests
 
@@ -366,11 +368,11 @@ BlockPool + BlockTable
 - [x] 不同 token、parent hash 或 namespace 不命中。
 - [x] partial block 不命中。
 - [x] 中间 block miss 后不继续命中。
-- [x] cache hit 增加 request refcount。
-- [ ] request finish 后零引用 cached block 保留 hash mapping。
-- [ ] cached free block 被复用时删除 hash mapping。
-- [ ] active shared block 不进入 free queue。
-- [ ] capacity pressure 按 free queue 顺序确定性复用 cached block。
+- [x] cache allocation 成功后增加 request refcount。
+- [x] request finish 后零引用 cached block 保留 hash mapping。
+- [x] cached free block 被复用时删除 hash mapping。
+- [x] active shared block 不进入 free queue。
+- [x] capacity pressure 按 free queue 顺序确定性复用 cached block。
 - [x] block-aligned prompt 至少重算最后一个 block。
 - [ ] prefix cache on/off 最终 token 输出一致。
 
@@ -393,8 +395,8 @@ BlockPool + BlockTable
 - [ ] PREEMPTED request 被放入明确的 resume queue。
 - [ ] resumed request 优先级相对新 WAITING request 有明确策略。
 - [ ] resume 时可重新执行 prefix lookup。
-- [ ] prefix hit token 数由 Scheduler 提交到 Request 进度。
-- [ ] 无 prefix hit 时从零 recompute。
+- [x] prefix hit token 数由 Scheduler 提交到 Request 进度。
+- [x] 无 prefix hit 时从零 recompute。
 
 ### Scheduler 行为
 

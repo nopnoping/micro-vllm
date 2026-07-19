@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from micro_vllm.config import CacheConfig
-from micro_vllm.core.block import BlockPool, BlockTable
+from micro_vllm.core.block import BlockHash, BlockPool, BlockTable
 from micro_vllm.core.prefix_cache import hash_block
 
 
@@ -72,56 +72,91 @@ class KVCacheManager:
         *,
         cache_namespace: str,
     ) -> tuple[tuple[int, ...], int]:
-        """Acquire the longest contiguous sequence of cached full blocks.
+        """Find the longest contiguous sequence of cached full blocks.
 
         At least one known token remains for model computation. Returns
-        ``(block_ids, num_hit_tokens)`` and appends hit blocks to the
-        manager-owned BlockTable. Request state remains unchanged.
+        ``(block_ids, num_hit_tokens)`` without retaining blocks or modifying
+        the manager-owned BlockTable or Request state.
         """
 
-        block_table = self._require_block_table(request_id)
+        self._require_block_table(request_id)
         if not self._enable_prefix_cache:
             return (), 0
-        if block_table.num_logical_blocks != 0:
-            raise ValueError(
-                f"prefix lookup requires an empty block table for request_id "
-                f"{request_id}"
-            )
-        if not cache_namespace:
-            raise ValueError("cache_namespace must not be empty")
 
         tokens = tuple(token_ids)
         num_lookup_blocks = max(len(tokens) - 1, 0) // self._block_size
         hit_block_ids: list[int] = []
-        parent_block_hash = None
+        parent_block_hash: BlockHash | None = None
 
-        try:
-            for logical_block_index in range(num_lookup_blocks):
-                block_start = logical_block_index * self._block_size
-                token_block = tokens[
-                    block_start : block_start + self._block_size
-                ]
-                block_hash = hash_block(
-                    parent_block_hash,
-                    token_block,
-                    block_size=self._block_size,
-                    cache_namespace=cache_namespace,
-                )
-                cached_block = self._block_pool.acquire_cached_block(block_hash)
-                if cached_block is None:
-                    break
+        for logical_block_index in range(num_lookup_blocks):
+            block_start = logical_block_index * self._block_size
+            token_block = tokens[
+                block_start : block_start + self._block_size
+            ]
+            block_hash = hash_block(
+                parent_block_hash,
+                token_block,
+                block_size=self._block_size,
+                cache_namespace=cache_namespace,
+            )
+            cached_block = self._block_pool.get_cached_block(block_hash)
+            if cached_block is None:
+                break
 
-                hit_block_ids.append(cached_block.block_id)
-                parent_block_hash = block_hash
-
-            block_table.extend(hit_block_ids)
-        except Exception:
-            for block_id in reversed(hit_block_ids):
-                self._block_pool.release(block_id)
-            raise
+            hit_block_ids.append(cached_block.block_id)
+            parent_block_hash = block_hash
 
         immutable_block_ids = tuple(hit_block_ids)
         return immutable_block_ids, len(immutable_block_ids) * self._block_size
+
+    def commit_prefix_blocks(
+        self,
+        request_id: str,
+        token_ids: Iterable[int],
+        num_computed_tokens: int,
+        *,
+        cache_namespace: str,
+    ) -> tuple[int, ...]:
+        """Cache all complete computed blocks and return canonical block IDs."""
+
+        block_table = self._require_block_table(request_id)
+        if not self._enable_prefix_cache:
+            return ()
+
+        tokens = tuple(token_ids)
+        num_full_blocks = num_computed_tokens // self._block_size
+        parent_block_hash: BlockHash | None = None
+        canonical_block_ids: list[int] = []
+        for logical_block_index in range(num_full_blocks):
+            block_start = logical_block_index * self._block_size
+            token_block = tokens[
+                block_start : block_start + self._block_size
+            ]
+            block_hash = hash_block(
+                parent_block_hash,
+                token_block,
+                block_size=self._block_size,
+                cache_namespace=cache_namespace,
+            )
+            block_id = block_table.physical_block(logical_block_index)
+            canonical_block = self._block_pool.get_cached_block(block_hash)
+            if canonical_block is None:
+                canonical_block = self._block_pool.cache_block(
+                    block_id,
+                    block_hash,
+                )
+            elif canonical_block.block_id != block_id:
+                self._block_pool.acquire_cached_block(block_hash)
+                block_table.replace(
+                    logical_block_index,
+                    canonical_block.block_id,
+                )
+                self._block_pool.release(block_id)
+
+            canonical_block_ids.append(canonical_block.block_id)
+            parent_block_hash = block_hash
+
+        return tuple(canonical_block_ids)
 
     def get_num_blocks_to_allocate(
         self,
@@ -148,25 +183,26 @@ class KVCacheManager:
         request_id: str,
         num_computed_tokens: int,
         num_scheduled_tokens: int,
+        cached_block_ids: Iterable[int] = (),
     ) -> KVCacheAllocation | None:
         """Atomically reserve slots for the currently scheduled token range."""
 
+        block_table = self._require_block_table(request_id)
+        cached_ids = tuple(cached_block_ids)
         num_new_blocks = self.get_num_blocks_to_allocate(
             request_id,
             num_computed_tokens,
             num_scheduled_tokens,
-        )
-        block_table = self._require_block_table(request_id)
-        if num_new_blocks == 0:
-            return KVCacheAllocation(
-                block_table=block_table.snapshot(),
-                new_block_ids=(),
-            )
+        ) - len(cached_ids)
 
-        new_block_ids = self._block_pool.allocate(num_new_blocks)
+        new_block_ids = self._block_pool.allocate(
+            num_new_blocks,
+            cached_ids,
+        )
         if new_block_ids is None:
             return None
 
+        block_table.extend(cached_ids)
         block_table.extend(new_block_ids)
         return KVCacheAllocation(
             block_table=block_table.snapshot(),
