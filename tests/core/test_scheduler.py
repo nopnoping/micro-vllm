@@ -492,21 +492,73 @@ def test_equal_but_foreign_plan_is_rejected() -> None:
 
 
 def test_abort_handles_waiting_and_running_requests() -> None:
-    scheduler = make_scheduler(4, 1)
+    scheduler = make_scheduler(4, 1, block_size=4, num_blocks=2)
     waiting = make_request("waiting", [1])
     scheduler.add_request(waiting)
+    free_blocks_before = scheduler._kv_cache_manager._block_pool.free_block_ids
     assert scheduler.abort_request("waiting") is True
     assert waiting.finish_reason is FinishReason.ABORTED
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == free_blocks_before
+    with pytest.raises(KeyError, match="unknown request_id: waiting"):
+        scheduler._kv_cache_manager.get_block_table("waiting")
     assert scheduler.abort_request("waiting") is False
     assert scheduler.abort_request("unknown") is False
 
-    running = make_request("running", [2])
+    running = make_request("running", [2, 3, 4, 5])
     scheduler.add_request(running)
     pending_plan = scheduler.schedule()
+    assert pending_plan.scheduled_requests[0].block_table == (0,)
+    assert scheduler._kv_cache_manager._block_pool.num_free_blocks == 1
     assert scheduler.abort_request("running") is True
     with pytest.raises(ValueError, match="not pending"):
         scheduler.update(pending_plan, make_output({"running": 3}))
     assert running.finish_reason is FinishReason.ABORTED
+    assert scheduler._kv_cache_manager._block_pool.num_free_blocks == 2
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == (1, 0)
+    with pytest.raises(KeyError, match="unknown request_id: running"):
+        scheduler._kv_cache_manager.get_block_table("running")
+
+
+def test_abort_pending_request_preserves_other_request_reservation() -> None:
+    scheduler = make_scheduler(8, 2, block_size=4, num_blocks=2)
+    first = make_request("first", [1, 2, 3, 4])
+    second = make_request("second", [5, 6, 7, 8])
+    scheduler.add_request(first)
+    scheduler.add_request(second)
+    pending_plan = scheduler.schedule()
+    assert [item.block_table for item in pending_plan.scheduled_requests] == [
+        (0,),
+        (1,),
+    ]
+
+    assert scheduler.abort_request("first") is True
+
+    assert first.finish_reason is FinishReason.ABORTED
+    assert second.status is RequestStatus.RUNNING
+    assert scheduler._pending_plan is None
+    assert scheduler._kv_cache_manager.get_block_table("second") == (1,)
+    assert scheduler._kv_cache_manager._block_pool.ref_count(0) == 0
+    assert scheduler._kv_cache_manager._block_pool.ref_count(1) == 1
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == (0,)
+
+    rebuilt_plan = scheduler.schedule()
+    assert [item.request_id for item in rebuilt_plan.scheduled_requests] == ["second"]
+    assert rebuilt_plan.scheduled_requests[0].block_table == (1,)
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == (0,)
+
+
+def test_abort_finished_request_does_not_release_cache_twice() -> None:
+    scheduler = make_scheduler(4, 1, block_size=4, num_blocks=2)
+    request = make_request("request-1", [1], max_tokens=1)
+    scheduler.add_request(request)
+    plan = scheduler.schedule()
+    scheduler.update(plan, make_output({"request-1": 2}))
+    free_blocks_before = scheduler._kv_cache_manager._block_pool.free_block_ids
+
+    assert scheduler.abort_request("request-1") is False
+
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == free_blocks_before
+    assert scheduler._kv_cache_manager._block_pool.ref_count(0) == 0
 
 
 def test_active_request_without_pending_tokens_is_rejected() -> None:

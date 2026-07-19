@@ -62,6 +62,7 @@ class Scheduler:
             for scheduled in self._pending_plan.scheduled_requests
         ):
             self._pending_plan = None
+        self._kv_cache_manager.free_request(request_id)
         return True
 
     def get_request(self, request_id: str) -> Request | None:

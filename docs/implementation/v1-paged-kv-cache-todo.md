@@ -272,11 +272,11 @@ BlockPool + BlockTable
 
 ### abort 集成
 
-- [ ] abort waiting 且从未分配 block 的 request 不影响 pool。
-- [ ] abort running request 释放其所有 block。
-- [ ] abort pending plan 中 request 时安全取消 plan 或重建 plan。
-- [ ] abort 不得泄漏其他 plan request 的 block。
-- [ ] abort finished request 不重复释放。
+- [x] abort waiting 且从未分配 block 的 request 不影响 pool。
+- [x] abort running request 释放其所有 block。
+- [x] abort pending plan 中 request 时安全取消 plan 或重建 plan。
+- [x] abort 不得泄漏其他 plan request 的 block。
+- [x] abort finished request 不重复释放。
 
 ### 测试更新
 
@@ -285,7 +285,7 @@ BlockPool + BlockTable
 - [x] prompt chunk 跨 block boundary 时逐步追加 block。
 - [x] sampled token 只在下一 step 获得 slot。
 - [x] finish 后 pool 恢复预期 free block 数。
-- [ ] abort waiting/running 后 pool 状态正确。
+- [x] abort waiting/running 后 pool 状态正确。
 - [x] invalid executor output 重试不重复分配。
 - [x] equal-but-foreign plan 不释放或污染 block。
 - [x] cache 容量不足时 waiting request 保持 WAITING。
@@ -293,9 +293,9 @@ BlockPool + BlockTable
 ## 9. Phase C 验收
 
 - [x] V1 需求“finish 释放非共享 KV block”完成。
-- [ ] V1 需求“abort/cancel 安全释放资源”完成。
+- [x] V1 需求“abort/cancel 安全释放资源”完成。
 - [x] SchedulerOutput 包含控制信息和 block IDs，不包含 tensor。
-- [ ] BlockPool 无泄漏、double free 或重复 allocation。
+- [x] BlockPool 无泄漏、double free 或重复 allocation。
 - [x] control-loop FakeExecutor 不需要理解 block allocation。
 
 ## 10. Phase D：PrefixCache 数据模型
