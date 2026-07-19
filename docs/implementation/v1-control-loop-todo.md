@@ -58,26 +58,26 @@ add_request
 
 ### `src/micro_vllm/config.py`
 
-- [ ] 定义最小 `SchedulerConfig`。
-- [ ] 添加 `max_num_batched_tokens: int`。
-- [ ] 添加 `max_num_seqs: int`。
-- [ ] 校验两个值均大于零。
-- [ ] 暂不引入 GPU、cache、model 或 parallel 配置。
+- [x] 定义最小 `SchedulerConfig`。
+- [x] 添加 `max_num_batched_tokens: int`。
+- [x] 添加 `max_num_seqs: int`。
+- [x] 校验两个值均大于零。
+- [x] 暂不引入 GPU、cache、model 或 parallel 配置。
 
 ### `src/micro_vllm/sampling/params.py`
 
-- [ ] 定义 frozen `SamplingParams`。
-- [ ] 添加 `max_tokens: int`。
-- [ ] 添加 `eos_token_id: int | None`。
-- [ ] 添加 `ignore_eos: bool`。
-- [ ] 校验 `max_tokens > 0`。
-- [ ] 暂不添加 temperature、top-k、top-p 和 random seed。
+- [x] 定义 frozen `SamplingParams`。
+- [x] 添加 `max_tokens: int`。
+- [x] 添加 `eos_token_id: int | None`。
+- [x] 添加 `ignore_eos: bool`。
+- [x] 校验 `max_tokens > 0`。
+- [x] 暂不添加 temperature、top-k、top-p 和 random seed。
 
 ### 测试
 
-- [ ] 非法 SchedulerConfig 能给出明确错误。
-- [ ] 非法 SamplingParams 能给出明确错误。
-- [ ] frozen SamplingParams 不能被原地修改。
+- [x] 非法 SchedulerConfig 能给出明确错误。
+- [x] 非法 SamplingParams 能给出明确错误。
+- [x] frozen SamplingParams 不能被原地修改。
 
 ## 6. Phase 2：Request Domain Model
 
