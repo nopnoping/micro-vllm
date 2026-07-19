@@ -1,9 +1,11 @@
 """Logical KV-cache allocation, sharing, preemption, and release."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from micro_vllm.config import CacheConfig
 from micro_vllm.core.block import BlockPool, BlockTable
+from micro_vllm.core.prefix_cache import hash_block
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,12 +37,18 @@ class KVCacheManager:
     request. Request objects and physical device tensors remain outside it.
     """
 
-    __slots__ = ("_block_pool", "_block_size", "_block_tables")
+    __slots__ = (
+        "_block_pool",
+        "_block_size",
+        "_block_tables",
+        "_enable_prefix_cache",
+    )
 
     def __init__(self, config: CacheConfig) -> None:
         self._block_pool = BlockPool(config.num_blocks)
         self._block_size = config.block_size
         self._block_tables: dict[str, BlockTable] = {}
+        self._enable_prefix_cache = config.enable_prefix_cache
 
     def register_request(self, request_id: str) -> None:
         """Create an empty BlockTable owned by ``request_id``."""
@@ -56,6 +64,64 @@ class KVCacheManager:
         """Return an immutable snapshot for a registered request."""
 
         return self._require_block_table(request_id).snapshot()
+
+    def find_prefix_hit(
+        self,
+        request_id: str,
+        token_ids: Iterable[int],
+        *,
+        cache_namespace: str,
+    ) -> tuple[tuple[int, ...], int]:
+        """Acquire the longest contiguous sequence of cached full blocks.
+
+        At least one known token remains for model computation. Returns
+        ``(block_ids, num_hit_tokens)`` and appends hit blocks to the
+        manager-owned BlockTable. Request state remains unchanged.
+        """
+
+        block_table = self._require_block_table(request_id)
+        if not self._enable_prefix_cache:
+            return (), 0
+        if block_table.num_logical_blocks != 0:
+            raise ValueError(
+                f"prefix lookup requires an empty block table for request_id "
+                f"{request_id}"
+            )
+        if not cache_namespace:
+            raise ValueError("cache_namespace must not be empty")
+
+        tokens = tuple(token_ids)
+        num_lookup_blocks = max(len(tokens) - 1, 0) // self._block_size
+        hit_block_ids: list[int] = []
+        parent_block_hash = None
+
+        try:
+            for logical_block_index in range(num_lookup_blocks):
+                block_start = logical_block_index * self._block_size
+                token_block = tokens[
+                    block_start : block_start + self._block_size
+                ]
+                block_hash = hash_block(
+                    parent_block_hash,
+                    token_block,
+                    block_size=self._block_size,
+                    cache_namespace=cache_namespace,
+                )
+                cached_block = self._block_pool.acquire_cached_block(block_hash)
+                if cached_block is None:
+                    break
+
+                hit_block_ids.append(cached_block.block_id)
+                parent_block_hash = block_hash
+
+            block_table.extend(hit_block_ids)
+        except Exception:
+            for block_id in reversed(hit_block_ids):
+                self._block_pool.release(block_id)
+            raise
+
+        immutable_block_ids = tuple(hit_block_ids)
+        return immutable_block_ids, len(immutable_block_ids) * self._block_size
 
     def get_num_blocks_to_allocate(
         self,

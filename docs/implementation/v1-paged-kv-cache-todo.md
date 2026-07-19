@@ -334,21 +334,21 @@ BlockPool + BlockTable
 
 ### 查找
 
-- [ ] `find_prefix_hit()` 只按完整 token block 顺序查找。
-- [ ] 命中必须从第一个 logical block 连续开始。
-- [ ] 遇到第一个 miss 后停止，不跳过中间 block。
-- [ ] 命中 block 为 request 增加 refcount。
-- [ ] 命中 block append 到 request BlockTable。
-- [ ] lookup 失败或中途异常时回滚本次已 retain blocks。
-- [ ] 返回命中 block IDs 和命中 token 数，不直接修改 Request。
+- [x] `find_prefix_hit()` 只按完整 token block 顺序查找。
+- [x] 命中必须从第一个 logical block 连续开始。
+- [x] 遇到第一个 miss 后停止，不跳过中间 block。
+- [x] 命中 block 为 request 增加 refcount。
+- [x] 命中 block append 到 request BlockTable。
+- [x] lookup 失败或中途异常时回滚本次已 retain blocks。
+- [x] 返回命中 block IDs 和命中 token 数，不直接修改 Request。
 
 ### 保留采样所需 token
 
-- [ ] prefix hit 后至少保留一个已知 token 由模型实际计算，以获得 logits。
-- [ ] prompt 长度不是 block size 整数倍时，只复用完整前缀 blocks。
-- [ ] prompt 恰好按 block 对齐时，不复用最后一个完整 block，避免无 token 可计算。
-- [ ] 首版不对共享的最后 block 执行 copy-on-write。
-- [ ] 上述规则有 block-aligned prompt 专项测试。
+- [x] prefix hit 后至少保留一个已知 token 由模型实际计算，以获得 logits。
+- [x] prompt 长度不是 block size 整数倍时，只复用完整前缀 blocks。
+- [x] prompt 恰好按 block 对齐时，不复用最后一个完整 block，避免无 token 可计算。
+- [x] 首版不对共享的最后 block 执行 copy-on-write。
+- [x] 上述规则有 block-aligned prompt 专项测试。
 
 ### 计算提交
 
@@ -362,16 +362,16 @@ BlockPool + BlockTable
 
 ### Prefix tests
 
-- [ ] 相同完整 prefix 命中。
-- [ ] 不同 token、parent hash 或 namespace 不命中。
-- [ ] partial block 不命中。
-- [ ] 中间 block miss 后不继续命中。
-- [ ] cache hit 增加 request refcount。
+- [x] 相同完整 prefix 命中。
+- [x] 不同 token、parent hash 或 namespace 不命中。
+- [x] partial block 不命中。
+- [x] 中间 block miss 后不继续命中。
+- [x] cache hit 增加 request refcount。
 - [ ] request finish 后零引用 cached block 保留 hash mapping。
 - [ ] cached free block 被复用时删除 hash mapping。
 - [ ] active shared block 不进入 free queue。
 - [ ] capacity pressure 按 free queue 顺序确定性复用 cached block。
-- [ ] block-aligned prompt 至少重算最后一个 block。
+- [x] block-aligned prompt 至少重算最后一个 block。
 - [ ] prefix cache on/off 最终 token 输出一致。
 
 ## 12. Phase E：Preemption 与 recompute

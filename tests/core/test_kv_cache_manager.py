@@ -6,16 +6,48 @@ import pytest
 
 from micro_vllm.config import CacheConfig
 from micro_vllm.core.kv_cache_manager import KVCacheAllocation, KVCacheManager
+from micro_vllm.core.prefix_cache import hash_block
 
 
-def make_manager(block_size: int = 4, num_blocks: int = 8) -> KVCacheManager:
+def make_manager(
+    block_size: int = 4,
+    num_blocks: int = 8,
+    *,
+    enable_prefix_cache: bool = False,
+) -> KVCacheManager:
     return KVCacheManager(
         CacheConfig(
             block_size=block_size,
             num_blocks=num_blocks,
-            enable_prefix_cache=False,
+            enable_prefix_cache=enable_prefix_cache,
         )
     )
+
+
+def cache_token_blocks(
+    manager: KVCacheManager,
+    token_blocks: tuple[tuple[int, ...], ...],
+    *,
+    namespace: str = "model-a",
+) -> tuple[bytes, ...]:
+    parent_hash = None
+    block_hashes: list[bytes] = []
+
+    for token_block in token_blocks:
+        block_ids = manager._block_pool.allocate(1)
+        assert block_ids is not None
+        block_hash = hash_block(
+            parent_hash,
+            token_block,
+            block_size=len(token_block),
+            cache_namespace=namespace,
+        )
+        manager._block_pool.cache_block(block_ids[0], block_hash)
+        manager._block_pool.release(block_ids[0])
+        block_hashes.append(block_hash)
+        parent_hash = block_hash
+
+    return tuple(block_hashes)
 
 
 def test_manager_owns_one_pool_and_empty_table_registry() -> None:
@@ -53,6 +85,176 @@ def test_register_request_rejects_duplicate_id_without_replacing_table() -> None
         manager.register_request("request-1")
 
     assert manager._block_tables["request-1"] is original_table
+
+
+def test_find_prefix_hit_acquires_contiguous_complete_blocks() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=4,
+        enable_prefix_cache=True,
+    )
+    block_hashes = cache_token_blocks(manager, ((1, 2), (3, 4)))
+    manager.register_request("request-1")
+
+    hit_block_ids, num_hit_tokens = manager.find_prefix_hit(
+        "request-1",
+        (1, 2, 3, 4, 5),
+        cache_namespace="model-a",
+    )
+
+    assert hit_block_ids == (0, 1)
+    assert num_hit_tokens == 4
+    assert manager.get_block_table("request-1") == (0, 1)
+    assert manager._block_pool.ref_count(0) == 1
+    assert manager._block_pool.ref_count(1) == 1
+
+    manager.free_request("request-1")
+    assert manager._block_pool.ref_count(0) == 0
+    assert manager._block_pool.ref_count(1) == 0
+    assert manager._block_pool.get_cached_block(block_hashes[0]) is not None
+    assert manager._block_pool.get_cached_block(block_hashes[1]) is not None
+
+
+def test_find_prefix_hit_ignores_partial_token_block() -> None:
+    manager = make_manager(block_size=2, enable_prefix_cache=True)
+    manager.register_request("request-1")
+
+    assert manager.find_prefix_hit(
+        "request-1",
+        (1,),
+        cache_namespace="model-a",
+    ) == ((), 0)
+    assert manager.get_block_table("request-1") == ()
+
+
+@pytest.mark.parametrize(
+    ("token_ids", "namespace"),
+    [
+        ((1, 3, 9), "model-a"),
+        ((1, 2, 9), "model-b"),
+    ],
+)
+def test_find_prefix_hit_rejects_different_token_or_namespace(
+    token_ids: tuple[int, ...],
+    namespace: str,
+) -> None:
+    manager = make_manager(block_size=2, enable_prefix_cache=True)
+    cache_token_blocks(manager, ((1, 2),))
+    manager.register_request("request-1")
+
+    assert manager.find_prefix_hit(
+        "request-1",
+        token_ids,
+        cache_namespace=namespace,
+    ) == ((), 0)
+    assert manager.get_block_table("request-1") == ()
+    assert manager._block_pool.ref_count(0) == 0
+
+
+def test_find_prefix_hit_stops_at_first_missing_parent_chain_block() -> None:
+    manager = make_manager(block_size=2, enable_prefix_cache=True)
+    first_hash = cache_token_blocks(manager, ((1, 2),))[0]
+    missing_hash = hash_block(
+        first_hash,
+        (3, 4),
+        block_size=2,
+        cache_namespace="model-a",
+    )
+    third_hash = hash_block(
+        missing_hash,
+        (5, 6),
+        block_size=2,
+        cache_namespace="model-a",
+    )
+    third_block_ids = manager._block_pool.allocate(1)
+    assert third_block_ids == (1,)
+    manager._block_pool.cache_block(1, third_hash)
+    manager._block_pool.release(1)
+    manager.register_request("request-1")
+
+    assert manager.find_prefix_hit(
+        "request-1",
+        (1, 2, 3, 4, 5, 6, 7),
+        cache_namespace="model-a",
+    ) == ((0,), 2)
+    assert manager.get_block_table("request-1") == (0,)
+    assert manager._block_pool.ref_count(0) == 1
+    assert manager._block_pool.ref_count(1) == 0
+
+
+def test_find_prefix_hit_rolls_back_acquired_blocks_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = make_manager(block_size=2, enable_prefix_cache=True)
+    block_hashes = cache_token_blocks(manager, ((1, 2), (3, 4)))
+    manager.register_request("request-1")
+    num_hash_calls = 0
+
+    def fail_on_second_hash(*args: object, **kwargs: object) -> bytes:
+        nonlocal num_hash_calls
+        num_hash_calls += 1
+        if num_hash_calls == 2:
+            raise RuntimeError("injected hash failure")
+        return hash_block(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "micro_vllm.core.kv_cache_manager.hash_block",
+        fail_on_second_hash,
+    )
+
+    with pytest.raises(RuntimeError, match="injected hash failure"):
+        manager.find_prefix_hit(
+            "request-1",
+            (1, 2, 3, 4, 5),
+            cache_namespace="model-a",
+        )
+
+    assert manager.get_block_table("request-1") == ()
+    assert manager._block_pool.ref_count(0) == 0
+    assert manager._block_pool.ref_count(1) == 0
+    assert manager._block_pool.get_cached_block(block_hashes[0]) is not None
+    assert manager._block_pool.get_cached_block(block_hashes[1]) is not None
+
+
+def test_find_prefix_hit_is_disabled_by_cache_config() -> None:
+    manager = make_manager(block_size=2, enable_prefix_cache=False)
+    cache_token_blocks(manager, ((1, 2),))
+    manager.register_request("request-1")
+
+    assert manager.find_prefix_hit(
+        "request-1",
+        (1, 2),
+        cache_namespace="model-a",
+    ) == ((), 0)
+    assert manager.get_block_table("request-1") == ()
+    assert manager._block_pool.ref_count(0) == 0
+
+
+@pytest.mark.parametrize(
+    ("token_blocks", "token_ids", "expected_hit"),
+    [
+        (((1, 2),), (1, 2), ((), 0)),
+        (((1, 2), (3, 4)), (1, 2, 3, 4), ((0,), 2)),
+    ],
+)
+def test_find_prefix_hit_keeps_last_aligned_block_for_model_computation(
+    token_blocks: tuple[tuple[int, ...], ...],
+    token_ids: tuple[int, ...],
+    expected_hit: tuple[tuple[int, ...], int],
+) -> None:
+    manager = make_manager(block_size=2, enable_prefix_cache=True)
+    cache_token_blocks(manager, token_blocks)
+    manager.register_request("request-1")
+
+    assert manager.find_prefix_hit(
+        "request-1",
+        token_ids,
+        cache_namespace="model-a",
+    ) == expected_hit
+    assert manager.get_block_table("request-1") == expected_hit[0]
+    assert manager._block_pool.ref_count(0) == (1 if expected_hit[0] else 0)
+    if len(token_blocks) == 2:
+        assert manager._block_pool.ref_count(1) == 0
 
 
 @pytest.mark.parametrize("operation", ["get_block_table", "free_request"])
