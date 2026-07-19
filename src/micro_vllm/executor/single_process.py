@@ -1,0 +1,1 @@
+"""Single-process executor implementation."""

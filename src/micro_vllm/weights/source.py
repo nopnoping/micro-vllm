@@ -1,0 +1,1 @@
+"""Streaming checkpoint tensor sources."""
