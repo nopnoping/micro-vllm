@@ -83,53 +83,53 @@ add_request
 
 ### `src/micro_vllm/core/request.py`
 
-- [ ] 定义 `RequestStatus` enum。
-- [ ] 状态至少包含 `WAITING`、`RUNNING`、`PREEMPTED`、`FINISHED`。
-- [ ] 定义 `FinishReason` enum。
-- [ ] FinishReason 至少包含 `EOS`、`LENGTH`、`ABORTED`。
-- [ ] 定义 Request dataclass。
-- [ ] 添加稳定 `request_id`。
-- [ ] 保存 prompt token IDs。
-- [ ] 保存 output token IDs。
-- [ ] 保存 `num_computed_tokens`。
-- [ ] 保存 SamplingParams。
-- [ ] 保存 status 和可选 finish reason。
+- [x] 定义 `RequestStatus` enum。
+- [x] 状态至少包含 `WAITING`、`RUNNING`、`PREEMPTED`、`FINISHED`。
+- [x] 定义 `FinishReason` enum。
+- [x] FinishReason 至少包含 `EOS`、`LENGTH`、`ABORTED`。
+- [x] 定义 Request dataclass。
+- [x] 添加稳定 `request_id`。
+- [x] 保存 prompt token IDs。
+- [x] 保存 output token IDs。
+- [x] 保存 `num_computed_tokens`。
+- [x] 保存 SamplingParams。
+- [x] 保存 status 和可选 finish reason。
 
 ### Request 计算属性
 
-- [ ] `num_prompt_tokens`。
-- [ ] `num_output_tokens`。
-- [ ] `num_known_tokens`。
-- [ ] `num_pending_tokens`。
-- [ ] `all_token_ids`，明确返回 copy、tuple 或只读 view。
-- [ ] `is_finished`。
+- [x] `num_prompt_tokens`。
+- [x] `num_output_tokens`。
+- [x] `num_known_tokens`。
+- [x] `num_pending_tokens`。
+- [x] `all_token_ids`，明确返回 copy、tuple 或只读 view。
+- [x] `is_finished`。
 
 ### Request 不变量
 
-- [ ] request ID 不能为空。
-- [ ] 首个里程碑拒绝空 prompt，并给出明确错误。
-- [ ] token ID 必须为非负整数。
-- [ ] `0 <= num_computed_tokens <= num_known_tokens`。
-- [ ] FINISHED request 必须有 finish reason。
-- [ ] 非 FINISHED request 不得有 finish reason。
+- [x] request ID 不能为空。
+- [x] 首个里程碑拒绝空 prompt，并给出明确错误。
+- [x] token ID 必须为非负整数。
+- [x] `0 <= num_computed_tokens <= num_known_tokens`。
+- [x] FINISHED request 必须有 finish reason。
+- [x] 非 FINISHED request 不得有 finish reason。
 
 ### Request 状态操作
 
-- [ ] 提供受控的 status transition 方法或集中式 transition helper。
-- [ ] 提供 append sampled token 的受控操作。
-- [ ] 提供增加 computed token 数的受控操作。
-- [ ] 提供 finish 操作并校验合法终态。
-- [ ] 非法状态迁移立即报错。
+- [x] 提供受控的 status transition 方法或集中式 transition helper。
+- [x] 提供 append sampled token 的受控操作。
+- [x] 提供增加 computed token 数的受控操作。
+- [x] 提供 finish 操作并校验合法终态。
+- [x] 非法状态迁移立即报错。
 
 ### `tests/core/test_request.py`
 
-- [ ] 测试初始化状态和所有计算属性。
-- [ ] 测试追加 output token 后 known/pending token 变化。
-- [ ] 测试增加 computed token 后 pending token 变化。
-- [ ] 测试 computed token 越界。
-- [ ] 测试非法 token ID 和空 prompt。
-- [ ] 测试合法与非法状态迁移。
-- [ ] 测试 EOS、LENGTH、ABORTED finish reason。
+- [x] 测试初始化状态和所有计算属性。
+- [x] 测试追加 output token 后 known/pending token 变化。
+- [x] 测试增加 computed token 后 pending token 变化。
+- [x] 测试 computed token 越界。
+- [x] 测试非法 token ID 和空 prompt。
+- [x] 测试合法与非法状态迁移。
+- [x] 测试 EOS、LENGTH、ABORTED finish reason。
 
 ## 7. Phase 3：Execution Plan Contract
 
