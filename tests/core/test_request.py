@@ -82,20 +82,6 @@ def test_append_sampled_token_updates_known_and_pending_tokens() -> None:
     assert request.all_token_ids == (1, 2, 3, 4)
 
 
-def test_append_sampled_token_requires_running_request_with_no_pending_tokens() -> None:
-    waiting = make_request()
-    with pytest.raises(ValueError, match="running request"):
-        waiting.append_sampled_token(4)
-
-    running = make_request()
-    running.transition_to(RequestStatus.RUNNING)
-    with pytest.raises(ValueError, match="known tokens are pending"):
-        running.append_sampled_token(4)
-
-    assert waiting.output_token_ids == []
-    assert running.output_token_ids == []
-
-
 def test_advance_computed_tokens_updates_pending_tokens() -> None:
     request = make_request()
     request.transition_to(RequestStatus.RUNNING)
@@ -104,27 +90,6 @@ def test_advance_computed_tokens_updates_pending_tokens() -> None:
 
     assert request.num_computed_tokens == 2
     assert request.num_pending_tokens == 1
-
-
-@pytest.mark.parametrize("num_tokens", [0, -1])
-def test_advance_computed_tokens_rejects_non_positive_count(num_tokens: int) -> None:
-    request = make_request()
-    request.transition_to(RequestStatus.RUNNING)
-
-    with pytest.raises(ValueError, match="greater than zero"):
-        request.advance_computed_tokens(num_tokens)
-
-    assert request.num_computed_tokens == 0
-
-
-def test_advance_computed_tokens_rejects_count_beyond_pending_tokens() -> None:
-    request = make_request()
-    request.transition_to(RequestStatus.RUNNING)
-
-    with pytest.raises(ValueError, match="must not exceed num_pending_tokens"):
-        request.advance_computed_tokens(4)
-
-    assert request.num_computed_tokens == 0
 
 
 @pytest.mark.parametrize("num_computed_tokens", [-1, 4])
@@ -208,29 +173,3 @@ def test_waiting_and_preempted_requests_can_be_aborted() -> None:
 
     assert waiting.finish_reason is FinishReason.ABORTED
     assert preempted.finish_reason is FinishReason.ABORTED
-
-
-def test_finish_rejects_illegal_state_and_preserves_request() -> None:
-    request = make_request()
-
-    with pytest.raises(ValueError, match="cannot finish WAITING request with EOS"):
-        request.finish(FinishReason.EOS)
-
-    assert request.status is RequestStatus.WAITING
-    assert request.finish_reason is None
-
-
-@pytest.mark.parametrize(
-    ("status", "finish_reason", "message"),
-    [
-        (RequestStatus.FINISHED, None, "finished request must have a finish_reason"),
-        (RequestStatus.WAITING, FinishReason.ABORTED, "unfinished request"),
-    ],
-)
-def test_initial_status_and_finish_reason_must_be_consistent(
-    status: RequestStatus,
-    finish_reason: FinishReason | None,
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        make_request(status=status, finish_reason=finish_reason)

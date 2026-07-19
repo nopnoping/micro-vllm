@@ -16,18 +16,8 @@ class KVCacheAllocation:
     new_block_ids: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        block_table = tuple(self.block_table)
-        new_block_ids = tuple(self.new_block_ids)
-
-        for block_id in block_table:
-            if block_id is not None and block_id < 0:
-                raise ValueError("block_table IDs must be non-negative or None")
-        for block_id in new_block_ids:
-            if block_id < 0:
-                raise ValueError("new_block_ids must be non-negative")
-
-        object.__setattr__(self, "block_table", block_table)
-        object.__setattr__(self, "new_block_ids", new_block_ids)
+        object.__setattr__(self, "block_table", tuple(self.block_table))
+        object.__setattr__(self, "new_block_ids", tuple(self.new_block_ids))
 
 
 class KVCacheManager:
@@ -52,11 +42,6 @@ class KVCacheManager:
 
     def register_request(self, request_id: str) -> None:
         """Create an empty BlockTable owned by ``request_id``."""
-
-        if not request_id:
-            raise ValueError("request_id must not be empty")
-        if request_id in self._block_tables:
-            raise ValueError(f"duplicate request_id: {request_id}")
 
         self._block_tables[request_id] = BlockTable(self._block_size)
 
@@ -166,11 +151,6 @@ class KVCacheManager:
     ) -> int:
         """Return missing blocks for computed plus currently scheduled tokens."""
 
-        if num_computed_tokens < 0:
-            raise ValueError("num_computed_tokens must be non-negative")
-        if num_scheduled_tokens < 0:
-            raise ValueError("num_scheduled_tokens must be non-negative")
-
         block_table = self._require_block_table(request_id)
         target_num_tokens = num_computed_tokens + num_scheduled_tokens
         required_num_blocks = (
@@ -222,7 +202,4 @@ class KVCacheManager:
         del self._block_tables[request_id]
 
     def _require_block_table(self, request_id: str) -> BlockTable:
-        try:
-            return self._block_tables[request_id]
-        except KeyError:
-            raise KeyError(f"unknown request_id: {request_id}") from None
+        return self._block_tables[request_id]

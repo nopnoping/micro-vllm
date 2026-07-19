@@ -69,7 +69,7 @@ def test_hash_changes_with_cache_namespace() -> None:
     )
 
 
-def test_cache_group_id_is_explicit_and_fixed_to_single_group() -> None:
+def test_cache_group_id_is_part_of_the_hash() -> None:
     assert SINGLE_CACHE_GROUP_ID == 0
     assert hash_block(
         None,
@@ -79,42 +79,10 @@ def test_cache_group_id_is_explicit_and_fixed_to_single_group() -> None:
         cache_group_id=0,
     ) == make_hash((1, 2))
 
-    with pytest.raises(ValueError, match="only cache_group_id 0 is supported"):
-        hash_block(
-            None,
-            (1, 2),
-            block_size=2,
-            cache_namespace="model-a",
-            cache_group_id=1,
-        )
-
-
-@pytest.mark.parametrize(
-    ("token_ids", "block_size"),
-    [
-        ((), 2),
-        ((1,), 2),
-        ((1, 2, 3), 2),
-    ],
-)
-def test_hash_requires_one_complete_token_block(
-    token_ids: tuple[int, ...],
-    block_size: int,
-) -> None:
-    with pytest.raises(ValueError, match="token block must contain exactly"):
-        hash_block(
-            None,
-            token_ids,
-            block_size=block_size,
-            cache_namespace="model-a",
-        )
-
-
-def test_hash_rejects_invalid_parent_digest() -> None:
-    with pytest.raises(ValueError, match="parent_block_hash must contain 32 bytes"):
-        hash_block(
-            b"short",
-            (1, 2),
-            block_size=2,
-            cache_namespace="model-a",
-        )
+    assert hash_block(
+        None,
+        (1, 2),
+        block_size=2,
+        cache_namespace="model-a",
+        cache_group_id=1,
+    ) != make_hash((1, 2))

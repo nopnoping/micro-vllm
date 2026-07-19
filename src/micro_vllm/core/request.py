@@ -40,14 +40,6 @@ _ALLOWED_STATUS_TRANSITIONS = {
     RequestStatus.FINISHED: frozenset(),
 }
 
-_ALLOWED_FINISH_REASONS = {
-    RequestStatus.WAITING: frozenset({FinishReason.ABORTED}),
-    RequestStatus.RUNNING: frozenset(FinishReason),
-    RequestStatus.PREEMPTED: frozenset({FinishReason.ABORTED}),
-    RequestStatus.FINISHED: frozenset(),
-}
-
-
 @dataclass(slots=True)
 class Request:
     """Mutable request state owned by the scheduler."""
@@ -78,12 +70,6 @@ class Request:
             raise ValueError(
                 "num_computed_tokens must be between zero and num_known_tokens"
             )
-
-        if self.status is RequestStatus.FINISHED:
-            if self.finish_reason is None:
-                raise ValueError("finished request must have a finish_reason")
-        elif self.finish_reason is not None:
-            raise ValueError("unfinished request must not have a finish_reason")
 
     @property
     def num_prompt_tokens(self) -> int:
@@ -134,32 +120,15 @@ class Request:
     def append_sampled_token(self, token_id: int) -> None:
         """Append one sampled token after all known tokens were computed."""
 
-        _validate_token_id("token_id", token_id)
-        if self.status is not RequestStatus.RUNNING:
-            raise ValueError("sampled token can only be appended to a running request")
-        if self.num_pending_tokens != 0:
-            raise ValueError(
-                "sampled token cannot be appended while known tokens are pending"
-            )
         self.output_token_ids.append(token_id)
 
     def advance_computed_tokens(self, num_tokens: int) -> None:
         """Commit computation of a positive number of pending tokens."""
 
-        if num_tokens <= 0:
-            raise ValueError("num_tokens must be greater than zero")
-        if self.status is not RequestStatus.RUNNING:
-            raise ValueError("computed tokens can only advance for a running request")
-        if num_tokens > self.num_pending_tokens:
-            raise ValueError("num_tokens must not exceed num_pending_tokens")
         self.num_computed_tokens += num_tokens
 
     def finish(self, reason: FinishReason) -> None:
         """Move the request to its terminal state with a legal reason."""
 
-        if reason not in _ALLOWED_FINISH_REASONS[self.status]:
-            raise ValueError(
-                f"cannot finish {self.status.name} request with {reason.name}"
-            )
         self.status = RequestStatus.FINISHED
         self.finish_reason = reason

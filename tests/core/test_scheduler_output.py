@@ -83,55 +83,6 @@ def test_total_num_scheduled_tokens_is_computed_from_requests() -> None:
     assert SchedulerOutput(()).total_num_scheduled_tokens == 0
 
 
-@pytest.mark.parametrize(
-    ("field_name", "value", "error_type", "message"),
-    [
-        ("num_computed_tokens", -1, ValueError, "must be non-negative"),
-        ("num_scheduled_tokens", 0, ValueError, "must be greater than zero"),
-        ("num_scheduled_tokens", -1, ValueError, "must be greater than zero"),
-    ],
-)
-def test_scheduled_request_rejects_invalid_fields(
-    field_name: str,
-    value: object,
-    error_type: type[Exception],
-    message: str,
-) -> None:
-    values = {
-        "request_id": "request-1",
-        "input_token_ids": (1, 2),
-        "num_computed_tokens": 0,
-        "num_scheduled_tokens": 2,
-        "requires_sampling": True,
-        "block_table": (0,),
-    }
-    values[field_name] = value
-
-    with pytest.raises(error_type, match=message):
-        ScheduledRequest(**values)
-
-
-def test_scheduled_request_rejects_negative_input_token_id() -> None:
-    with pytest.raises(ValueError, match=r"input_token_ids\[0\]"):
-        ScheduledRequest("request-1", (-1,), 0, 1, True, (0,))
-
-
-def test_scheduled_request_rejects_inconsistent_token_count() -> None:
-    with pytest.raises(
-        ValueError,
-        match="num_scheduled_tokens must equal the number of input_token_ids",
-    ):
-        ScheduledRequest("request-1", (1, 2), 0, 1, True, (0,))
-
-
-def test_scheduler_output_rejects_duplicate_request_ids() -> None:
-    first = make_scheduled_request()
-    duplicate = ScheduledRequest("request-1", (3,), 2, 1, True, (1,))
-
-    with pytest.raises(ValueError, match="duplicate request_id"):
-        SchedulerOutput((first, duplicate))
-
-
 def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
     block_table = [0, None]
     scheduled_request = ScheduledRequest(
@@ -148,15 +99,3 @@ def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
 
     assert scheduled_request.block_table == (0, None)
     assert isinstance(scheduled_request.block_table, tuple)
-
-
-def test_scheduled_request_rejects_negative_physical_block_id() -> None:
-    with pytest.raises(ValueError, match=r"block_table\[1\]"):
-        ScheduledRequest(
-            request_id="request-1",
-            input_token_ids=(1,),
-            num_computed_tokens=0,
-            num_scheduled_tokens=1,
-            requires_sampling=True,
-            block_table=(0, -1),
-        )

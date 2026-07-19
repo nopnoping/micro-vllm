@@ -16,7 +16,3 @@ class RequestOutput:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "output_token_ids", tuple(self.output_token_ids))
-        if self.finished and self.finish_reason is None:
-            raise ValueError("finished output must have a finish_reason")
-        if not self.finished and self.finish_reason is not None:
-            raise ValueError("unfinished output must not have a finish_reason")

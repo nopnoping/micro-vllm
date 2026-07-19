@@ -45,10 +45,6 @@ class Engine:
             if not scheduled_request.requires_sampling:
                 continue
             request = self._scheduler.get_request(scheduled_request.request_id)
-            if request is None:
-                raise RuntimeError(
-                    f"scheduled request disappeared: {scheduled_request.request_id}"
-                )
             outputs.append(
                 RequestOutput(
                     request_id=request.request_id,

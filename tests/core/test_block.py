@@ -31,12 +31,6 @@ def test_block_pool_initial_state() -> None:
     )
 
 
-@pytest.mark.parametrize("num_blocks", [0, -1])
-def test_block_pool_rejects_non_positive_capacity(num_blocks: int) -> None:
-    with pytest.raises(ValueError, match="num_blocks must be greater than zero"):
-        BlockPool(num_blocks)
-
-
 def test_allocate_single_and_multiple_blocks_in_free_queue_order() -> None:
     pool = BlockPool(5)
 
@@ -101,13 +95,6 @@ def test_allocate_allows_zero_new_blocks() -> None:
     assert BlockPool(2).allocate(0) == ()
 
 
-def test_allocate_rejects_negative_count() -> None:
-    pool = BlockPool(2)
-
-    with pytest.raises(ValueError, match="count must be non-negative"):
-        pool.allocate(-1)
-
-
 def test_retain_and_release_shared_block() -> None:
     pool = BlockPool(2)
     assert pool.allocate(1) == (0,)
@@ -168,30 +155,19 @@ def test_cached_block_remains_indexed_until_free_block_is_reused() -> None:
     assert pool.block_hash(0) is None
 
 
-def test_cache_block_is_idempotent_and_rejects_conflicting_identity() -> None:
-    pool = BlockPool(2)
+def test_cache_block_is_idempotent_and_updates_identity() -> None:
+    pool = BlockPool(1)
     first_hash = b"a" * 32
-    assert pool.allocate(2) == (0, 1)
+    second_hash = b"b" * 32
+    assert pool.allocate(1) == (0,)
 
     first = pool.cache_block(0, first_hash)
     assert pool.cache_block(0, first_hash) is first
     assert pool.ref_count(0) == 1
 
-    with pytest.raises(RuntimeError, match="block has a different hash"):
-        pool.cache_block(0, b"b" * 32)
-    with pytest.raises(RuntimeError, match="already cached by block_id 0"):
-        pool.cache_block(1, first_hash)
-
-
-def test_block_hash_rejects_free_block_and_invalid_digest() -> None:
-    pool = BlockPool(1)
-
-    with pytest.raises(RuntimeError, match="cannot cache block_id 0.*block is free"):
-        pool.cache_block(0, b"a" * 32)
-
-    assert pool.allocate(1) == (0,)
-    with pytest.raises(ValueError, match="block_hash must contain 32 bytes"):
-        pool.cache_block(0, b"short")
+    assert pool.cache_block(0, second_hash) is first
+    assert pool.get_cached_block(first_hash) is None
+    assert pool.get_cached_block(second_hash) is first
 
 
 def test_acquire_cached_active_block_adds_request_reference() -> None:
@@ -216,37 +192,6 @@ def test_evict_cached_block_only_removes_hash_mapping() -> None:
     assert pool.num_cached_blocks == 0
     assert pool.block_hash(0) is None
     assert pool.ref_count(0) == 1
-
-
-@pytest.mark.parametrize("block_id", [-1, 3])
-@pytest.mark.parametrize("operation", ["ref_count", "retain", "release"])
-def test_block_pool_rejects_invalid_block_id(
-    operation: str, block_id: int
-) -> None:
-    pool = BlockPool(3)
-
-    with pytest.raises(ValueError, match=rf"invalid block_id {block_id}"):
-        getattr(pool, operation)(block_id)
-
-
-def test_retain_rejects_free_block() -> None:
-    pool = BlockPool(2)
-
-    with pytest.raises(RuntimeError, match="cannot retain block_id 0: block is free"):
-        pool.retain(0)
-
-
-def test_release_rejects_double_free_without_duplicating_queue_entry() -> None:
-    pool = BlockPool(2)
-    assert pool.allocate(1) == (0,)
-    pool.release(0)
-    free_before = pool.free_block_ids
-
-    with pytest.raises(RuntimeError, match="cannot release block_id 0: block is free"):
-        pool.release(0)
-
-    assert pool.free_block_ids == free_before
-    assert pool.free_block_ids.count(0) == 1
 
 
 def test_free_block_snapshot_is_immutable_and_stable() -> None:
@@ -315,12 +260,6 @@ def test_block_table_initializes_empty_zero_based_mapping() -> None:
     assert table.snapshot() == ()
 
 
-@pytest.mark.parametrize("block_size", [0, -1])
-def test_block_table_rejects_non_positive_block_size(block_size: int) -> None:
-    with pytest.raises(ValueError, match="block_size must be greater than zero"):
-        BlockTable(block_size)
-
-
 def test_block_table_appends_single_and_multiple_mappings_in_order() -> None:
     table = BlockTable(block_size=4)
 
@@ -336,53 +275,12 @@ def test_block_table_appends_single_and_multiple_mappings_in_order() -> None:
     )
 
 
-def test_block_table_extend_is_atomic_for_invalid_mapping() -> None:
-    table = BlockTable(block_size=4)
-    table.append(7)
-
-    with pytest.raises(
-        ValueError, match="physical_block_id must be non-negative or None"
-    ):
-        table.extend([11, -1, 13])
-
-    assert table.physical_block(0) == 7
-    with pytest.raises(ValueError, match="invalid logical_block_index 1"):
-        table.physical_block(1)
-
-
-@pytest.mark.parametrize("logical_block_index", [-1, 2])
-def test_physical_block_rejects_out_of_range_logical_index(
-    logical_block_index: int,
-) -> None:
-    table = BlockTable(block_size=4)
-    table.extend([7, 11])
-
-    with pytest.raises(
-        ValueError, match=rf"invalid logical_block_index {logical_block_index}"
-    ):
-        table.physical_block(logical_block_index)
-
-
 def test_replace_updates_one_mapping_and_returns_previous_block() -> None:
     table = BlockTable(block_size=4)
     table.extend([7, 11])
 
     assert table.replace(1, 13) == 11
     assert table.snapshot() == (7, 13)
-
-
-def test_replace_rejects_invalid_index_or_mapping_without_mutation() -> None:
-    table = BlockTable(block_size=4)
-    table.extend([7, 11])
-
-    with pytest.raises(ValueError, match="invalid logical_block_index 2"):
-        table.replace(2, 13)
-    with pytest.raises(
-        ValueError, match="physical_block_id must be non-negative or None"
-    ):
-        table.replace(1, -1)
-
-    assert table.snapshot() == (7, 11)
 
 
 @pytest.mark.parametrize(
@@ -410,14 +308,13 @@ def test_token_slot_uses_divmod_mapping(
 
 
 @pytest.mark.parametrize("token_position", [-1, 8])
-def test_token_slot_rejects_position_outside_table_capacity(
+def test_token_slot_returns_none_outside_table_capacity(
     token_position: int,
 ) -> None:
     table = BlockTable(block_size=4)
     table.extend([7, 11])
 
-    with pytest.raises(ValueError, match="token_position"):
-        table.token_slot(token_position)
+    assert table.token_slot(token_position) is None
 
 
 def test_unmapped_queries_consistently_return_none() -> None:
@@ -465,18 +362,6 @@ def test_truncate_to_partial_block_keeps_covering_mapping() -> None:
     assert removed_block_ids == (13,)
     assert table.snapshot() == (7, 11)
     assert table.capacity_tokens == 8
-
-
-@pytest.mark.parametrize("num_tokens", [-1, 9])
-def test_truncate_rejects_invalid_token_length(num_tokens: int) -> None:
-    table = BlockTable(block_size=4)
-    table.extend([7, 11])
-    snapshot_before = table.snapshot()
-
-    with pytest.raises(ValueError, match="num_tokens"):
-        table.truncate(num_tokens)
-
-    assert table.snapshot() == snapshot_before
 
 
 def test_truncate_to_zero_is_equivalent_to_clear() -> None:

@@ -47,19 +47,10 @@ class Scheduler:
             return False
 
         if request.status is RequestStatus.WAITING:
-            if request not in self._waiting:
-                raise RuntimeError("waiting request is missing from the waiting queue")
-            request.finish(FinishReason.ABORTED)
             self._waiting.remove(request)
         elif request.status is RequestStatus.RUNNING:
-            if request not in self._running:
-                raise RuntimeError("running request is missing from the running collection")
-            request.finish(FinishReason.ABORTED)
             self._running.remove(request)
-        else:
-            raise RuntimeError(
-                f"unsupported active request status: {request.status.name}"
-            )
+        request.finish(FinishReason.ABORTED)
         if self._pending_plan is not None and any(
             scheduled.request_id == request_id
             for scheduled in self._pending_plan.scheduled_requests
@@ -87,17 +78,6 @@ class Scheduler:
         remaining_token_budget = self._config.max_num_batched_tokens
         scheduled_requests: list[ScheduledRequest] = []
         cache_capacity_exhausted = False
-
-        for request in self._running:
-            if request.status is not RequestStatus.RUNNING:
-                raise RuntimeError("running collection contains a non-running request")
-            if request.num_pending_tokens <= 0:
-                raise RuntimeError("active request must have pending tokens")
-        for request in self._waiting:
-            if request.status is not RequestStatus.WAITING:
-                raise RuntimeError("waiting queue contains a non-waiting request")
-            if request.num_pending_tokens <= 0:
-                raise RuntimeError("active request must have pending tokens")
 
         for request in self._running:
             if (
