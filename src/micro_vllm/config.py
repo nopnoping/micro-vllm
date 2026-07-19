@@ -7,9 +7,9 @@ from dataclasses import dataclass
 class CacheConfig:
     """Device-independent logical KV-cache configuration.
 
-    Prefix caching has no separate capacity limit. When enabled, complete
-    cached blocks are retained until the cache manager evicts them on demand
-    to satisfy new allocations.
+    Prefix caching has no separate capacity limit. Cached zero-reference
+    blocks remain reclaimable by the block pool and lose their hash mapping
+    automatically when their physical storage is reused.
     """
 
     block_size: int

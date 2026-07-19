@@ -22,17 +22,18 @@ class BlockPool:
     """Own physical block state and deterministic free-block ordering.
 
     External mappings use integer IDs in ``[0, num_blocks)``. The pool keeps
-    each block's mutable refcount and content hash together, but does not know
-    about requests, tokens, cache membership, or device tensors.
+    each block's mutable refcount and hash together. Cached zero-reference
+    blocks remain reclaimable in the free queue until reused.
     """
 
-    __slots__ = ("_blocks", "_free_block_ids")
+    __slots__ = ("_blocks", "_cached_blocks", "_free_block_ids")
 
     def __init__(self, num_blocks: int) -> None:
         if num_blocks <= 0:
             raise ValueError("num_blocks must be greater than zero")
 
         self._blocks = [KVCacheBlock(block_id) for block_id in range(num_blocks)]
+        self._cached_blocks: dict[BlockHash, KVCacheBlock] = {}
         self._free_block_ids = deque(range(num_blocks))
 
     @property
@@ -69,8 +70,16 @@ class BlockPool:
 
         return self._require_block(block_id).block_hash
 
-    def set_block_hash(self, block_id: int, block_hash: BlockHash) -> None:
-        """Associate a deterministic content hash with an allocated block."""
+    @property
+    def num_cached_blocks(self) -> int:
+        """Number of physical blocks indexed by a prefix hash."""
+
+        return len(self._cached_blocks)
+
+    def cache_block(
+        self, block_id: int, block_hash: BlockHash
+    ) -> KVCacheBlock:
+        """Index one allocated block by hash without adding a reference."""
 
         block = self._require_block(block_id)
         if len(block_hash) != BLOCK_HASH_BYTES:
@@ -80,13 +89,68 @@ class BlockPool:
 
         if block.ref_count == 0:
             raise RuntimeError(
-                f"cannot set hash for block_id {block_id}: block is free"
+                f"cannot cache block_id {block_id}: block is free"
             )
         if block.block_hash is not None and block.block_hash != block_hash:
             raise RuntimeError(
-                f"cannot replace hash for allocated block_id {block_id}"
+                f"cannot cache block_id {block_id}: block has a different hash"
             )
+
+        existing = self._cached_blocks.get(block_hash)
+        if existing is not None and existing is not block:
+            raise RuntimeError(
+                f"block hash is already cached by block_id {existing.block_id}"
+            )
+
         block.block_hash = block_hash
+        self._cached_blocks[block_hash] = block
+        return block
+
+    def get_cached_block(self, block_hash: BlockHash) -> KVCacheBlock | None:
+        """Return the physical block indexed by ``block_hash``, if present."""
+
+        return self._cached_blocks.get(block_hash)
+
+    def acquire_cached_block(self, block_hash: BlockHash) -> KVCacheBlock | None:
+        """Acquire one request reference to a cached physical block."""
+
+        block = self._cached_blocks.get(block_hash)
+        if block is None:
+            return None
+        if block.block_hash != block_hash:
+            raise RuntimeError(
+                f"block pool invariant violated for block_id {block.block_id}: "
+                "cached hash does not match block"
+            )
+
+        ref_count = self.ref_count(block.block_id)
+        if ref_count == 0:
+            try:
+                self._free_block_ids.remove(block.block_id)
+            except ValueError:
+                raise RuntimeError(
+                    f"block pool invariant violated for block_id "
+                    f"{block.block_id}: cached free block is missing from queue"
+                ) from None
+            block.ref_count = 1
+        else:
+            block.ref_count = ref_count + 1
+        return block
+
+    def evict_cached_block(self, block_hash: BlockHash) -> KVCacheBlock | None:
+        """Remove one hash mapping without changing request references."""
+
+        block = self._cached_blocks.get(block_hash)
+        if block is None:
+            return None
+        if block.block_hash != block_hash:
+            raise RuntimeError(
+                f"block pool invariant violated for block_id {block.block_id}: "
+                "cached hash does not match block"
+            )
+        del self._cached_blocks[block_hash]
+        block.block_hash = None
+        return block
 
     def allocate(self, count: int) -> tuple[int, ...] | None:
         """Atomically allocate ``count`` blocks, or return ``None`` if full."""
@@ -101,7 +165,10 @@ class BlockPool:
 
         for block_id in block_ids:
             self._free_block_ids.popleft()
-            self._blocks[block_id].ref_count = 1
+            block = self._blocks[block_id]
+            if block.block_hash is not None:
+                self._evict_block_hash(block)
+            block.ref_count = 1
 
         return block_ids
 
@@ -124,7 +191,6 @@ class BlockPool:
         block = self._blocks[block_id]
         block.ref_count = ref_count - 1
         if block.ref_count == 0:
-            block.block_hash = None
             self._free_block_ids.append(block_id)
 
     def _require_block(self, block_id: int) -> KVCacheBlock:
@@ -153,11 +219,27 @@ class BlockPool:
                     f"block pool invariant violated for block_id {block_id}: "
                     f"free block has refcount {block.ref_count}"
                 )
-            if block.block_hash is not None:
+            if (
+                block.block_hash is not None
+                and self._cached_blocks.get(block.block_hash) is not block
+            ):
                 raise RuntimeError(
                     f"block pool invariant violated for block_id {block_id}: "
-                    "free block has a content hash"
+                    "free block has an unindexed hash"
                 )
+
+    def _evict_block_hash(self, block: KVCacheBlock) -> None:
+        block_hash = block.block_hash
+        if block_hash is None:
+            return
+        cached_block = self._cached_blocks.get(block_hash)
+        if cached_block is not block:
+            raise RuntimeError(
+                f"block pool invariant violated for block_id {block.block_id}: "
+                "cached hash does not map to block"
+            )
+        del self._cached_blocks[block_hash]
+        block.block_hash = None
 
 
 class BlockTable:

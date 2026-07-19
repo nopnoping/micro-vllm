@@ -10,7 +10,7 @@
 BlockPool + BlockTable
         -> 基础 KVCacheManager
         -> Scheduler block-aware integration
-        -> PrefixCache
+        -> BlockPool prefix index
         -> Preemption + recompute resume
 ```
 
@@ -30,7 +30,7 @@ BlockPool + BlockTable
 - [x] physical block 使用非负整数 ID，不引入可变 block 对象作为公共 API。
 - [x] BlockPool 是 physical block refcount 和 free queue 的唯一所有者。
 - [x] BlockTable 只维护 logical-to-physical mapping，不直接 retain/release block。
-- [ ] KVCacheManager 协调 BlockPool、BlockTable、PrefixCache 和 request cache 生命周期。
+- [ ] KVCacheManager 协调 BlockPool、BlockTable 和 request cache 生命周期。
 - [ ] Scheduler 决定调度、finish、abort 和 preempt 哪个 request。
 - [ ] KVCacheManager 决定 block 如何分配、共享和释放。
 - [ ] Worker/Executor 不参与逻辑 block 分配。
@@ -38,7 +38,7 @@ BlockPool + BlockTable
 - [ ] block allocation 在 SchedulerOutput 生成前完成。
 - [ ] executor 失败或 update 校验失败时，pending plan 及其 block reservation 可重试。
 - [ ] sampled token 在下一 step 计算；本 step 不为刚采样出的 token 分配 slot。
-- [ ] 只有成功计算并提交的完整 block 才能进入 PrefixCache。
+- [ ] 只有成功计算并提交的完整 block 才能进入 BlockPool prefix index。
 - [ ] partial block 不共享，不实现 copy-on-write。
 - [ ] 本阶段先支持单 KV cache group 和 full attention。
 
@@ -298,7 +298,7 @@ BlockPool + BlockTable
 - [x] BlockPool 无泄漏、double free 或重复 allocation。
 - [x] control-loop FakeExecutor 不需要理解 block allocation。
 
-## 10. Phase D：PrefixCache 数据模型
+## 10. Phase D：Prefix cache 数据模型
 
 ### Cache key 与 hash
 
@@ -313,22 +313,22 @@ BlockPool + BlockTable
 
 ### Prefix cache entry
 
-- [ ] entry 至少包含 block hash、physical block ID 和 token block identity。
-- [ ] PrefixCache 持有每个 cached block 的一份 cache pin reference。
-- [ ] active request 使用 cached block 时额外 retain request reference。
-- [ ] request 结束只释放 request reference，不释放 cache pin。
-- [ ] eviction 删除 cache entry 并释放 cache pin。
-- [ ] 若 block 仍被 active request 使用，eviction 后 physical block 继续存活到 request release。
-- [ ] PrefixCache 使用确定性 LRU 或 FIFO eviction，并文档化选择。
-- [ ] cache capacity 有明确上限，不允许无限 pin 导致 pool 永久耗尽。
+- [x] `BlockPool` 维护 `block hash -> KVCacheBlock` 的唯一 prefix index。
+- [x] `KVCacheBlock` 同时包含 physical block ID、refcount 和 block hash。
+- [x] prefix index 本身不增加额外 cache pin reference。
+- [x] active request 命中 cached block 时增加 request reference。
+- [x] request reference 归零后，cached block 保留映射并进入 free queue。
+- [x] cached free block 被重新分配前删除旧 hash 映射。
+- [x] active cached block 不在 free queue，不会被分配覆盖。
+- [x] cached block 数量天然受 `BlockPool.num_blocks` 限制。
 
 ### Cache pressure
 
-- [ ] BlockPool 容量不足前，KVCacheManager 可以请求 PrefixCache eviction。
-- [ ] eviction 优先回收只有 cache pin 的 block。
-- [ ] eviction 不修改 active request block table。
-- [ ] eviction 后相应 hash lookup 失效。
-- [ ] eviction 和分配组合保持原子或具备安全 rollback。
+- [x] allocation 直接复用 free queue 中 refcount 为零的 cached block。
+- [x] active request 仍引用的 cached block 不可被 allocation 回收。
+- [x] cached block 被重新分配时同步清除 hash index。
+- [x] eviction 后相应 hash lookup 失效。
+- [x] free candidate 校验在 eviction 和 refcount 修改前完成。
 
 ## 11. Phase D：Prefix lookup 与 commit
 
@@ -355,7 +355,7 @@ BlockPool + BlockTable
 - [ ] 只有 Scheduler.update 成功后调用 prefix commit。
 - [ ] 只提交 `num_computed_tokens // block_size` 范围内完整 computed blocks。
 - [ ] partial block 不进入 cache。
-- [ ] 同一 request/block 不重复插入或重复 pin。
+- [ ] 同一 request/block 不重复插入 hash mapping。
 - [ ] 相同 block hash 已存在时复用 canonical cached block 的策略明确。
 - [ ] 若 newly computed block 与已缓存 canonical block 重复，处理替换/释放而不泄漏引用。
 - [ ] request finish 前先完成可缓存 block commit，再释放 request references。
@@ -367,10 +367,10 @@ BlockPool + BlockTable
 - [ ] partial block 不命中。
 - [ ] 中间 block miss 后不继续命中。
 - [ ] cache hit 增加 request refcount。
-- [ ] request finish 后 cache pin 保留 block。
-- [ ] eviction 释放 cache pin。
-- [ ] active shared block 被 eviction 后仍可由 active request 使用。
-- [ ] capacity pressure 触发确定性 eviction。
+- [ ] request finish 后零引用 cached block 保留 hash mapping。
+- [ ] cached free block 被复用时删除 hash mapping。
+- [ ] active shared block 不进入 free queue。
+- [ ] capacity pressure 按 free queue 顺序确定性复用 cached block。
 - [ ] block-aligned prompt 至少重算最后一个 block。
 - [ ] prefix cache on/off 最终 token 输出一致。
 
@@ -416,7 +416,7 @@ BlockPool + BlockTable
 - [ ] preempt/resume 最终输出与无抢占执行一致。
 - [ ] 多次 preempt/resume 不 double free。
 - [ ] abort PREEMPTED request 不泄漏 cache state。
-- [ ] prefix cache pin 不被 request preemption 错误释放。
+- [ ] preemption 不错误删除仍可复用的 cached block mapping。
 - [ ] running order、resume priority 和 victim 选择可复现。
 
 ## 13. 可观察性
@@ -432,8 +432,8 @@ BlockPool + BlockTable
 
 ## 14. 文档与需求同步
 
-- [ ] 为 BlockPool、BlockTable、KVCacheManager 和 PrefixCache 记录所有权。
-- [ ] 文档说明 request ref 与 cache pin ref 的区别。
+- [ ] 为 BlockPool、BlockTable 和 KVCacheManager 记录所有权。
+- [ ] 文档说明 cached zero-ref block 与 active request ref 的区别。
 - [ ] 文档说明 partial block 不共享。
 - [ ] 文档说明 block-aligned prompt 为什么需要保留模型计算。
 - [ ] 文档说明 preemption 使用 recompute、不使用 CPU swap。
@@ -449,7 +449,7 @@ BlockPool + BlockTable
 5. [ ] `feat: add cache-aware preemption and recompute resume`
 6. [ ] `docs: mark completed paged KV cache requirements`
 
-每个提交应保持 CPU tests 可运行，避免将 BlockPool、PrefixCache 和 preemption 作为一个不可独立 review 的大提交。
+每个提交应保持 CPU tests 可运行，避免将 prefix sharing 和 preemption 作为一个不可独立 review 的大提交。
 
 ## 16. 明确不实现
 
@@ -472,8 +472,8 @@ BlockPool + BlockTable
 - [ ] Scheduler 任意 step 不分配超过 pool capacity 的 block。
 - [ ] plan block table 覆盖所有 scheduled token positions。
 - [ ] finish、abort、preempt 后没有 request-owned block 泄漏。
-- [ ] prefix sharing 正确增加/释放 request 与 cache pin references。
-- [ ] cache pressure 能确定性 eviction，不永久 pin 满整个 pool。
+- [ ] prefix sharing 正确增加/释放 request references。
+- [ ] cache pressure 能按 free queue 确定性复用 cached blocks。
 - [ ] prefix cache on/off 输出一致。
 - [ ] preempt/resume 与无抢占输出一致。
 - [ ] 无 double free、负 refcount、重复 free queue entry。

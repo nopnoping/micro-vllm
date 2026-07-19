@@ -20,6 +20,7 @@ def test_block_pool_initial_state() -> None:
 
     assert pool.num_blocks == 4
     assert pool.num_free_blocks == 4
+    assert pool.num_cached_blocks == 0
     assert pool.free_block_ids == (0, 1, 2, 3)
     assert tuple(pool.ref_count(block_id) for block_id in range(4)) == (0, 0, 0, 0)
     assert tuple(pool.block_hash(block_id) for block_id in range(4)) == (
@@ -103,45 +104,83 @@ def test_release_only_recycles_block_whose_refcount_reaches_zero() -> None:
     assert pool.free_block_ids == (2, 1)
 
 
-def test_block_hash_survives_shared_release_and_clears_on_recycle() -> None:
-    pool = BlockPool(2)
+def test_cached_block_remains_indexed_until_free_block_is_reused() -> None:
+    pool = BlockPool(1)
     block_hash = b"a" * 32
     assert pool.allocate(1) == (0,)
-    pool.retain(0)
 
-    pool.set_block_hash(0, block_hash)
-    pool.release(0)
+    block = pool.cache_block(0, block_hash)
 
     assert pool.ref_count(0) == 1
+    assert pool.num_cached_blocks == 1
     assert pool.block_hash(0) == block_hash
+    assert pool.get_cached_block(block_hash) is block
 
     pool.release(0)
 
     assert pool.ref_count(0) == 0
+    assert pool.free_block_ids == (0,)
+    assert pool.get_cached_block(block_hash) is block
+
+    assert pool.acquire_cached_block(block_hash) is block
+    assert pool.ref_count(0) == 1
+    assert pool.free_block_ids == ()
+
+    pool.release(0)
+    assert pool.allocate(1) == (0,)
+    assert pool.get_cached_block(block_hash) is None
+    assert pool.num_cached_blocks == 0
     assert pool.block_hash(0) is None
 
 
-def test_block_hash_cannot_change_while_block_is_allocated() -> None:
-    pool = BlockPool(1)
+def test_cache_block_is_idempotent_and_rejects_conflicting_identity() -> None:
+    pool = BlockPool(2)
     first_hash = b"a" * 32
-    assert pool.allocate(1) == (0,)
+    assert pool.allocate(2) == (0, 1)
 
-    pool.set_block_hash(0, first_hash)
-    pool.set_block_hash(0, first_hash)
+    first = pool.cache_block(0, first_hash)
+    assert pool.cache_block(0, first_hash) is first
+    assert pool.ref_count(0) == 1
 
-    with pytest.raises(RuntimeError, match="cannot replace hash"):
-        pool.set_block_hash(0, b"b" * 32)
+    with pytest.raises(RuntimeError, match="block has a different hash"):
+        pool.cache_block(0, b"b" * 32)
+    with pytest.raises(RuntimeError, match="already cached by block_id 0"):
+        pool.cache_block(1, first_hash)
 
 
 def test_block_hash_rejects_free_block_and_invalid_digest() -> None:
     pool = BlockPool(1)
 
-    with pytest.raises(RuntimeError, match="cannot set hash.*block is free"):
-        pool.set_block_hash(0, b"a" * 32)
+    with pytest.raises(RuntimeError, match="cannot cache block_id 0.*block is free"):
+        pool.cache_block(0, b"a" * 32)
 
     assert pool.allocate(1) == (0,)
     with pytest.raises(ValueError, match="block_hash must contain 32 bytes"):
-        pool.set_block_hash(0, b"short")
+        pool.cache_block(0, b"short")
+
+
+def test_acquire_cached_active_block_adds_request_reference() -> None:
+    pool = BlockPool(1)
+    block_hash = b"a" * 32
+    assert pool.allocate(1) == (0,)
+    block = pool.cache_block(0, block_hash)
+
+    assert pool.acquire_cached_block(block_hash) is block
+    assert pool.ref_count(0) == 2
+    assert pool.num_free_blocks == 0
+
+
+def test_evict_cached_block_only_removes_hash_mapping() -> None:
+    pool = BlockPool(1)
+    block_hash = b"a" * 32
+    assert pool.allocate(1) == (0,)
+    block = pool.cache_block(0, block_hash)
+
+    assert pool.evict_cached_block(block_hash) is block
+    assert pool.evict_cached_block(block_hash) is None
+    assert pool.num_cached_blocks == 0
+    assert pool.block_hash(0) is None
+    assert pool.ref_count(0) == 1
 
 
 @pytest.mark.parametrize("block_id", [-1, 3])
