@@ -413,7 +413,7 @@ def test_eos_finishes_request_while_ignore_eos_continues() -> None:
 
 
 def test_max_tokens_finishes_request_and_removes_it_from_running() -> None:
-    scheduler = make_scheduler(4, 1)
+    scheduler = make_scheduler(4, 1, block_size=4, num_blocks=2)
     request = make_request("request-1", [1], max_tokens=1)
     scheduler.add_request(request)
     plan = scheduler.schedule()
@@ -423,6 +423,38 @@ def test_max_tokens_finishes_request_and_removes_it_from_running() -> None:
     assert request.finish_reason is FinishReason.LENGTH
     assert request not in scheduler._running
     assert scheduler.has_unfinished_requests() is False
+    assert scheduler._kv_cache_manager._block_pool.num_free_blocks == 2
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == (1, 0)
+    with pytest.raises(KeyError, match="unknown request_id: request-1"):
+        scheduler._kv_cache_manager.get_block_table("request-1")
+
+
+def test_non_finished_update_keeps_request_cache_reserved() -> None:
+    scheduler = make_scheduler(8, 1, block_size=4, num_blocks=3)
+    request = make_request("request-1", [1, 2, 3, 4, 5], max_tokens=2)
+    scheduler.add_request(request)
+    plan = scheduler.schedule()
+    assert plan.scheduled_requests[0].block_table == (0, 1)
+
+    scheduler.update(plan, make_output({"request-1": 7}))
+
+    assert request.status is RequestStatus.RUNNING
+    assert scheduler._kv_cache_manager.get_block_table("request-1") == (0, 1)
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == (2,)
+
+
+def test_successful_update_clears_pending_plan_after_cache_commit() -> None:
+    scheduler = make_scheduler(4, 1, block_size=4, num_blocks=2)
+    request = make_request("request-1", [1], max_tokens=2)
+    scheduler.add_request(request)
+    first_plan = scheduler.schedule()
+
+    scheduler.update(first_plan, make_output({"request-1": 2}))
+
+    assert scheduler._pending_plan is None
+    second_plan = scheduler.schedule()
+    assert second_plan is not first_plan
+    assert second_plan.scheduled_requests[0].input_token_ids == (2,)
 
 
 def test_plan_cannot_be_updated_twice() -> None:

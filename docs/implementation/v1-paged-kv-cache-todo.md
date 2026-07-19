@@ -263,12 +263,12 @@ BlockPool + BlockTable
 
 ### `update()` 集成
 
-- [ ] result validation 在 Request/KV cache 提交前完成。
-- [ ] 成功 update 后标记对应 tokens 已经计算。
-- [ ] Request finish 后调用 `free_request()`。
-- [ ] finish 释放发生在所有需要的 cache commit 之后。
-- [ ] update 校验失败时保留 pending plan 和已预留 block，允许重试。
-- [ ] plan 成功提交后清除 pending reservation 状态。
+- [x] result validation 在 Request/KV cache 提交前完成。
+- [x] 成功 update 后标记对应 tokens 已经计算。
+- [x] Request finish 后调用 `free_request()`。
+- [x] finish 释放发生在所有需要的 cache commit 之后。
+- [x] update 校验失败时保留 pending plan 和已预留 block，允许重试。
+- [x] plan 成功提交后清除 pending reservation 状态。
 
 ### abort 集成
 
@@ -284,19 +284,19 @@ BlockPool + BlockTable
 - [x] 每个 plan 的 block table 覆盖对应 scheduled token。
 - [x] prompt chunk 跨 block boundary 时逐步追加 block。
 - [x] sampled token 只在下一 step 获得 slot。
-- [ ] finish 后 pool 恢复预期 free block 数。
+- [x] finish 后 pool 恢复预期 free block 数。
 - [ ] abort waiting/running 后 pool 状态正确。
 - [x] invalid executor output 重试不重复分配。
 - [x] equal-but-foreign plan 不释放或污染 block。
-- [ ] cache 容量不足时 waiting request 保持 WAITING。
+- [x] cache 容量不足时 waiting request 保持 WAITING。
 
 ## 9. Phase C 验收
 
-- [ ] V1 需求“finish 释放非共享 KV block”完成。
+- [x] V1 需求“finish 释放非共享 KV block”完成。
 - [ ] V1 需求“abort/cancel 安全释放资源”完成。
-- [ ] SchedulerOutput 包含控制信息和 block IDs，不包含 tensor。
+- [x] SchedulerOutput 包含控制信息和 block IDs，不包含 tensor。
 - [ ] BlockPool 无泄漏、double free 或重复 allocation。
-- [ ] control-loop FakeExecutor 不需要理解 block allocation。
+- [x] control-loop FakeExecutor 不需要理解 block allocation。
 
 ## 10. Phase D：PrefixCache 数据模型
 

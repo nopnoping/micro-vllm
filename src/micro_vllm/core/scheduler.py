@@ -163,7 +163,7 @@ class Scheduler:
             missing_ids = ", ".join(sorted(missing_sample_ids))
             raise ValueError(f"missing sampled token for request_id: {missing_ids}")
 
-        finished_request_ids: set[str] = set()
+        finished_request_ids: list[str] = []
         for scheduled_request in plan.scheduled_requests:
             request = self._requests[scheduled_request.request_id]
             request.advance_computed_tokens(
@@ -184,14 +184,17 @@ class Scheduler:
                     finish_reason = FinishReason.LENGTH
                 if finish_reason is not None:
                     request.finish(finish_reason)
-                    finished_request_ids.add(request.request_id)
+                    finished_request_ids.append(request.request_id)
 
         if finished_request_ids:
+            finished_request_id_set = set(finished_request_ids)
             self._running[:] = [
                 request
                 for request in self._running
-                if request.request_id not in finished_request_ids
+                if request.request_id not in finished_request_id_set
             ]
+            for request_id in finished_request_ids:
+                self._kv_cache_manager.free_request(request_id)
         self._pending_plan = None
 
     def _allocate_scheduled_request(
