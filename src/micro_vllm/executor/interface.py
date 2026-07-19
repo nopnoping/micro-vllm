@@ -14,12 +14,8 @@ class SampledToken:
     token_id: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.request_id, str):
-            raise TypeError("request_id must be a string")
         if not self.request_id:
             raise ValueError("request_id must not be empty")
-        if not isinstance(self.token_id, int) or isinstance(self.token_id, bool):
-            raise TypeError("token_id must be an integer")
         if self.token_id < 0:
             raise ValueError("token_id must be non-negative")
 
@@ -34,8 +30,6 @@ class ModelRunnerOutput:
         sampled_tokens = tuple(self.sampled_tokens)
         seen_request_ids: set[str] = set()
         for sampled_token in sampled_tokens:
-            if not isinstance(sampled_token, SampledToken):
-                raise TypeError("sampled_tokens must contain SampledToken values")
             if sampled_token.request_id in seen_request_ids:
                 raise ValueError(
                     "sampled_tokens must not contain duplicate request_id values"
@@ -46,8 +40,6 @@ class ModelRunnerOutput:
     def validate_for(self, plan: SchedulerOutput) -> None:
         """Validate sampled-token request IDs against an execution plan."""
 
-        if not isinstance(plan, SchedulerOutput):
-            raise TypeError("plan must be a SchedulerOutput")
         scheduled_by_id = {
             request.request_id: request for request in plan.scheduled_requests
         }

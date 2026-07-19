@@ -13,7 +13,5 @@ class SchedulerConfig:
     def __post_init__(self) -> None:
         for field_name in ("max_num_batched_tokens", "max_num_seqs"):
             value = getattr(self, field_name)
-            if not isinstance(value, int) or isinstance(value, bool):
-                raise TypeError(f"{field_name} must be an integer")
             if value <= 0:
                 raise ValueError(f"{field_name} must be greater than zero")

@@ -83,11 +83,8 @@ def test_total_num_scheduled_tokens_is_computed_from_requests() -> None:
     ("field_name", "value", "error_type", "message"),
     [
         ("num_computed_tokens", -1, ValueError, "must be non-negative"),
-        ("num_computed_tokens", True, TypeError, "must be an integer"),
         ("num_scheduled_tokens", 0, ValueError, "must be greater than zero"),
         ("num_scheduled_tokens", -1, ValueError, "must be greater than zero"),
-        ("num_scheduled_tokens", True, TypeError, "must be an integer"),
-        ("requires_sampling", 1, TypeError, "must be a boolean"),
     ],
 )
 def test_scheduled_request_rejects_invalid_fields(
@@ -109,12 +106,9 @@ def test_scheduled_request_rejects_invalid_fields(
         ScheduledRequest(**values)
 
 
-@pytest.mark.parametrize("token_id", [-1, True, 1.5])
-def test_scheduled_request_rejects_invalid_input_token_ids(
-    token_id: object,
-) -> None:
-    with pytest.raises((TypeError, ValueError), match=r"input_token_ids\[0\]"):
-        ScheduledRequest("request-1", (token_id,), 0, 1, True)
+def test_scheduled_request_rejects_negative_input_token_id() -> None:
+    with pytest.raises(ValueError, match=r"input_token_ids\[0\]"):
+        ScheduledRequest("request-1", (-1,), 0, 1, True)
 
 
 def test_scheduled_request_rejects_inconsistent_token_count() -> None:
@@ -131,8 +125,3 @@ def test_scheduler_output_rejects_duplicate_request_ids() -> None:
 
     with pytest.raises(ValueError, match="duplicate request_id"):
         SchedulerOutput((first, duplicate))
-
-
-def test_scheduler_output_rejects_non_scheduled_request_values() -> None:
-    with pytest.raises(TypeError, match="must contain ScheduledRequest"):
-        SchedulerOutput((make_scheduled_request(), object()))

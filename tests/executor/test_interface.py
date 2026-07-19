@@ -38,7 +38,6 @@ def test_model_runner_output_owns_an_immutable_snapshot() -> None:
     [
         ("", 1, ValueError, "request_id must not be empty"),
         ("request-1", -1, ValueError, "token_id must be non-negative"),
-        ("request-1", True, TypeError, "token_id must be an integer"),
     ],
 )
 def test_sampled_token_rejects_invalid_values(

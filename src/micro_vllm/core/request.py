@@ -7,15 +7,11 @@ from micro_vllm.sampling.params import SamplingParams
 
 
 def _validate_token_id(field_name: str, token_id: int) -> None:
-    if not isinstance(token_id, int) or isinstance(token_id, bool):
-        raise TypeError(f"{field_name} must be an integer")
     if token_id < 0:
         raise ValueError(f"{field_name} must be non-negative")
 
 
 def _validate_token_ids(field_name: str, token_ids: list[int]) -> None:
-    if not isinstance(token_ids, list):
-        raise TypeError(f"{field_name} must be a list of integers")
     for index, token_id in enumerate(token_ids):
         _validate_token_id(f"{field_name}[{index}]", token_id)
 
@@ -65,8 +61,6 @@ class Request:
     finish_reason: FinishReason | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.request_id, str):
-            raise TypeError("request_id must be a string")
         if not self.request_id:
             raise ValueError("request_id must not be empty")
 
@@ -80,21 +74,11 @@ class Request:
         self.prompt_token_ids = list(self.prompt_token_ids)
         self.output_token_ids = list(self.output_token_ids)
 
-        if not isinstance(self.num_computed_tokens, int) or isinstance(
-            self.num_computed_tokens, bool
-        ):
-            raise TypeError("num_computed_tokens must be an integer")
         if not 0 <= self.num_computed_tokens <= self.num_known_tokens:
             raise ValueError(
                 "num_computed_tokens must be between zero and num_known_tokens"
             )
 
-        if not isinstance(self.status, RequestStatus):
-            raise TypeError("status must be a RequestStatus")
-        if self.finish_reason is not None and not isinstance(
-            self.finish_reason, FinishReason
-        ):
-            raise TypeError("finish_reason must be a FinishReason or None")
         if self.status is RequestStatus.FINISHED:
             if self.finish_reason is None:
                 raise ValueError("finished request must have a finish_reason")
@@ -140,8 +124,6 @@ class Request:
     def transition_to(self, new_status: RequestStatus) -> None:
         """Apply a legal non-terminal lifecycle transition."""
 
-        if not isinstance(new_status, RequestStatus):
-            raise TypeError("new_status must be a RequestStatus")
         if new_status not in _ALLOWED_STATUS_TRANSITIONS[self.status]:
             raise ValueError(
                 f"cannot transition request from {self.status.name} "
@@ -164,8 +146,6 @@ class Request:
     def advance_computed_tokens(self, num_tokens: int) -> None:
         """Commit computation of a positive number of pending tokens."""
 
-        if not isinstance(num_tokens, int) or isinstance(num_tokens, bool):
-            raise TypeError("num_tokens must be an integer")
         if num_tokens <= 0:
             raise ValueError("num_tokens must be greater than zero")
         if self.status is not RequestStatus.RUNNING:
@@ -177,8 +157,6 @@ class Request:
     def finish(self, reason: FinishReason) -> None:
         """Move the request to its terminal state with a legal reason."""
 
-        if not isinstance(reason, FinishReason):
-            raise TypeError("reason must be a FinishReason")
         if reason not in _ALLOWED_FINISH_REASONS[self.status]:
             raise ValueError(
                 f"cannot finish {self.status.name} request with {reason.name}"

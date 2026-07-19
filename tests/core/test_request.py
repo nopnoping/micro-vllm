@@ -148,14 +148,11 @@ def test_request_rejects_empty_prompt() -> None:
         make_request(prompt_token_ids=[])
 
 
-@pytest.mark.parametrize("token_id", [-1, True, 1.5])
 @pytest.mark.parametrize("field_name", ["prompt_token_ids", "output_token_ids"])
-def test_request_rejects_invalid_token_ids(
-    field_name: str, token_id: object
-) -> None:
-    values = {field_name: [token_id]}
+def test_request_rejects_negative_token_ids(field_name: str) -> None:
+    values = {field_name: [-1]}
 
-    with pytest.raises((TypeError, ValueError), match=rf"{field_name}\[0\]"):
+    with pytest.raises(ValueError, match=rf"{field_name}\[0\]"):
         make_request(**values)
 
 

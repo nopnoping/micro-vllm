@@ -43,6 +43,9 @@ Enforce these boundaries:
 
 - Pass configuration and runtime context explicitly. Avoid mutable global state,
   hidden singletons, duplicate counters, and derived phase flags that can diverge.
+- Rely on type annotations and static checking for parameter types. Reserve
+  runtime validation for domain values, state transitions, and invariants that
+  static types cannot express.
 - Keep policy separate from mechanism, especially in scheduling, cache
   allocation, execution, and backend selection.
 - Treat execution plans as immutable contracts after scheduling.
