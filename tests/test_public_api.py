@@ -7,7 +7,7 @@ import micro_vllm.core as core
 import micro_vllm.engine as engine
 import micro_vllm.executor as executor
 import micro_vllm.sampling as sampling
-from micro_vllm.config import SchedulerConfig
+from micro_vllm.config import CacheConfig, SchedulerConfig
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
@@ -19,11 +19,13 @@ from micro_vllm.sampling.params import SamplingParams
 
 def test_top_level_exports_engine_entry_points() -> None:
     assert micro_vllm.__all__ == (
+        "CacheConfig",
         "Engine",
         "RequestOutput",
         "SamplingParams",
         "SchedulerConfig",
     )
+    assert micro_vllm.CacheConfig is CacheConfig
     assert micro_vllm.Engine is Engine
     assert micro_vllm.RequestOutput is RequestOutput
     assert micro_vllm.SamplingParams is SamplingParams

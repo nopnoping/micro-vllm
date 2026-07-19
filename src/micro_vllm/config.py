@@ -4,6 +4,26 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class CacheConfig:
+    """Device-independent logical KV-cache configuration.
+
+    Prefix caching has no separate capacity limit. When enabled, complete
+    cached blocks are retained until the cache manager evicts them on demand
+    to satisfy new allocations.
+    """
+
+    block_size: int
+    num_blocks: int
+    enable_prefix_cache: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name in ("block_size", "num_blocks"):
+            value = getattr(self, field_name)
+            if value <= 0:
+                raise ValueError(f"{field_name} must be greater than zero")
+
+
+@dataclass(frozen=True, slots=True)
 class SchedulerConfig:
     """Device-independent limits enforced by the scheduler."""
 
