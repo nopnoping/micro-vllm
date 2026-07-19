@@ -14,6 +14,7 @@ def make_scheduled_request() -> ScheduledRequest:
         num_computed_tokens=0,
         num_scheduled_tokens=2,
         requires_sampling=True,
+        block_table=(0,),
     )
 
 
@@ -25,6 +26,7 @@ def make_scheduled_request() -> ScheduledRequest:
         ("num_computed_tokens", 1),
         ("num_scheduled_tokens", 1),
         ("requires_sampling", False),
+        ("block_table", (1,)),
     ],
 )
 def test_scheduled_request_is_frozen(field_name: str, new_value: object) -> None:
@@ -54,6 +56,7 @@ def test_original_token_list_does_not_change_plan_snapshot() -> None:
         num_computed_tokens=0,
         num_scheduled_tokens=2,
         requires_sampling=True,
+        block_table=(0,),
     )
     input_token_ids[0] = 9
     input_token_ids.append(3)
@@ -71,6 +74,7 @@ def test_total_num_scheduled_tokens_is_computed_from_requests() -> None:
                 num_computed_tokens=4,
                 num_scheduled_tokens=1,
                 requires_sampling=False,
+                block_table=(1,),
             ),
         )
     )
@@ -99,6 +103,7 @@ def test_scheduled_request_rejects_invalid_fields(
         "num_computed_tokens": 0,
         "num_scheduled_tokens": 2,
         "requires_sampling": True,
+        "block_table": (0,),
     }
     values[field_name] = value
 
@@ -108,7 +113,7 @@ def test_scheduled_request_rejects_invalid_fields(
 
 def test_scheduled_request_rejects_negative_input_token_id() -> None:
     with pytest.raises(ValueError, match=r"input_token_ids\[0\]"):
-        ScheduledRequest("request-1", (-1,), 0, 1, True)
+        ScheduledRequest("request-1", (-1,), 0, 1, True, (0,))
 
 
 def test_scheduled_request_rejects_inconsistent_token_count() -> None:
@@ -116,12 +121,42 @@ def test_scheduled_request_rejects_inconsistent_token_count() -> None:
         ValueError,
         match="num_scheduled_tokens must equal the number of input_token_ids",
     ):
-        ScheduledRequest("request-1", (1, 2), 0, 1, True)
+        ScheduledRequest("request-1", (1, 2), 0, 1, True, (0,))
 
 
 def test_scheduler_output_rejects_duplicate_request_ids() -> None:
     first = make_scheduled_request()
-    duplicate = ScheduledRequest("request-1", (3,), 2, 1, True)
+    duplicate = ScheduledRequest("request-1", (3,), 2, 1, True, (1,))
 
     with pytest.raises(ValueError, match="duplicate request_id"):
         SchedulerOutput((first, duplicate))
+
+
+def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
+    block_table = [0, None]
+    scheduled_request = ScheduledRequest(
+        request_id="request-1",
+        input_token_ids=(1,),
+        num_computed_tokens=0,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=block_table,
+    )
+
+    block_table[0] = 9
+    block_table.append(2)
+
+    assert scheduled_request.block_table == (0, None)
+    assert isinstance(scheduled_request.block_table, tuple)
+
+
+def test_scheduled_request_rejects_negative_physical_block_id() -> None:
+    with pytest.raises(ValueError, match=r"block_table\[1\]"):
+        ScheduledRequest(
+            request_id="request-1",
+            input_token_ids=(1,),
+            num_computed_tokens=0,
+            num_scheduled_tokens=1,
+            requires_sampling=True,
+            block_table=(0, -1),
+        )

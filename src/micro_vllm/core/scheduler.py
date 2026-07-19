@@ -3,6 +3,7 @@
 from collections import deque
 
 from micro_vllm.config import SchedulerConfig
+from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
@@ -11,8 +12,13 @@ from micro_vllm.executor.interface import ModelRunnerOutput
 class Scheduler:
     """Own request state and build token-budgeted execution plans."""
 
-    def __init__(self, config: SchedulerConfig) -> None:
+    def __init__(
+        self,
+        config: SchedulerConfig,
+        kv_cache_manager: KVCacheManager,
+    ) -> None:
         self._config = config
+        self._kv_cache_manager = kv_cache_manager
         self._waiting: deque[Request] = deque()
         self._running: list[Request] = []
         self._requests: dict[str, Request] = {}
@@ -25,6 +31,8 @@ class Scheduler:
             raise ValueError("request must be in WAITING status")
         if request.request_id in self._requests:
             raise ValueError(f"duplicate request_id: {request.request_id}")
+
+        self._kv_cache_manager.register_request(request.request_id)
         self._requests[request.request_id] = request
         self._waiting.append(request)
 
@@ -74,6 +82,7 @@ class Scheduler:
 
         remaining_token_budget = self._config.max_num_batched_tokens
         scheduled_requests: list[ScheduledRequest] = []
+        cache_capacity_exhausted = False
 
         for request in self._running:
             if request.status is not RequestStatus.RUNNING:
@@ -95,13 +104,19 @@ class Scheduler:
             num_scheduled_tokens = min(
                 request.num_pending_tokens, remaining_token_budget
             )
-            scheduled_requests.append(
-                self._make_scheduled_request(request, num_scheduled_tokens)
+            scheduled_request = self._allocate_scheduled_request(
+                request,
+                num_scheduled_tokens,
             )
+            if scheduled_request is None:
+                cache_capacity_exhausted = True
+                break
+            scheduled_requests.append(scheduled_request)
             remaining_token_budget -= num_scheduled_tokens
 
         while (
             self._waiting
+            and not cache_capacity_exhausted
             and remaining_token_budget > 0
             and len(self._running) < self._config.max_num_seqs
         ):
@@ -109,9 +124,13 @@ class Scheduler:
             num_scheduled_tokens = min(
                 request.num_pending_tokens, remaining_token_budget
             )
-            scheduled_requests.append(
-                self._make_scheduled_request(request, num_scheduled_tokens)
+            scheduled_request = self._allocate_scheduled_request(
+                request,
+                num_scheduled_tokens,
             )
+            if scheduled_request is None:
+                break
+            scheduled_requests.append(scheduled_request)
             remaining_token_budget -= num_scheduled_tokens
 
             request.transition_to(RequestStatus.RUNNING)
@@ -175,10 +194,19 @@ class Scheduler:
             ]
         self._pending_plan = None
 
-    @staticmethod
-    def _make_scheduled_request(
-        request: Request, num_scheduled_tokens: int
-    ) -> ScheduledRequest:
+    def _allocate_scheduled_request(
+        self,
+        request: Request,
+        num_scheduled_tokens: int,
+    ) -> ScheduledRequest | None:
+        allocation = self._kv_cache_manager.allocate_slots(
+            request.request_id,
+            request.num_computed_tokens,
+            num_scheduled_tokens,
+        )
+        if allocation is None:
+            return None
+
         start_computed = request.num_computed_tokens
         end_computed = start_computed + num_scheduled_tokens
         return ScheduledRequest(
@@ -187,4 +215,5 @@ class Scheduler:
             num_computed_tokens=start_computed,
             num_scheduled_tokens=num_scheduled_tokens,
             requires_sampling=end_computed == request.num_known_tokens,
+            block_table=allocation.block_table,
         )

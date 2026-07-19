@@ -237,29 +237,29 @@ BlockPool + BlockTable
 
 ### 构造与职责
 
-- [ ] Scheduler 显式接收 KVCacheManager。
-- [ ] 更新测试 fixture，为每个 Scheduler 提供独立 cache manager。
-- [ ] 不提供隐藏的无限容量或 no-op cache fallback。
-- [ ] Scheduler 继续拥有 Request 状态；KVCacheManager 不改变 Request。
+- [x] Scheduler 显式接收 KVCacheManager。
+- [x] 更新测试 fixture，为每个 Scheduler 提供独立 cache manager。
+- [x] 不提供隐藏的无限容量或 no-op cache fallback。
+- [x] Scheduler 继续拥有 Request 状态；KVCacheManager 不改变 Request。
 
 ### 扩展 `ScheduledRequest`
 
-- [ ] 添加只读 block table snapshot。
-- [ ] 添加本轮 new block IDs，仅在 Executor/trace 确实需要时保留。
-- [ ] 保持 dataclass frozen。
-- [ ] block table 中 physical ID 为非负整数或 `None`。
-- [ ] 不加入 BlockPool、BlockTable 或 KVCacheManager 可变引用。
+- [x] 添加只读 block table snapshot。
+- [x] 添加本轮 new block IDs，仅在 Executor/trace 确实需要时保留；当前无消费者，因此不加入。
+- [x] 保持 dataclass frozen。
+- [x] block table 中 physical ID 为非负整数或 `None`。
+- [x] 不加入 BlockPool、BlockTable 或 KVCacheManager 可变引用。
 
 ### `schedule()` 集成
 
-- [ ] 对候选 request 先计算 token-budget allocation。
-- [ ] 调用 KVCacheManager 原子预留 slots。
-- [ ] 预留成功后才将 request 放入 SchedulerOutput。
-- [ ] waiting request 只有预留成功才进入 RUNNING。
-- [ ] pending plan 重复 `schedule()` 不重复分配 block。
-- [ ] 本阶段容量不足时停止或跳过 admission，行为确定且有测试。
-- [ ] 不在 Scheduler 中复制 block 数计算逻辑。
-- [ ] plan 中 block table 能覆盖本轮所有 scheduled token positions。
+- [x] 对候选 request 先计算 token-budget allocation。
+- [x] 调用 KVCacheManager 原子预留 slots。
+- [x] 预留成功后才将 request 放入 SchedulerOutput。
+- [x] waiting request 只有预留成功才进入 RUNNING。
+- [x] pending plan 重复 `schedule()` 不重复分配 block。
+- [x] 本阶段容量不足时停止或跳过 admission，行为确定且有测试。
+- [x] 不在 Scheduler 中复制 block 数计算逻辑。
+- [x] plan 中 block table 能覆盖本轮所有 scheduled token positions。
 
 ### `update()` 集成
 
@@ -280,14 +280,14 @@ BlockPool + BlockTable
 
 ### 测试更新
 
-- [ ] 现有 scheduler/control-loop tests 继续通过。
-- [ ] 每个 plan 的 block table 覆盖对应 scheduled token。
-- [ ] prompt chunk 跨 block boundary 时逐步追加 block。
-- [ ] sampled token 只在下一 step 获得 slot。
+- [x] 现有 scheduler/control-loop tests 继续通过。
+- [x] 每个 plan 的 block table 覆盖对应 scheduled token。
+- [x] prompt chunk 跨 block boundary 时逐步追加 block。
+- [x] sampled token 只在下一 step 获得 slot。
 - [ ] finish 后 pool 恢复预期 free block 数。
 - [ ] abort waiting/running 后 pool 状态正确。
-- [ ] invalid executor output 重试不重复分配。
-- [ ] equal-but-foreign plan 不释放或污染 block。
+- [x] invalid executor output 重试不重复分配。
+- [x] equal-but-foreign plan 不释放或污染 block。
 - [ ] cache 容量不足时 waiting request 保持 WAITING。
 
 ## 9. Phase C 验收

@@ -2,7 +2,8 @@
 
 import pytest
 
-from micro_vllm.config import SchedulerConfig
+from micro_vllm.config import CacheConfig, SchedulerConfig
+from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.core.scheduler_output import SchedulerOutput
@@ -56,7 +57,14 @@ def make_engine(
         SchedulerConfig(
             max_num_batched_tokens=token_budget,
             max_num_seqs=sequence_budget,
-        )
+        ),
+        KVCacheManager(
+            CacheConfig(
+                block_size=4,
+                num_blocks=128,
+                enable_prefix_cache=False,
+            )
+        ),
     )
     fake_executor = executor or FakeExecutor()
     return Engine(scheduler, fake_executor), scheduler, fake_executor

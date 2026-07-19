@@ -11,8 +11,8 @@ from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
 def make_plan() -> SchedulerOutput:
     return SchedulerOutput(
         (
-            ScheduledRequest("sampling", (1,), 0, 1, True),
-            ScheduledRequest("no-sampling", (2,), 0, 1, False),
+            ScheduledRequest("sampling", (1,), 0, 1, True, (0,)),
+            ScheduledRequest("no-sampling", (2,), 0, 1, False, (1,)),
         )
     )
 

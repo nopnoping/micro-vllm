@@ -2,7 +2,8 @@
 
 import pytest
 
-from micro_vllm.config import SchedulerConfig
+from micro_vllm.config import CacheConfig, SchedulerConfig
+from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.core.scheduler_output import SchedulerOutput
@@ -38,8 +39,70 @@ def make_output(sampled_tokens: dict[str, int]) -> ModelRunnerOutput:
     )
 
 
+def make_scheduler(
+    token_budget: int,
+    sequence_budget: int,
+    *,
+    block_size: int = 4,
+    num_blocks: int = 128,
+) -> Scheduler:
+    return Scheduler(
+        SchedulerConfig(token_budget, sequence_budget),
+        KVCacheManager(
+            CacheConfig(
+                block_size=block_size,
+                num_blocks=num_blocks,
+                enable_prefix_cache=False,
+            )
+        ),
+    )
+
+
+def test_scheduler_requires_explicit_kv_cache_manager() -> None:
+    with pytest.raises(TypeError):
+        Scheduler(SchedulerConfig(4, 1))  # type: ignore[call-arg]
+
+
+def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> None:
+    manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
+    scheduler = Scheduler(SchedulerConfig(4, 1), manager)
+    request = make_request("request-1", [1, 2, 3])
+    request_state_before = (
+        request.status,
+        request.num_computed_tokens,
+        tuple(request.output_token_ids),
+    )
+
+    scheduler.add_request(request)
+
+    assert scheduler._kv_cache_manager is manager
+    assert scheduler.get_request("request-1") is request
+    assert manager.get_block_table("request-1") == ()
+    assert (
+        request.status,
+        request.num_computed_tokens,
+        tuple(request.output_token_ids),
+    ) == request_state_before
+
+
+def test_each_scheduler_uses_an_independent_cache_manager() -> None:
+    first_manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
+    second_manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
+    first_scheduler = Scheduler(SchedulerConfig(4, 1), first_manager)
+    second_scheduler = Scheduler(SchedulerConfig(4, 1), second_manager)
+
+    first_scheduler.add_request(make_request("request-1", [1]))
+    second_scheduler.add_request(make_request("request-1", [2]))
+
+    assert first_scheduler._kv_cache_manager is first_manager
+    assert second_scheduler._kv_cache_manager is second_manager
+    assert first_manager is not second_manager
+    assert first_manager.get_block_table("request-1") == ()
+    assert second_manager.get_block_table("request-1") == ()
+
+
 def test_single_request_full_prompt_is_scheduled_in_one_step() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 2))
+    scheduler = make_scheduler(4, 2)
     request = make_request("request-1", [1, 2, 3])
     scheduler.add_request(request)
 
@@ -62,7 +125,7 @@ def test_single_request_full_prompt_is_scheduled_in_one_step() -> None:
 
 
 def test_long_prompt_is_split_across_multiple_chunks() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 1))
+    scheduler = make_scheduler(4, 1)
     request = make_request("request-1", list(range(10)))
     scheduler.add_request(request)
     chunk_sizes: list[int] = []
@@ -86,8 +149,91 @@ def test_long_prompt_is_split_across_multiple_chunks() -> None:
     assert request.output_token_ids == [10]
 
 
+def test_prompt_chunks_append_blocks_only_when_crossing_boundary() -> None:
+    scheduler = make_scheduler(3, 1, block_size=4, num_blocks=4)
+    request = make_request("request-1", [1, 2, 3, 4, 5])
+    scheduler.add_request(request)
+
+    first_plan = scheduler.schedule()
+    first = first_plan.scheduled_requests[0]
+    assert first.num_scheduled_tokens == 3
+    assert first.block_table == (0,)
+    scheduler.update(first_plan, ModelRunnerOutput())
+
+    second_plan = scheduler.schedule()
+    second = second_plan.scheduled_requests[0]
+    assert second.num_computed_tokens == 3
+    assert second.num_scheduled_tokens == 2
+    assert second.block_table == (0, 1)
+    assert len(second.block_table) * 4 >= 5
+
+
+def test_sampled_token_gets_a_slot_only_on_next_schedule() -> None:
+    scheduler = make_scheduler(4, 1, block_size=4, num_blocks=2)
+    request = make_request("request-1", [1, 2, 3, 4], max_tokens=2)
+    scheduler.add_request(request)
+
+    first_plan = scheduler.schedule()
+    assert first_plan.scheduled_requests[0].block_table == (0,)
+    scheduler.update(first_plan, make_output({"request-1": 7}))
+    assert scheduler._kv_cache_manager.get_block_table("request-1") == (0,)
+
+    second_plan = scheduler.schedule()
+    second = second_plan.scheduled_requests[0]
+    assert second.input_token_ids == (7,)
+    assert second.num_computed_tokens == 4
+    assert second.block_table == (0, 1)
+
+
+def test_pending_plan_is_reused_without_allocating_blocks_twice() -> None:
+    scheduler = make_scheduler(8, 1, block_size=4, num_blocks=4)
+    scheduler.add_request(make_request("request-1", [1, 2, 3, 4, 5]))
+
+    plan = scheduler.schedule()
+    table_before = scheduler._kv_cache_manager.get_block_table("request-1")
+    free_before = scheduler._kv_cache_manager._block_pool.free_block_ids
+
+    assert scheduler.schedule() is plan
+    assert scheduler._kv_cache_manager.get_block_table("request-1") == table_before
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == free_before
+
+
+def test_cache_capacity_failure_stops_waiting_admission_in_fifo_order() -> None:
+    scheduler = make_scheduler(5, 2, block_size=4, num_blocks=1)
+    first = make_request("first", [1, 2, 3, 4, 5])
+    second = make_request("second", [6])
+    scheduler.add_request(first)
+    scheduler.add_request(second)
+
+    plan = scheduler.schedule()
+
+    assert plan.scheduled_requests == ()
+    assert first.status is RequestStatus.WAITING
+    assert second.status is RequestStatus.WAITING
+    assert scheduler._kv_cache_manager.get_block_table("first") == ()
+    assert scheduler._kv_cache_manager.get_block_table("second") == ()
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == (0,)
+
+
+def test_capacity_failure_keeps_prior_success_and_later_request_waiting() -> None:
+    scheduler = make_scheduler(9, 2, block_size=4, num_blocks=2)
+    first = make_request("first", [1, 2, 3, 4])
+    second = make_request("second", [5, 6, 7, 8, 9])
+    scheduler.add_request(first)
+    scheduler.add_request(second)
+
+    plan = scheduler.schedule()
+
+    assert [item.request_id for item in plan.scheduled_requests] == ["first"]
+    assert plan.scheduled_requests[0].block_table == (0,)
+    assert first.status is RequestStatus.RUNNING
+    assert second.status is RequestStatus.WAITING
+    assert scheduler._kv_cache_manager.get_block_table("second") == ()
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == (1,)
+
+
 def test_intermediate_prompt_chunk_rejects_sampled_token() -> None:
-    scheduler = Scheduler(SchedulerConfig(2, 1))
+    scheduler = make_scheduler(2, 1)
     request = make_request("request-1", [1, 2, 3])
     scheduler.add_request(request)
     plan = scheduler.schedule()
@@ -103,7 +249,7 @@ def test_intermediate_prompt_chunk_rejects_sampled_token() -> None:
 
 
 def test_running_decode_precedes_waiting_prefill_in_same_plan() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 2))
+    scheduler = make_scheduler(4, 2)
     decode = make_request("decode", [1])
     scheduler.add_request(decode)
     prompt_plan = scheduler.schedule()
@@ -129,7 +275,7 @@ def test_running_decode_precedes_waiting_prefill_in_same_plan() -> None:
 
 
 def test_token_budget_is_never_exceeded() -> None:
-    scheduler = Scheduler(SchedulerConfig(5, 4))
+    scheduler = make_scheduler(5, 4)
     for index in range(4):
         scheduler.add_request(
             make_request(f"request-{index}", [index, index + 1, index + 2])
@@ -142,7 +288,7 @@ def test_token_budget_is_never_exceeded() -> None:
 
 
 def test_sequence_budget_is_never_exceeded() -> None:
-    scheduler = Scheduler(SchedulerConfig(100, 2))
+    scheduler = make_scheduler(100, 2)
     requests = [make_request(f"request-{index}", [index]) for index in range(3)]
     for request in requests:
         scheduler.add_request(request)
@@ -157,7 +303,7 @@ def test_sequence_budget_is_never_exceeded() -> None:
 
 
 def test_waiting_queue_admits_requests_in_fifo_order() -> None:
-    scheduler = Scheduler(SchedulerConfig(1, 1))
+    scheduler = make_scheduler(1, 1)
     requests = [
         make_request(f"request-{index}", [index], max_tokens=1)
         for index in range(3)
@@ -175,7 +321,7 @@ def test_waiting_queue_admits_requests_in_fifo_order() -> None:
 
 
 def test_running_order_remains_stable() -> None:
-    scheduler = Scheduler(SchedulerConfig(8, 3))
+    scheduler = make_scheduler(8, 3)
     requests = [make_request(f"request-{index}", [index]) for index in range(3)]
     for request in requests:
         scheduler.add_request(request)
@@ -200,7 +346,7 @@ def test_running_order_remains_stable() -> None:
 
 
 def test_duplicate_request_id_is_rejected_without_queue_pollution() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 2))
+    scheduler = make_scheduler(4, 2)
     first = make_request("request-1", [1])
     duplicate = make_request("request-1", [2])
     scheduler.add_request(first)
@@ -213,12 +359,15 @@ def test_duplicate_request_id_is_rejected_without_queue_pollution() -> None:
 
 
 def test_invalid_executor_outputs_fail_atomically_and_can_be_retried() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 2))
+    scheduler = make_scheduler(4, 2)
     first = make_request("first", [1])
     second = make_request("second", [2])
     scheduler.add_request(first)
     scheduler.add_request(second)
     plan = scheduler.schedule()
+    first_table = scheduler._kv_cache_manager.get_block_table("first")
+    second_table = scheduler._kv_cache_manager.get_block_table("second")
+    free_blocks = scheduler._kv_cache_manager._block_pool.free_block_ids
 
     with pytest.raises(ValueError, match="missing sampled token"):
         scheduler.update(plan, make_output({"first": 3}))
@@ -232,6 +381,9 @@ def test_invalid_executor_outputs_fail_atomically_and_can_be_retried() -> None:
 
     assert first.num_computed_tokens == second.num_computed_tokens == 0
     assert first.output_token_ids == second.output_token_ids == []
+    assert scheduler._kv_cache_manager.get_block_table("first") == first_table
+    assert scheduler._kv_cache_manager.get_block_table("second") == second_table
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == free_blocks
     assert scheduler.schedule() is plan
 
     scheduler.update(plan, make_output({"first": 3, "second": 4}))
@@ -239,7 +391,7 @@ def test_invalid_executor_outputs_fail_atomically_and_can_be_retried() -> None:
 
 
 def test_eos_finishes_request_while_ignore_eos_continues() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 2))
+    scheduler = make_scheduler(4, 2)
     eos = make_request("eos", [1], max_tokens=2, eos_token_id=0)
     ignored = make_request(
         "ignored", [2], max_tokens=2, eos_token_id=0, ignore_eos=True
@@ -261,7 +413,7 @@ def test_eos_finishes_request_while_ignore_eos_continues() -> None:
 
 
 def test_max_tokens_finishes_request_and_removes_it_from_running() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 1))
+    scheduler = make_scheduler(4, 1)
     request = make_request("request-1", [1], max_tokens=1)
     scheduler.add_request(request)
     plan = scheduler.schedule()
@@ -274,7 +426,7 @@ def test_max_tokens_finishes_request_and_removes_it_from_running() -> None:
 
 
 def test_plan_cannot_be_updated_twice() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 1))
+    scheduler = make_scheduler(4, 1)
     request = make_request("request-1", [1])
     scheduler.add_request(request)
     plan = scheduler.schedule()
@@ -290,21 +442,25 @@ def test_plan_cannot_be_updated_twice() -> None:
 
 
 def test_equal_but_foreign_plan_is_rejected() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 1))
+    scheduler = make_scheduler(4, 1)
     request = make_request("request-1", [1])
     scheduler.add_request(request)
     pending_plan = scheduler.schedule()
     foreign_plan = SchedulerOutput(pending_plan.scheduled_requests)
+    block_table = scheduler._kv_cache_manager.get_block_table("request-1")
+    free_blocks = scheduler._kv_cache_manager._block_pool.free_block_ids
 
     with pytest.raises(ValueError, match="not pending"):
         scheduler.update(foreign_plan, make_output({"request-1": 2}))
 
     assert request.num_computed_tokens == 0
+    assert scheduler._kv_cache_manager.get_block_table("request-1") == block_table
+    assert scheduler._kv_cache_manager._block_pool.free_block_ids == free_blocks
     assert scheduler.schedule() is pending_plan
 
 
 def test_abort_handles_waiting_and_running_requests() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 1))
+    scheduler = make_scheduler(4, 1)
     waiting = make_request("waiting", [1])
     scheduler.add_request(waiting)
     assert scheduler.abort_request("waiting") is True
@@ -322,7 +478,7 @@ def test_abort_handles_waiting_and_running_requests() -> None:
 
 
 def test_active_request_without_pending_tokens_is_rejected() -> None:
-    scheduler = Scheduler(SchedulerConfig(4, 1))
+    scheduler = make_scheduler(4, 1)
     request = Request(
         request_id="request-1",
         prompt_token_ids=[1],

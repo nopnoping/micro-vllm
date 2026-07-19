@@ -12,6 +12,7 @@ class ScheduledRequest:
     num_computed_tokens: int
     num_scheduled_tokens: int
     requires_sampling: bool
+    block_table: tuple[int | None, ...]
 
     def __post_init__(self) -> None:
         if not self.request_id:
@@ -32,7 +33,15 @@ class ScheduledRequest:
                 "num_scheduled_tokens must equal the number of input_token_ids"
             )
 
+        block_table = tuple(self.block_table)
+        for index, block_id in enumerate(block_table):
+            if block_id is not None and block_id < 0:
+                raise ValueError(
+                    f"block_table[{index}] must be non-negative or None"
+                )
+
         object.__setattr__(self, "input_token_ids", input_token_ids)
+        object.__setattr__(self, "block_table", block_table)
 
 
 @dataclass(frozen=True, slots=True)
