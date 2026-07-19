@@ -1,4 +1,4 @@
-"""User-facing and streaming engine output data structures."""
+"""User-facing engine output data structures."""
 
 from dataclasses import dataclass
 
