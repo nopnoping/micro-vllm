@@ -179,59 +179,59 @@ BlockPool + BlockTable
 
 #### 状态
 
-- [ ] KVCacheManager 拥有一个 BlockPool。
-- [ ] KVCacheManager 按 request ID 拥有 BlockTable。
-- [ ] 首版只创建一个 full-attention cache group。
-- [ ] 重复注册同一 request ID 被拒绝。
-- [ ] 未注册 request 的查询/释放行为明确。
+- [x] KVCacheManager 拥有一个 BlockPool。
+- [x] KVCacheManager 按 request ID 拥有 BlockTable。
+- [x] 首版只创建一个 full-attention cache group。
+- [x] 重复注册同一 request ID 被拒绝。
+- [x] 未注册 request 的查询/释放行为明确。
 
 #### Slot 需求计算
 
-- [ ] 根据 `num_computed_tokens + num_scheduled_tokens` 计算 target token capacity。
-- [ ] 使用统一 ceil-div 计算 required logical blocks。
-- [ ] 已有 partial block 可继续承载 token 时不分配新 block。
-- [ ] 跨 block boundary 时只分配缺少的 block 数。
-- [ ] 不为刚采样但尚未 scheduled 的 token 提前分配。
+- [x] 根据 `num_computed_tokens + num_scheduled_tokens` 计算 target token capacity。
+- [x] 使用统一 ceil-div 计算 required logical blocks。
+- [x] 已有 partial block 可继续承载 token 时不分配新 block。
+- [x] 跨 block boundary 时只分配缺少的 block 数。
+- [x] 不为刚采样但尚未 scheduled 的 token 提前分配。
 
 #### `allocate_slots()`
 
-- [ ] 接受 request ID、当前 computed token 数和本轮 scheduled token 数，或接受只读 Request。
-- [ ] 不修改 Request。
-- [ ] 没有新增 block 需求时返回当前 snapshot。
-- [ ] 新 block 分配是原子的。
-- [ ] 分配成功后 append 到对应 BlockTable。
-- [ ] 返回 frozen allocation result。
-- [ ] allocation result 至少包含完整 block table snapshot 和 new block IDs。
-- [ ] 容量不足时 request table 和 BlockPool 均保持不变。
+- [x] 接受 request ID、当前 computed token 数和本轮 scheduled token 数，或接受只读 Request。
+- [x] 不修改 Request。
+- [x] 没有新增 block 需求时返回当前 snapshot。
+- [x] 新 block 分配是原子的。
+- [x] 分配成功后 append 到对应 BlockTable。
+- [x] 返回 frozen allocation result。
+- [x] allocation result 至少包含完整 block table snapshot 和 new block IDs。
+- [x] 容量不足时 request table 和 BlockPool 均保持不变。
 
 #### 释放
 
-- [ ] `free_request(request_id)` 清空对应 BlockTable。
-- [ ] 对每个非空 physical block release 一次 request 引用。
-- [ ] 删除 request 到 BlockTable 的映射。
-- [ ] 重复 free 不得产生 double release；选择幂等或明确报错并测试。
-- [ ] 提供只读 `get_block_table(request_id)`。
+- [x] `free_request(request_id)` 清空对应 BlockTable。
+- [x] 对每个非空 physical block release 一次 request 引用。
+- [x] 删除 request 到 BlockTable 的映射。
+- [x] 重复 free 不得产生 double release；选择幂等或明确报错并测试。
+- [x] 提供只读 `get_block_table(request_id)`。
 
 ### Frozen result contract
 
-- [ ] 定义 `KVCacheAllocation` 或等价 frozen dataclass。
-- [ ] 包含 block table snapshot。
-- [ ] 包含本轮 new block IDs。
-- [ ] 不包含可变 BlockTable 或 BlockPool 引用。
-- [ ] 不包含 Request 或 tensor。
+- [x] 定义 `KVCacheAllocation` 或等价 frozen dataclass。
+- [x] 包含 block table snapshot。
+- [x] 包含本轮 new block IDs。
+- [x] 不包含可变 BlockTable 或 BlockPool 引用。
+- [x] 不包含 Request 或 tensor。
 
 ### `tests/core/test_kv_cache_manager.py`
 
-- [ ] 首次分配不足一个 block 的 token。
-- [ ] 在 partial block 内继续分配不新增 physical block。
-- [ ] 跨一个和多个 block boundary 分配正确。
-- [ ] 多 request 的 block table 相互隔离。
-- [ ] 多 request 消耗同一 pool 容量。
-- [ ] 容量不足时 allocation 原子失败。
-- [ ] free request 回收全部 request-owned blocks。
-- [ ] 释放一个 request 不影响其他 request。
-- [ ] allocation snapshot 不可变。
-- [ ] request finish/abort 所需的 free 操作可重复验证。
+- [x] 首次分配不足一个 block 的 token。
+- [x] 在 partial block 内继续分配不新增 physical block。
+- [x] 跨一个和多个 block boundary 分配正确。
+- [x] 多 request 的 block table 相互隔离。
+- [x] 多 request 消耗同一 pool 容量。
+- [x] 容量不足时 allocation 原子失败。
+- [x] free request 回收全部 request-owned blocks。
+- [x] 释放一个 request 不影响其他 request。
+- [x] allocation snapshot 不可变。
+- [x] request finish/abort 所需的 free 操作可重复验证。
 
 ## 8. Phase C：Scheduler 集成
 
