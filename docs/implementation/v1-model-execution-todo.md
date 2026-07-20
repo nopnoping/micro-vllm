@@ -545,34 +545,39 @@ logits 验证 CPU/GPU token ID parity。本阶段未运行验证。
 
 ### `worker/model_runner.py`
 
-- [ ] ModelRunner 构造时接收 model、physical KV cache、device、dtype 和 block size。
-- [ ] 将 SchedulerOutput 转换为 ModelInput。
-- [ ] 将输入 metadata tensor 移到正确 device。
-- [ ] 在 inference mode 下执行 model。
-- [ ] 只 gather sampling row hidden states。
-- [ ] 调用 model `compute_logits()`。
-- [ ] 调用 GreedySampler。
-- [ ] 返回 ModelRunnerOutput。
-- [ ] 保持 SchedulerOutput request 顺序。
-- [ ] 不修改 SchedulerOutput 或其嵌套 tuple。
-- [ ] 不缓存 Request Python 对象。
+- [x] ModelRunner 构造时接收 model、physical KV cache、device、dtype 和 block size。
+- [x] 将 SchedulerOutput 转换为 ModelInput。
+- [x] 将输入 metadata tensor 移到正确 device。
+- [x] 在 inference mode 下执行 model。
+- [x] 只 gather sampling row hidden states。
+- [x] 调用 model `compute_logits()`。
+- [x] 调用 GreedySampler。
+- [x] 返回 ModelRunnerOutput。
+- [x] 保持 SchedulerOutput request 顺序。
+- [x] 不修改 SchedulerOutput 或其嵌套 tuple。
+- [x] 不缓存 Request Python 对象。
 
 ### Batch 行为
 
-- [ ] 支持 batch 中所有 request 都不采样。
-- [ ] 支持部分 request 采样、部分继续 prefill。
-- [ ] 支持全部 request 采样。
-- [ ] 支持 request 具有不同 scheduled token 数。
-- [ ] 支持 non-contiguous physical blocks。
-- [ ] 支持 prefix hit 后的非零 position 起点。
+- [x] 支持 batch 中所有 request 都不采样。
+- [x] 支持部分 request 采样、部分继续 prefill。
+- [x] 支持全部 request 采样。
+- [x] 支持 request 具有不同 scheduled token 数。
+- [x] 支持 non-contiguous physical blocks。
+- [x] 支持 prefix hit 后的非零 position 起点。
 
 ### 测试
 
-- [ ] metadata builder 与预期 tensors 对拍。
-- [ ] Fake/Tiny model 验证 sampling row 选择。
-- [ ] ModelRunner 输出 request ID 不依赖隐式 batch index。
-- [ ] ModelRunner 不改变 plan。
-- [ ] 同一 pending plan 重试执行结果一致。
+- [x] metadata builder 与预期 tensors 对拍。
+- [x] Fake/Tiny model 验证 sampling row 选择。
+- [x] ModelRunner 输出 request ID 不依赖隐式 batch index。
+- [x] ModelRunner 不改变 plan。
+- [x] 同一 pending plan 重试执行结果一致。
+
+`ModelRunner` 将 immutable plan 一次性转换为 device-local flattened input，复用
+physical KV cache，且只对 sampling rows 计算 logits。Fake model 测试覆盖无采样、
+部分采样、全部采样、非连续 block、非零 prefix 起点、plan 不变性和重试一致性；
+按当前开发阶段要求，本轮未运行本地或远端验证。
 
 ## 14. Phase 9：Worker 和 SingleProcessExecutor
 

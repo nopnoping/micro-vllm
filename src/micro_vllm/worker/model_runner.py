@@ -1,16 +1,34 @@
 """Execution-plan to model-input preparation and model invocation."""
 
 from dataclasses import dataclass
+from typing import Protocol
 
 import torch
 
 from micro_vllm.config import CacheConfig
 from micro_vllm.core.scheduler_output import SchedulerOutput
+from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.layers.attention_backend import (
     AttentionMetadata,
     PAD_BLOCK_ID,
     map_cache_slots,
 )
+from micro_vllm.sampling.sampler import GreedySampler
+from micro_vllm.worker.kv_cache import PhysicalKVCache
+
+
+class _RunnerModel(Protocol):
+    """Model operations required by ModelRunner."""
+
+    def __call__(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        layer_kv_caches: tuple[torch.Tensor, ...],
+        attention_metadata: AttentionMetadata,
+    ) -> torch.Tensor: ...
+
+    def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor: ...
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -201,3 +219,80 @@ def build_block_table(
             device=device,
         )
     return block_table
+
+
+class ModelRunner:
+    """Execute one immutable scheduler plan against a model and KV cache."""
+
+    __slots__ = (
+        "_block_size",
+        "_cache_config",
+        "_device",
+        "_dtype",
+        "_model",
+        "_physical_kv_cache",
+        "_sampler",
+    )
+
+    def __init__(
+        self,
+        model: _RunnerModel,
+        physical_kv_cache: PhysicalKVCache,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+        block_size: int,
+    ) -> None:
+        self._model = model
+        self._physical_kv_cache = physical_kv_cache
+        self._device = device
+        self._dtype = dtype
+        self._block_size = block_size
+        self._cache_config = CacheConfig(
+            block_size=block_size,
+            num_blocks=physical_kv_cache.shape[1],
+        )
+        self._sampler = GreedySampler()
+
+    def execute(self, plan: SchedulerOutput, /) -> ModelRunnerOutput:
+        """Execute a flattened batch without retaining scheduler objects."""
+
+        model_input = self._build_model_input(plan)
+        layer_kv_caches = tuple(
+            self._physical_kv_cache[layer_index]
+            for layer_index in range(len(self._physical_kv_cache))
+        )
+
+        with torch.inference_mode():
+            hidden_states = self._model(
+                model_input.input_ids,
+                model_input.positions,
+                layer_kv_caches,
+                model_input.attention_metadata,
+            )
+            sampling_hidden_states = hidden_states.index_select(
+                0,
+                model_input.sampling_row_indices,
+            )
+            logits = self._model.compute_logits(sampling_hidden_states)
+
+        sampling_request_ids = tuple(
+            request.request_id
+            for request in plan.scheduled_requests
+            if request.requires_sampling
+        )
+        return self._sampler(logits, sampling_request_ids)
+
+    def _build_model_input(self, plan: SchedulerOutput) -> ModelInput:
+        block_table = build_block_table(plan, device=self._device)
+        slot_mapping = build_slot_mapping(
+            plan,
+            self._cache_config,
+            device=self._device,
+        )
+        return flatten_model_input(
+            plan,
+            block_table=block_table,
+            slot_mapping=slot_mapping,
+            block_size=self._block_size,
+        )
