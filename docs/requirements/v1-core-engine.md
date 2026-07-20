@@ -248,6 +248,8 @@ V1 必须回答以下问题：
 
 ## 7. V1.4：权重加载、模型覆盖与完整 Sampling（当前阶段）
 
+当前执行清单：[V1.4A Safetensors Checkpoint Source](../implementation/v1-checkpoint-source-todo.md)。
+
 ### Model Registry 和模型接口
 
 - [ ] Model Registry 根据 Hugging Face `architectures` 选择实现。
