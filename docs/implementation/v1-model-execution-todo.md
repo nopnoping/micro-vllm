@@ -458,29 +458,38 @@ parameter。本阶段未运行验证。
 
 ### `layers/attention.py`
 
-- [ ] 实现 q_proj、k_proj、v_proj。
-- [ ] 支持独立 attention heads 和 KV heads。
-- [ ] reshape 为 flattened token/head/head_dim 表示。
-- [ ] 对 Q/K 应用 RoPE。
-- [ ] 调用注入的 AttentionBackend。
-- [ ] 合并 heads 并执行 o_proj。
-- [ ] 不根据 prefill/decode 选择不同 forward。
-- [ ] 不读取模型类型以外的 Scheduler 状态。
+- [x] 实现 q_proj、k_proj、v_proj。
+- [x] 支持独立 attention heads 和 KV heads。
+- [x] reshape 为 flattened token/head/head_dim 表示。
+- [x] 对 Q/K 应用 RoPE。
+- [x] 调用注入的 AttentionBackend。
+- [x] 合并 heads 并执行 o_proj。
+- [x] 不根据 prefill/decode 选择不同 forward。
+- [x] 不读取模型类型以外的 Scheduler 状态。
+
+`LlamaAttention` 使用 bias-free dense Q/K/V/O projections，将 flattened hidden
+states reshape 为独立 query/KV head tensor，应用标准 RoPE 后调用注入 backend；
+prefill、chunked prefill 和 decode 共用一个 forward。本阶段未运行验证。
 
 ### `models/llama.py`
 
-- [ ] 实现 DecoderLayer pre-norm residual 结构。
-- [ ] attention residual 路径与 Transformers 对齐。
-- [ ] MLP residual 路径与 Transformers 对齐。
-- [ ] 实现 token embedding。
-- [ ] 实现 N 层 decoder iteration。
-- [ ] 每层接收对应 physical KV cache tensor。
-- [ ] 实现 final RMSNorm。
-- [ ] `forward()` 返回所有 scheduled query hidden states。
-- [ ] `compute_logits()` 与 forward 分离。
-- [ ] LM head 只在 ModelRunner 指定 sampling rows 上调用或明确先 gather hidden states。
-- [ ] model 不执行 sampling。
-- [ ] model 不加载 checkpoint 文件。
+- [x] 实现 DecoderLayer pre-norm residual 结构。
+- [x] attention residual 路径与 Transformers 对齐。
+- [x] MLP residual 路径与 Transformers 对齐。
+- [x] 实现 token embedding。
+- [x] 实现 N 层 decoder iteration。
+- [x] 每层接收对应 physical KV cache tensor。
+- [x] 实现 final RMSNorm。
+- [x] `forward()` 返回所有 scheduled query hidden states。
+- [x] `compute_logits()` 与 forward 分离。
+- [x] LM head 只在 ModelRunner 指定 sampling rows 上调用或明确先 gather hidden states。
+- [x] model 不执行 sampling。
+- [x] model 不加载 checkpoint 文件。
+
+`LlamaModel.forward()` 接受 flattened input IDs、absolute positions、逐层 KV cache
+tuple 和 AttentionMetadata，并返回全部 query hidden states；调用方先选择 sampling
+rows，再传给 `compute_logits()`。模型仅组装随机初始化 layers，不包含 sampling 或
+checkpoint I/O。本阶段未运行验证。
 
 ### Tiny config
 
@@ -496,10 +505,13 @@ num_key_value_heads = 2
 max_position_embeddings = 128
 ```
 
-- [ ] 固定 random seed。
-- [ ] attention dropout 和 hidden dropout 关闭。
-- [ ] model 强制 eval mode 执行。
-- [ ] CPU test 使用小 batch、短 context，保持快速。
+- [x] 固定 random seed。
+- [x] attention dropout 和 hidden dropout 关闭。
+- [x] model 强制 eval mode 执行。
+- [x] CPU test 使用小 batch、短 context，保持快速。
+
+Tiny CPU parity test 固定 seed，使用 2-layer、hidden size 16、context length 4 的
+eval model；实现不包含 attention/hidden dropout。本阶段未运行验证。
 
 ## 12. Phase 7：Greedy Sampler
 

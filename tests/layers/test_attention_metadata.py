@@ -48,6 +48,7 @@ def test_layers_package_exports_attention_metadata_contract() -> None:
         "AttentionMetadata",
         "LMHead",
         "Linear",
+        "LlamaAttention",
         "PAD_BLOCK_ID",
         "RMSNorm",
         "ReferenceAttentionBackend",
