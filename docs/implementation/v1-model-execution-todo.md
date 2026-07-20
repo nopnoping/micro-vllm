@@ -205,31 +205,34 @@ Phase 1 实现说明：`MODEL_LENGTH` 是独立 finish reason；同一步同时�
 
 ### 数据与所有权
 
-- [ ] 定义只在 Worker 数据面使用的 physical KV cache container/helper。
-- [ ] 为每个 decoder layer 创建独立 cache tensor。
-- [ ] tensor 数量等于 `num_hidden_layers`。
-- [ ] block dimension 等于逻辑 CacheConfig 的 `num_blocks`。
-- [ ] block size 等于逻辑 CacheConfig 的 `block_size`。
-- [ ] KV head 数和 head dim 来自 Llama model config。
-- [ ] tensor dtype/device 与 Worker 配置一致。
-- [ ] physical cache 不保存 Request 或 block table。
-- [ ] 不在初始化时依赖真实权重文件。
+- [x] 定义只在 Worker 数据面使用的 physical KV cache container/helper。
+- [x] 为每个 decoder layer 创建独立 cache tensor。
+- [x] tensor 数量等于 `num_hidden_layers`。
+- [x] block dimension 等于逻辑 CacheConfig 的 `num_blocks`。
+- [x] block size 等于逻辑 CacheConfig 的 `block_size`。
+- [x] KV head 数和 head dim 来自 Llama model config。
+- [x] tensor dtype/device 与 Worker 配置一致。
+- [x] physical cache 不保存 Request 或 block table。
+- [x] 不在初始化时依赖真实权重文件。
 
 ### API
 
-- [ ] 提供按 layer index 获取 cache tensor 的只读容器接口。
-- [ ] 不向 control plane 暴露 tensor。
-- [ ] 提供 shape/dtype/device validation。
-- [ ] 提供显式 release/shutdown 所需操作。
-- [ ] 不自动清零被逻辑层释放的 block。
+- [x] 提供按 layer index 获取 cache tensor 的只读容器接口。
+- [x] 不向 control plane 暴露 tensor。
+- [x] 提供 shape/dtype/device validation。
+- [x] 提供显式 release/shutdown 所需操作。
+- [x] 不自动清零被逻辑层释放的 block。
 
 ### 测试
 
-- [ ] layer 数、tensor shape、dtype 和 device 正确。
-- [ ] physical block ID 对应 block dimension index。
-- [ ] 不同 layer tensor 不共享 storage。
-- [ ] CPU 和 GPU allocation 测试分离。
-- [ ] invalid model/cache shape 在模型执行前失败。
+- [x] layer 数、tensor shape、dtype 和 device 正确。
+- [x] physical block ID 对应 block dimension index。
+- [x] 不同 layer tensor 不共享 storage。
+- [x] CPU 和 GPU allocation 测试分离。
+- [x] invalid model/cache shape 在模型执行前失败。
+
+Phase 2 已完成实现与测试代码；按当前开发阶段要求，本轮未运行本地或远端
+测试。远端验证留待后续统一执行。
 
 ## 8. Phase 3：Attention Metadata 与 ModelInput
 

@@ -19,6 +19,7 @@ from micro_vllm.executor.interface import Executor, ModelRunnerOutput, SampledTo
 from micro_vllm.models.llama import LlamaModelConfig
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.config import ModelExecutionConfig
+from micro_vllm.worker.kv_cache import PhysicalKVCache
 
 
 def test_top_level_exports_engine_entry_points() -> None:
@@ -68,9 +69,10 @@ def test_engine_executor_and_sampling_exports_are_explicit() -> None:
 
 def test_model_and_worker_configuration_exports_are_explicit() -> None:
     assert models.__all__ == ("LlamaModelConfig",)
-    assert worker.__all__ == ("ModelExecutionConfig",)
+    assert worker.__all__ == ("ModelExecutionConfig", "PhysicalKVCache")
     assert models.LlamaModelConfig is LlamaModelConfig
     assert worker.ModelExecutionConfig is ModelExecutionConfig
+    assert worker.PhysicalKVCache is PhysicalKVCache
 
 
 def test_fake_executor_is_not_public() -> None:
