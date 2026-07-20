@@ -400,42 +400,59 @@ CPU FP32 parity tests 使用 `atol=rtol=1e-6`；GPU float16 使用
 
 ### `layers/normalization.py`
 
-- [ ] 实现 Llama RMSNorm。
-- [ ] variance accumulation 使用稳定 dtype。
-- [ ] parameter shape、epsilon 和输出 dtype 正确。
-- [ ] 与 Transformers RMSNorm 对拍。
+- [x] 实现 Llama RMSNorm。
+- [x] variance accumulation 使用稳定 dtype。
+- [x] parameter shape、epsilon 和输出 dtype 正确。
+- [x] 与 Transformers RMSNorm 对拍。
+
+`RMSNorm` 使用单个 `weight` parameter，并在 float32 中计算 variance 和
+normalization，再恢复输入/model dtype；测试覆盖参数契约、低精度稳定性和
+Transformers `LlamaRMSNorm` parity。本阶段未运行验证。
 
 ### `layers/rotary_embedding.py`
 
-- [ ] 实现标准 Llama RoPE。
-- [ ] 接受 flattened absolute positions。
-- [ ] 只旋转 Q/K，不旋转 V。
-- [ ] 支持动态计算或足够长度的 cos/sin cache。
-- [ ] 不实现 rope scaling 变体。
-- [ ] 与 Transformers 标准 RoPE 对拍。
+- [x] 实现标准 Llama RoPE。
+- [x] 接受 flattened absolute positions。
+- [x] 只旋转 Q/K，不旋转 V。
+- [x] 支持动态计算或足够长度的 cos/sin cache。
+- [x] 不实现 rope scaling 变体。
+- [x] 与 Transformers 标准 RoPE 对拍。
+
+`RotaryEmbedding` 根据 flattened absolute positions 动态生成标准 Llama
+cos/sin，不保存最大长度 cache，也不支持 rope scaling 变体。本阶段未运行验证。
 
 ### `layers/linear.py`
 
-- [ ] 本阶段使用普通单卡 dense linear。
-- [ ] 不提前加入 TP shard 或 collective。
-- [ ] bias 行为与 Llama 对齐。
-- [ ] 保留清晰 parameter name，方便下一里程碑权重加载。
+- [x] 本阶段使用普通单卡 dense linear。
+- [x] 不提前加入 TP shard 或 collective。
+- [x] bias 行为与 Llama 对齐。
+- [x] 保留清晰 parameter name，方便下一里程碑权重加载。
+
+`Linear` 直接继承 PyTorch dense `nn.Linear`，保留标准 `weight`/`bias` 参数名，
+不包含 tensor parallel 或 collective 行为。本阶段未运行验证。
 
 ### `layers/mlp.py`
 
-- [ ] 实现 gate projection。
-- [ ] 实现 up projection。
-- [ ] 实现 SiLU gate activation。
-- [ ] 实现 element-wise gate/up multiply。
-- [ ] 实现 down projection。
-- [ ] 与 Transformers Llama MLP 对拍。
+- [x] 实现 gate projection。
+- [x] 实现 up projection。
+- [x] 实现 SiLU gate activation。
+- [x] 实现 element-wise gate/up multiply。
+- [x] 实现 down projection。
+- [x] 与 Transformers Llama MLP 对拍。
+
+`SwiGLUMLP` 实现通用的 bias-free dense SwiGLU，并保留 `gate_proj`、`up_proj` 和
+`down_proj` checkpoint 参数名。本阶段未运行验证。
 
 ### `layers/embedding.py`
 
-- [ ] 实现 token embedding。
-- [ ] 实现 LM head。
-- [ ] tied/untied embedding 行为由 config 明确控制。
-- [ ] 本阶段不实现 vocab parallel。
+- [x] 实现 token embedding。
+- [x] 实现 LM head。
+- [x] tied/untied embedding 行为由 config 明确控制。
+- [x] 本阶段不实现 vocab parallel。
+
+`TokenEmbedding` 和 bias-free `LMHead` 均为单 device dense layer；
+`LlamaModelConfig.tie_word_embeddings` 决定构造 LM head 时是否传入共享 embedding
+parameter。本阶段未运行验证。
 
 ## 11. Phase 6：Llama Attention 和 Decoder
 

@@ -46,8 +46,14 @@ def test_layers_package_exports_attention_metadata_contract() -> None:
     assert layers.__all__ == (
         "AttentionBackend",
         "AttentionMetadata",
+        "LMHead",
+        "Linear",
         "PAD_BLOCK_ID",
+        "RMSNorm",
         "ReferenceAttentionBackend",
+        "RotaryEmbedding",
+        "SwiGLUMLP",
+        "TokenEmbedding",
         "gather_kv_cache",
         "write_kv_cache",
     )
