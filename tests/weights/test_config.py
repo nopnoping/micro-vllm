@@ -5,10 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from micro_vllm.models.registry import (
-    _read_hf_config,
-    _select_supported_architecture,
-)
+from micro_vllm.weights.config import _read_hf_config
 
 
 def write_config(model_path: Path, config: object) -> Path:
@@ -164,41 +161,6 @@ def test_read_hf_config_requires_string_architecture_entries(
 
     with pytest.raises(ValueError, match="architecture at index 0.*non-empty string"):
         _read_hf_config(tmp_path)
-
-
-def test_select_supported_architecture_uses_configuration_order(
-    tmp_path: Path,
-) -> None:
-    write_config(
-        tmp_path,
-        {"architectures": ["UnknownModel", "SecondModel", "FirstModel"]},
-    )
-    config = _read_hf_config(tmp_path)
-
-    architecture = _select_supported_architecture(
-        config,
-        ("FirstModel", "SecondModel"),
-    )
-
-    assert architecture == "SecondModel"
-
-
-def test_select_supported_architecture_reports_requested_and_supported_values(
-    tmp_path: Path,
-) -> None:
-    config_path = write_config(
-        tmp_path,
-        {"architectures": ["UnknownModel", "OtherModel"]},
-    )
-    config = _read_hf_config(tmp_path)
-
-    with pytest.raises(ValueError) as error_info:
-        _select_supported_architecture(config, ("LlamaForCausalLM",))
-
-    message = str(error_info.value)
-    assert "['UnknownModel', 'OtherModel']" in message
-    assert "['LlamaForCausalLM']" in message
-    assert str(config_path) in message
 
 
 def test_model_type_does_not_replace_architectures(tmp_path: Path) -> None:
