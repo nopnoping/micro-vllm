@@ -380,16 +380,20 @@ MHA、GQA 和 MQA 共用同一路径，仅在 KV head 数较少时按组扩展�
 
 ### Reference tests
 
-- [ ] 单 token self-attention 与 dense reference 对拍。
-- [ ] 完整 causal prefill 与 dense masked attention 对拍。
-- [ ] chunked prefill 与一次性 prefill 对拍。
-- [ ] prefill 后逐 token decode 与完整序列 attention 对拍。
-- [ ] mixed batch 与每 request 独立执行对拍。
-- [ ] GQA 和 MQA 与显式 repeat KV dense reference 对拍。
-- [ ] block table 使用非连续 physical block ID 时结果不变。
-- [ ] block ID 释放后复用不会读取新 context 之外的 stale KV。
-- [ ] prefix shared block 在两个 request 中产生一致历史 attention。
-- [ ] FP32 CPU 使用严格容差；GPU low-precision 使用记录的合理容差。
+- [x] 单 token self-attention 与 dense reference 对拍。
+- [x] 完整 causal prefill 与 dense masked attention 对拍。
+- [x] chunked prefill 与一次性 prefill 对拍。
+- [x] prefill 后逐 token decode 与完整序列 attention 对拍。
+- [x] mixed batch 与每 request 独立执行对拍。
+- [x] GQA 和 MQA 与显式 repeat KV dense reference 对拍。
+- [x] block table 使用非连续 physical block ID 时结果不变。
+- [x] block ID 释放后复用不会读取新 context 之外的 stale KV。
+- [x] prefix shared block 在两个 request 中产生一致历史 attention。
+- [x] FP32 CPU 使用严格容差；GPU low-precision 使用记录的合理容差。
+
+CPU FP32 parity tests 使用 `atol=rtol=1e-6`；GPU float16 使用
+`atol=rtol=2e-3`，GPU bfloat16 使用 `atol=rtol=2e-2`，不支持 bfloat16 的设备
+跳过对应 case。测试代码已实现，本阶段未运行验证。
 
 ## 10. Phase 5：Llama 基础 Layers
 
