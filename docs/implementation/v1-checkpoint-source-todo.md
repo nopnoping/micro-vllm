@@ -225,10 +225,10 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 ### 回归
 
-- [ ] 现有 CPU 测试全部通过。
-- [ ] 现有 GPU 测试全部通过。
-- [ ] 测试不访问网络。
-- [ ] 测试不依赖固定绝对路径。
+- [x] 现有 CPU 测试全部通过。
+- [x] 现有 GPU 测试全部通过。
+- [x] 测试不访问网络。
+- [x] 测试不依赖固定绝对路径。
 
 ## 10. 建议提交顺序
 
@@ -269,23 +269,27 @@ ssh aliyun-ecs \
 ```
 
 - [x] 记录远端 Python、PyTorch 和 safetensors 版本。
-- [ ] checkpoint source 定向测试通过。
-- [ ] CPU 测试通过。
-- [ ] GPU 测试通过。
-- [ ] 完整测试通过。
+- [x] checkpoint source 定向测试通过。
+- [x] CPU 测试通过。
+- [x] GPU 测试通过。
+- [x] 完整测试通过。
+
+2026-07-20 最终远端验证：checkpoint source 定向测试 `32 passed in 1.91s`；
+CPU 测试 `370 passed, 7 deselected in 5.83s`；GPU 测试
+`7 passed, 370 deselected in 5.71s`；完整测试 `377 passed in 6.51s`。
 
 ## 12. 完成标准
 
 只有以下条件全部满足，V1.4A 才能标记完成：
 
-- [ ] 单文件和 sharded safetensors 使用同一个调用接口。
-- [ ] 输出顺序确定，weight 不重复、不遗漏。
-- [ ] 多 shard 任意时刻最多打开一个文件。
-- [ ] source 不缓存全部 checkpoint tensor。
-- [ ] 文件布局和 index 不一致时错误明确且无句柄泄漏。
-- [ ] source 不包含模型、参数映射、设备转换或分布式逻辑。
-- [ ] 定向、CPU、GPU 和完整远端测试全部通过。
-- [ ] `docs/requirements/v1-core-engine.md` 中对应完成项按证据更新。
+- [x] 单文件和 sharded safetensors 使用同一个调用接口。
+- [x] 输出顺序确定，weight 不重复、不遗漏。
+- [x] 多 shard 任意时刻最多打开一个文件。
+- [x] source 不缓存全部 checkpoint tensor。
+- [x] 文件布局和 index 不一致时错误明确且无句柄泄漏。
+- [x] source 不包含模型、参数映射、设备转换或分布式逻辑。
+- [x] 定向、CPU、GPU 和完整远端测试全部通过。
+- [x] `docs/requirements/v1-core-engine.md` 中对应完成项按证据更新。
 
 完成后下一阶段进入 V1.4B：HF `config.json` 解析、最小 Model Registry 和
 Llama model factory；随后 V1.4C 实现 parameter loader 并打通真实 Llama

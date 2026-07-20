@@ -164,15 +164,18 @@ def test_source_rejects_missing_shard(tmp_path: Path) -> None:
         SafetensorsSource(tmp_path)
 
 
-@pytest.mark.parametrize(
-    "shard_filename",
-    ["../outside.safetensors", "/tmp/a.safetensors"],
-)
+@pytest.mark.parametrize("path_kind", ["relative", "absolute"])
 def test_source_rejects_shard_outside_model_directory(
     tmp_path: Path,
-    shard_filename: str,
+    path_kind: str,
 ) -> None:
-    (tmp_path.parent / "outside.safetensors").touch()
+    outside_path = tmp_path.parent / "outside.safetensors"
+    outside_path.touch()
+    shard_filename = (
+        "../outside.safetensors"
+        if path_kind == "relative"
+        else str(outside_path.resolve())
+    )
     write_index(tmp_path, {"model.weight": shard_filename})
 
     with pytest.raises(ValueError, match="model directory"):

@@ -248,7 +248,9 @@ V1 必须回答以下问题：
 
 ## 7. V1.4：权重加载、模型覆盖与完整 Sampling（当前阶段）
 
-当前执行清单：[V1.4A Safetensors Checkpoint Source](../implementation/v1-checkpoint-source-todo.md)。
+已完成清单：[V1.4A Safetensors Checkpoint Source](../implementation/v1-checkpoint-source-todo.md)。
+下一阶段进入 V1.4B：HF `config.json` 解析、最小 Model Registry 和 Llama
+model factory。
 
 ### Model Registry 和模型接口
 
@@ -261,9 +263,9 @@ V1 必须回答以下问题：
 
 ### 权重加载
 
-- [ ] 支持单文件 safetensors。
-- [ ] 支持 safetensors index 和多 shard 流式加载。
-- [ ] 避免同时将全部 checkpoint tensor 常驻 CPU 内存。
+- [x] 支持单文件 safetensors。
+- [x] 支持 safetensors index 和多 shard 流式加载。
+- [x] 避免同时将全部 checkpoint tensor 常驻 CPU 内存。
 - [ ] 支持 tied embedding/lm_head。
 - [ ] 支持 QKV packed parameter 映射。
 - [ ] 支持 gate/up packed parameter 映射。
