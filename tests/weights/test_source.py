@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 import torch
-from safetensors import safe_open
+from safetensors import SafetensorError, safe_open
 from safetensors.torch import save_file
 
 import micro_vllm.weights.source as source_module
@@ -368,6 +368,80 @@ def test_later_shard_read_failure_closes_each_context(
         ("close", "first.safetensors"),
         ("open", "second.safetensors"),
         ("close", "second.safetensors"),
+    ]
+
+
+def test_iteration_wraps_corrupt_checkpoint_with_original_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint_path = tmp_path / "model.safetensors"
+    checkpoint_path.write_bytes(b"invalid safetensors")
+    tracker = OpenTracker()
+    monkeypatch.setattr(source_module, "safe_open", tracker.safe_open)
+
+    with pytest.raises(
+        ValueError,
+        match=r"failed to read safetensors shard.*model\.safetensors",
+    ) as exc_info:
+        list(SafetensorsSource(tmp_path).iter_tensors())
+
+    assert isinstance(exc_info.value.__cause__, SafetensorError)
+    assert tracker.currently_open == 0
+    assert tracker.events == [
+        ("open", "model.safetensors"),
+        ("close", "model.safetensors"),
+    ]
+
+
+def test_new_iterator_can_retry_after_failure(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "model.safetensors"
+    checkpoint_path.write_bytes(b"invalid safetensors")
+    source = SafetensorsSource(tmp_path)
+
+    with pytest.raises(ValueError, match="failed to read safetensors shard"):
+        list(source.iter_tensors())
+
+    save_tensors(checkpoint_path, {"weight": torch.tensor([1.0])})
+    actual = list(source.iter_tensors())
+
+    assert [name for name, _ in actual] == ["weight"]
+    torch.testing.assert_close(actual[0][1], torch.tensor([1.0]))
+
+
+def test_iteration_reports_shard_removed_after_discovery(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "model.safetensors"
+    save_tensors(checkpoint_path, {"weight": torch.tensor([1.0])})
+    source = SafetensorsSource(tmp_path)
+    checkpoint_path.unlink()
+
+    with pytest.raises(
+        FileNotFoundError,
+        match=r"checkpoint shard does not exist.*model\.safetensors",
+    ):
+        list(source.iter_tensors())
+
+
+def test_index_mismatch_closes_current_shard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_path = tmp_path / "shard.safetensors"
+    save_tensors(shard_path, {"actual": torch.tensor([1.0])})
+    write_index(tmp_path, {"declared": shard_path.name})
+    tracker = OpenTracker()
+    monkeypatch.setattr(source_module, "safe_open", tracker.safe_open)
+
+    with pytest.raises(
+        ValueError,
+        match=r"shard\.safetensors.*missing weights.*unexpected weights",
+    ):
+        list(SafetensorsSource(tmp_path).iter_tensors())
+
+    assert tracker.currently_open == 0
+    assert tracker.events == [
+        ("open", "shard.safetensors"),
+        ("close", "shard.safetensors"),
     ]
 
 

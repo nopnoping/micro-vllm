@@ -176,12 +176,15 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 首版优先使用带清晰信息的内建异常，不建立大而全的异常继承层次。
 
-- [ ] 路径或 shard 缺失使用 `FileNotFoundError`。
-- [ ] layout、JSON schema 或 index/file 不一致使用 `ValueError`。
-- [ ] 错误消息包含 model path、index path、shard 或 weight name 中的相关上下文。
-- [ ] safetensors 文件损坏时保留原始异常作为 cause。
-- [ ] 一个 iterator 失败后不影响重新创建 iterator 并再次尝试。
-- [ ] 失败路径不会遗留打开的文件句柄。
+- [x] 路径或 shard 缺失使用 `FileNotFoundError`。
+- [x] layout、JSON schema 或 index/file 不一致使用 `ValueError`。
+- [x] 错误消息包含 model path、index path、shard 或 weight name 中的相关上下文。
+- [x] safetensors 文件损坏时保留原始异常作为 cause。
+- [x] 一个 iterator 失败后不影响重新创建 iterator 并再次尝试。
+- [x] 失败路径不会遗留打开的文件句柄。
+
+2026-07-20 Phase 3 远端验证：定向测试 `32 passed in 1.91s`，完整测试
+`377 passed in 6.50s`。
 
 不要求 source 检查模型参数层面的 missing、unexpected 或 shape mismatch；这些属于
 下一阶段 parameter loader。这里的 missing/unexpected 只描述 index 与 safetensors

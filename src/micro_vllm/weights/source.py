@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from safetensors import safe_open
+from safetensors import SafetensorError, safe_open
 
 
 _SINGLE_FILE_NAME = "model.safetensors"
@@ -33,11 +33,24 @@ class SafetensorsSource:
     def iter_tensors(self) -> Iterator[tuple[str, torch.Tensor]]:
         """Yield checkpoint tensors from one open shard at a time."""
         for shard in self._shards:
-            with safe_open(shard.path, framework="pt", device="cpu") as checkpoint:
-                actual_names = tuple(sorted(checkpoint.keys()))
-                weight_names = _validated_weight_names(shard, actual_names)
-                for weight_name in weight_names:
-                    yield weight_name, checkpoint.get_tensor(weight_name)
+            try:
+                with safe_open(
+                    shard.path,
+                    framework="pt",
+                    device="cpu",
+                ) as checkpoint:
+                    actual_names = tuple(sorted(checkpoint.keys()))
+                    weight_names = _validated_weight_names(shard, actual_names)
+                    for weight_name in weight_names:
+                        yield weight_name, checkpoint.get_tensor(weight_name)
+            except FileNotFoundError as error:
+                raise FileNotFoundError(
+                    f"checkpoint shard does not exist: {shard.path}"
+                ) from error
+            except SafetensorError as error:
+                raise ValueError(
+                    f"failed to read safetensors shard: {shard.path}"
+                ) from error
 
 
 def _discover_checkpoint(model_path: Path) -> tuple[_CheckpointShard, ...]:
