@@ -7,7 +7,13 @@ import torch
 
 from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
-from micro_vllm.worker.model_runner import ModelInput, flatten_model_input
+from micro_vllm.config import CacheConfig
+from micro_vllm.worker.model_runner import (
+    ModelInput,
+    build_block_table,
+    build_slot_mapping,
+    flatten_model_input,
+)
 
 
 def make_attention_metadata() -> AttentionMetadata:
@@ -246,3 +252,228 @@ def test_flattening_requires_one_slot_per_scheduled_token() -> None:
             slot_mapping=torch.zeros(1, dtype=torch.int64),
             block_size=4,
         )
+
+
+def test_slot_mapping_crosses_physical_block_boundary() -> None:
+    request = ScheduledRequest(
+        request_id="request-1",
+        input_token_ids=(10, 11),
+        num_computed_tokens=3,
+        num_scheduled_tokens=2,
+        requires_sampling=True,
+        block_table=(2, 5),
+    )
+
+    slot_mapping = build_slot_mapping(
+        SchedulerOutput((request,)),
+        CacheConfig(block_size=4, num_blocks=8),
+        device=torch.device("cpu"),
+    )
+
+    assert slot_mapping.tolist() == [11, 20]
+    assert slot_mapping.dtype is torch.int64
+    assert slot_mapping.device == torch.device("cpu")
+
+
+def test_slot_mapping_preserves_mixed_request_order() -> None:
+    first = ScheduledRequest(
+        request_id="first",
+        input_token_ids=(10,),
+        num_computed_tokens=4,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(0, 3),
+    )
+    second = ScheduledRequest(
+        request_id="second",
+        input_token_ids=(20, 21),
+        num_computed_tokens=1,
+        num_scheduled_tokens=2,
+        requires_sampling=False,
+        block_table=(6,),
+    )
+
+    slot_mapping = build_slot_mapping(
+        SchedulerOutput((first, second)),
+        CacheConfig(block_size=4, num_blocks=8),
+        device=torch.device("cpu"),
+    )
+
+    assert slot_mapping.tolist() == [12, 25, 26]
+
+
+def test_slot_mapping_rejects_missing_logical_block() -> None:
+    request = ScheduledRequest(
+        request_id="request-1",
+        input_token_ids=(10,),
+        num_computed_tokens=4,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(0,),
+    )
+
+    with pytest.raises(ValueError, match="has no block for position 4"):
+        build_slot_mapping(
+            SchedulerOutput((request,)),
+            CacheConfig(block_size=4, num_blocks=8),
+            device=torch.device("cpu"),
+        )
+
+
+def test_slot_mapping_rejects_none_physical_block() -> None:
+    request = ScheduledRequest(
+        request_id="request-1",
+        input_token_ids=(10,),
+        num_computed_tokens=4,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(0, None),
+    )
+
+    with pytest.raises(ValueError, match="has no physical block for position 4"):
+        build_slot_mapping(
+            SchedulerOutput((request,)),
+            CacheConfig(block_size=4, num_blocks=8),
+            device=torch.device("cpu"),
+        )
+
+
+@pytest.mark.parametrize("physical_block", [-1, 8])
+def test_slot_mapping_rejects_out_of_range_physical_block(
+    physical_block: int,
+) -> None:
+    request = ScheduledRequest(
+        request_id="request-1",
+        input_token_ids=(10,),
+        num_computed_tokens=0,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(physical_block,),
+    )
+
+    with pytest.raises(ValueError, match="out-of-range physical block"):
+        build_slot_mapping(
+            SchedulerOutput((request,)),
+            CacheConfig(block_size=4, num_blocks=8),
+            device=torch.device("cpu"),
+        )
+
+
+def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
+    request = ScheduledRequest(
+        request_id="request-1",
+        input_token_ids=(10,),
+        num_computed_tokens=7,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(0, 7),
+    )
+    cache_config = CacheConfig(block_size=4, num_blocks=8)
+
+    slot_mapping = build_slot_mapping(
+        SchedulerOutput((request,)),
+        cache_config,
+        device=torch.device("cpu"),
+    )
+
+    assert slot_mapping.tolist() == [31]
+    assert slot_mapping.item() < cache_config.num_blocks * cache_config.block_size
+
+
+def test_block_table_pads_different_request_lengths() -> None:
+    first = ScheduledRequest(
+        request_id="first",
+        input_token_ids=(10,),
+        num_computed_tokens=0,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(2,),
+    )
+    second = ScheduledRequest(
+        request_id="second",
+        input_token_ids=(20,),
+        num_computed_tokens=4,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(3, 5, 7),
+    )
+
+    block_table = build_block_table(
+        SchedulerOutput((first, second)),
+        device=torch.device("cpu"),
+    )
+
+    assert block_table.tolist() == [
+        [2, PAD_BLOCK_ID, PAD_BLOCK_ID],
+        [3, 5, 7],
+    ]
+    assert block_table.dtype is torch.int64
+    assert block_table.device == torch.device("cpu")
+
+
+def test_block_table_encodes_none_as_padding_sentinel() -> None:
+    request = ScheduledRequest(
+        request_id="request-1",
+        input_token_ids=(10,),
+        num_computed_tokens=0,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(2, None),
+    )
+
+    block_table = build_block_table(
+        SchedulerOutput((request,)),
+        device=torch.device("cpu"),
+    )
+
+    assert block_table.tolist() == [[2, PAD_BLOCK_ID]]
+
+
+def test_empty_plan_builds_two_dimensional_empty_block_table() -> None:
+    block_table = build_block_table(
+        SchedulerOutput(()),
+        device=torch.device("cpu"),
+    )
+
+    assert block_table.shape == torch.Size((0, 0))
+    assert block_table.dtype is torch.int64
+
+
+def test_padding_is_not_referenced_by_slot_mapping() -> None:
+    first = ScheduledRequest(
+        request_id="first",
+        input_token_ids=(10,),
+        num_computed_tokens=0,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(2,),
+    )
+    second = ScheduledRequest(
+        request_id="second",
+        input_token_ids=(20,),
+        num_computed_tokens=4,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(3, 5),
+    )
+    plan = SchedulerOutput((first, second))
+    cache_config = CacheConfig(block_size=4, num_blocks=8)
+
+    block_table = build_block_table(plan, device=torch.device("cpu"))
+    slot_mapping = build_slot_mapping(
+        plan,
+        cache_config,
+        device=torch.device("cpu"),
+    )
+    model_input = flatten_model_input(
+        plan,
+        block_table=block_table,
+        slot_mapping=slot_mapping,
+        block_size=cache_config.block_size,
+    )
+
+    assert block_table.tolist() == [[2, PAD_BLOCK_ID], [3, 5]]
+    assert slot_mapping.tolist() == [8, 20]
+    assert model_input.input_ids.device == block_table.device
+    assert model_input.positions.device == block_table.device
+    assert model_input.sampling_row_indices.device == block_table.device

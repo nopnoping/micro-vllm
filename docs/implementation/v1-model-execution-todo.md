@@ -293,29 +293,37 @@ physical_block = block_table[logical_block]
 slot = physical_block * block_size + block_offset
 ```
 
-- [ ] logical block 必须存在且不能为 `None`。
-- [ ] physical block ID 必须在 `[0, num_blocks)`。
-- [ ] slot 必须在 physical cache flattened capacity 内。
-- [ ] 公式只在一个 helper 中实现，ModelRunner 和 backend 不重复实现。
+- [x] logical block 必须存在且不能为 `None`。
+- [x] physical block ID 必须在 `[0, num_blocks)`。
+- [x] slot 必须在 physical cache flattened capacity 内。
+- [x] 公式只在一个 helper 中实现，ModelRunner 和 backend 不重复实现。
+
+`build_slot_mapping()` 是 logical block、physical block 和 flattened slot 转换的
+唯一实现来源；返回与 flattened request/token 顺序一致的 `torch.int64` tensor。
+本轮未实现 block-table padding，也未运行验证。
 
 ### Block table tensor
 
-- [ ] 将不同长度 block tables pad 到 batch 最大长度。
-- [ ] padding 不被 attention gather 使用。
-- [ ] tensor dtype 使用足够容纳 block ID 的整数类型。
-- [ ] tensor 与 ModelInput 位于同一执行 device。
+- [x] 将不同长度 block tables pad 到 batch 最大长度。
+- [x] padding 不被 attention gather 使用。
+- [x] tensor dtype 使用足够容纳 block ID 的整数类型。
+- [x] tensor 与 ModelInput 位于同一执行 device。
+
+`build_block_table()` 使用 `PAD_BLOCK_ID` 构建 request-major 二维
+`torch.int64` tensor；`flatten_model_input()` 以该 tensor 的 device 创建其余
+ModelInput tensors。本轮未运行验证。
 
 ### 测试
 
-- [ ] 单 request prefill metadata。
-- [ ] 单 request decode metadata。
-- [ ] chunked prefill 的非零起始 position。
-- [ ] mixed decode=1/prefill=N batch flattening。
-- [ ] 多 request 不同 block table 长度 padding。
-- [ ] block boundary 前后 slot mapping。
-- [ ] prefix hit 后从非零 computed position 开始。
-- [ ] invalid/missing/None block mapping 被拒绝。
-- [ ] sampling row indices 与 request ID 顺序一致。
+- [x] 单 request prefill metadata。
+- [x] 单 request decode metadata。
+- [x] chunked prefill 的非零起始 position。
+- [x] mixed decode=1/prefill=N batch flattening。
+- [x] 多 request 不同 block table 长度 padding。
+- [x] block boundary 前后 slot mapping。
+- [x] prefix hit 后从非零 computed position 开始。
+- [x] invalid/missing/None block mapping 被拒绝。
+- [x] sampling row indices 与 request ID 顺序一致。
 
 ## 9. Phase 4：Reference Full Paged Attention
 
