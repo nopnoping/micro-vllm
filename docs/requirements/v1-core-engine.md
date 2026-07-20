@@ -248,9 +248,13 @@ V1 必须回答以下问题：
 
 ## 7. V1.4：权重加载、模型覆盖与完整 Sampling（当前阶段）
 
-已完成清单：[V1.4A Safetensors Checkpoint Source](../implementation/v1-checkpoint-source-todo.md)。
-下一阶段进入 V1.4B：HF `config.json` 解析、最小 Model Registry 和 Llama
-model factory。
+| 子阶段 | 内容 | 状态 | 技术清单 |
+|---|---|---|---|
+| V1.4A | Safetensors Checkpoint Source | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
+| V1.4B | HF Config、Model Registry、Llama Factory | 当前阶段 | [清单](../implementation/v1-model-registry-todo.md) |
+| V1.4C | Parameter Loader、真实 Llama checkpoint | 待实现 | 待生成 |
+| V1.4D | Qwen dense model 与 checkpoint | 待实现 | 待生成 |
+| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 待实现 | 待生成 |
 
 ### Model Registry 和模型接口
 
