@@ -44,7 +44,7 @@ local model directory
 
 ### Source 负责
 
-- [ ] 解析本地 checkpoint 布局。
+- [x] 解析本地 checkpoint 布局。
 - [ ] 建立不可变、确定性的 shard/weight 遍历顺序。
 - [ ] 验证 index 与实际 safetensors 文件一致。
 - [ ] 管理 safetensors 文件句柄生命周期。
@@ -60,8 +60,8 @@ local model directory
 
 ### 生命周期不变量
 
-- [ ] 创建 source 或 manifest 时不读取 tensor 数据。
-- [ ] 开始迭代前只做文件和 metadata 级发现。
+- [x] 创建 source 或 manifest 时不读取 tensor 数据。
+- [x] 开始迭代前只做文件和 metadata 级发现。
 - [ ] 单文件只在实际迭代期间打开。
 - [ ] 多 shard 任意时刻最多打开一个 shard。
 - [ ] 一个 shard 的迭代结束后，在打开下一个 shard 前关闭当前文件。
@@ -86,13 +86,13 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 接口约束：
 
-- [ ] `model_path` 首版只接受本地模型目录。
-- [ ] 构造函数规范化路径，但不打开 tensor 文件。
+- [x] `model_path` 首版只接受本地模型目录。
+- [x] 构造函数规范化路径，但不打开 tensor 文件。
 - [ ] `iter_tensors()` 每次调用创建独立 iterator，不复用半消费状态。
 - [ ] 返回名称使用 checkpoint 原始名称，不做模型侧重命名。
 - [ ] 返回 tensor 位于 CPU，dtype 和 shape 与文件一致。
 - [ ] 不暴露 safetensors 内部 file handle。
-- [ ] `weights/__init__.py` 只导出经过测试的公共入口。
+- [x] `weights/__init__.py` 只导出经过测试的公共入口。
 
 ## 5. Phase 0：依赖和测试基线
 
@@ -118,26 +118,29 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 ### 单文件发现
 
-- [ ] 模型目录包含 `model.safetensors` 且没有 index 时识别为单文件布局。
-- [ ] 模型目录不存在时抛出 `FileNotFoundError`。
-- [ ] `model_path` 不是目录时给出明确错误。
-- [ ] 既没有单文件也没有 index 时给出包含模型路径的错误。
+- [x] 模型目录包含 `model.safetensors` 且没有 index 时识别为单文件布局。
+- [x] 模型目录不存在时抛出 `FileNotFoundError`。
+- [x] `model_path` 不是目录时给出明确错误。
+- [x] 既没有单文件也没有 index 时给出包含模型路径的错误。
 
 ### Sharded index 发现
 
-- [ ] 识别 `model.safetensors.index.json`。
-- [ ] index 顶层必须是 JSON object。
-- [ ] `weight_map` 必须存在且为非空 object。
-- [ ] weight name 和 shard filename 必须是非空字符串。
-- [ ] shard filename 必须解析到模型目录内的普通文件。
-- [ ] index 引用的每个 shard 必须存在。
-- [ ] index 中重复或冲突的定义被明确拒绝。
+- [x] 识别 `model.safetensors.index.json`。
+- [x] index 顶层必须是 JSON object。
+- [x] `weight_map` 必须存在且为非空 object。
+- [x] weight name 和 shard filename 必须是非空字符串。
+- [x] shard filename 必须解析到模型目录内的普通文件。
+- [x] index 引用的每个 shard 必须存在。
+- [x] index 中重复或冲突的定义被明确拒绝。
 
 ### 布局歧义
 
-- [ ] 同时存在 `model.safetensors` 和 sharded index 时明确拒绝，不静默选择。
-- [ ] 未被 index 引用的其他 `.safetensors` 文件不参与遍历。
-- [ ] discovery 结果不依赖文件系统返回顺序。
+- [x] 同时存在 `model.safetensors` 和 sharded index 时明确拒绝，不静默选择。
+- [x] 未被 index 引用的其他 `.safetensors` 文件不参与遍历。
+- [x] discovery 结果不依赖文件系统返回顺序。
+
+2026-07-20 Phase 1 远端验证：定向测试 `19 passed in 1.86s`，完整测试
+`364 passed in 6.49s`。
 
 ## 7. Phase 2：确定性 Tensor Iteration
 
@@ -185,15 +188,15 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 ### Discovery
 
-- [ ] 不存在的 model directory。
-- [ ] model path 是普通文件。
-- [ ] 空目录。
-- [ ] 合法单文件布局。
-- [ ] 合法 sharded index 布局。
-- [ ] 单文件与 index 同时存在。
-- [ ] 非法 JSON 或缺少 `weight_map`。
-- [ ] index 引用不存在的 shard。
-- [ ] shard 路径试图越过 model directory。
+- [x] 不存在的 model directory。
+- [x] model path 是普通文件。
+- [x] 空目录。
+- [x] 合法单文件布局。
+- [x] 合法 sharded index 布局。
+- [x] 单文件与 index 同时存在。
+- [x] 非法 JSON 或缺少 `weight_map`。
+- [x] index 引用不存在的 shard。
+- [x] shard 路径试图越过 model directory。
 
 ### Single-file iteration
 
