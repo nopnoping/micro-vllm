@@ -24,6 +24,7 @@ where = ["src"]
 include = ["micro_vllm*"]
 
 [tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
 testpaths = ["tests"]
 markers = [
     "gpu: tests that require a visible CUDA GPU",

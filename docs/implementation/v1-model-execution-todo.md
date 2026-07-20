@@ -627,6 +627,14 @@ shutdown 是具体 executor 的生命周期 API，因此无需扩张 FakeExecuto
 CPU/GPU integration 与委托测试代码已补齐；按当前开发阶段要求，本轮未运行本地
 或远端验证。
 
+### Phase 0–9 统一远端验证（2026-07-20）
+
+- 非 GPU：`325 passed, 6 deselected`。
+- GPU：`6 passed, 325 deselected`。
+- 完整测试：`331 passed`。
+- 测试收集统一使用 pytest `importlib` import mode，避免不同测试目录中的同名
+  module 发生导入冲突。
+
 ## 15. Phase 10：Transformers Parity
 
 ### 测试权重准备
