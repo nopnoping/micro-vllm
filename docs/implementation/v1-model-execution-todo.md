@@ -639,33 +639,44 @@ CPU/GPU integration 与委托测试代码已补齐；按当前开发阶段要求
 
 ### 测试权重准备
 
-- [ ] 创建相同 tiny architecture 的 Transformers Llama model。
-- [ ] 使用固定 seed 初始化。
-- [ ] 将 Transformers state dict 直接映射/复制到 micro-vLLM model。
-- [ ] 该测试不读取 safetensors 文件。
-- [ ] 明确记录 parameter naming difference。
+- [x] 创建相同 tiny architecture 的 Transformers Llama model。
+- [x] 使用固定 seed 初始化。
+- [x] 将 Transformers state dict 直接映射/复制到 micro-vLLM model。
+- [x] 该测试不读取 safetensors 文件。
+- [x] 明确记录 parameter naming difference。
 
 ### 分层 parity
 
-- [ ] RMSNorm 输出对拍。
-- [ ] RoPE Q/K 输出对拍。
-- [ ] MLP 输出对拍。
-- [ ] Attention 单层输出对拍。
-- [ ] DecoderLayer 输出对拍。
-- [ ] 完整 model hidden states 对拍。
-- [ ] 完整 logits 对拍。
-- [ ] greedy token 完全一致。
+- [x] RMSNorm 输出对拍。
+- [x] RoPE Q/K 输出对拍。
+- [x] MLP 输出对拍。
+- [x] Attention 单层输出对拍。
+- [x] DecoderLayer 输出对拍。
+- [x] 完整 model hidden states 对拍。
+- [x] 完整 logits 对拍。
+- [x] greedy token 完全一致。
 
 ### 执行模式 parity
 
-- [ ] 一次性 full prefill 与 Transformers logits 对拍。
-- [ ] chunked prefill 最后 logits 与 full prefill 对拍。
-- [ ] prefill + one-token decode 与完整序列 forward 对拍。
-- [ ] 多次 decode 与完整序列最后 logits 对拍。
-- [ ] mixed batch 与逐 request 独立执行对拍。
-- [ ] GQA config 对拍。
-- [ ] CPU FP32 使用严格容差。
-- [ ] GPU low-precision 容差独立记录。
+- [x] 一次性 full prefill 与 Transformers logits 对拍。
+- [x] chunked prefill 最后 logits 与 full prefill 对拍。
+- [x] prefill + one-token decode 与完整序列 forward 对拍。
+- [x] 多次 decode 与完整序列最后 logits 对拍。
+- [x] mixed batch 与逐 request 独立执行对拍。
+- [x] GQA config 对拍。
+- [x] CPU FP32 使用严格容差。
+- [x] GPU low-precision 容差独立记录。
+
+测试使用 `torch.manual_seed(0)` 初始化 Transformers tiny GQA model，并将其
+in-memory state dict 直接映射到 micro-vLLM model，不读取 checkpoint 文件。两者
+除 LM head 外的参数名只相差 Transformers 外层 `model.` 前缀；
+`lm_head.weight` 名称相同。
+
+CPU FP32 的 attention、decoder、完整 hidden states、logits 及所有执行模式使用
+`atol=1e-5, rtol=1e-5`，RMSNorm/MLP 使用 exact parity，RoPE 使用 `1e-6`。
+GPU FP16 hidden states 和 logits 使用独立的 `atol=3e-3, rtol=3e-3`。远端分组
+验证结果：非 GPU `330 passed, 7 deselected`，GPU `7 passed, 330 deselected`；
+完整测试 `337 passed`。
 
 ## 16. Phase 11：Engine 端到端测试
 
