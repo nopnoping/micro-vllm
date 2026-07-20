@@ -29,9 +29,14 @@ class SchedulerConfig:
 
     max_num_batched_tokens: int
     max_num_seqs: int
+    max_model_len: int
 
     def __post_init__(self) -> None:
-        for field_name in ("max_num_batched_tokens", "max_num_seqs"):
+        for field_name in (
+            "max_num_batched_tokens",
+            "max_num_seqs",
+            "max_model_len",
+        ):
             value = getattr(self, field_name)
             if value <= 0:
                 raise ValueError(f"{field_name} must be greater than zero")

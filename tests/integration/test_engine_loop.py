@@ -51,12 +51,14 @@ def make_engine(
     *,
     token_budget: int = 4,
     sequence_budget: int = 2,
+    max_model_len: int = 128,
     executor: FakeExecutor | None = None,
 ) -> tuple[Engine, Scheduler, FakeExecutor]:
     scheduler = Scheduler(
         SchedulerConfig(
             max_num_batched_tokens=token_budget,
             max_num_seqs=sequence_budget,
+            max_model_len=max_model_len,
         ),
         KVCacheManager(
             CacheConfig(
@@ -138,6 +140,20 @@ def test_executor_stops_after_request_reaches_max_tokens() -> None:
     assert second_outputs[0].finished is True
     assert second_outputs[0].finish_reason is FinishReason.LENGTH
     assert empty_outputs == ()
+    assert len(executor.plans) == 2
+
+
+def test_engine_reports_model_length_finish_reason() -> None:
+    engine, _, executor = make_engine(max_model_len=3, sequence_budget=1)
+    engine.add_request("request-1", [1], SamplingParams(max_tokens=10))
+
+    first_outputs = engine.step()
+    second_outputs = engine.step()
+
+    assert first_outputs[0].finished is False
+    assert second_outputs[0].output_token_ids == (7, 7)
+    assert second_outputs[0].finished is True
+    assert second_outputs[0].finish_reason is FinishReason.MODEL_LENGTH
     assert len(executor.plans) == 2
 
 

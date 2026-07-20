@@ -32,6 +32,8 @@ class Scheduler:
 
         if request.status is not RequestStatus.WAITING:
             raise ValueError("request must be in WAITING status")
+        if request.num_prompt_tokens >= self._config.max_model_len:
+            raise ValueError("prompt length must be less than max_model_len")
         if request.request_id in self._requests:
             raise ValueError(f"duplicate request_id: {request.request_id}")
 
@@ -87,7 +89,9 @@ class Scheduler:
             ):
                 break
             num_scheduled_tokens = min(
-                request.num_pending_tokens, remaining_token_budget
+                request.num_pending_tokens,
+                remaining_token_budget,
+                self._config.max_model_len - request.num_computed_tokens,
             )
             scheduled_request = self._allocate_scheduled_request(
                 request,
@@ -133,6 +137,7 @@ class Scheduler:
             num_scheduled_tokens = min(
                 request.num_known_tokens - num_hit_tokens,
                 remaining_token_budget,
+                self._config.max_model_len - num_hit_tokens,
             )
             scheduled_request = self._allocate_scheduled_request(
                 request,
@@ -201,6 +206,8 @@ class Scheduler:
                     finish_reason = FinishReason.EOS
                 elif request.num_output_tokens >= params.max_tokens:
                     finish_reason = FinishReason.LENGTH
+                elif request.num_known_tokens == self._config.max_model_len:
+                    finish_reason = FinishReason.MODEL_LENGTH
                 if finish_reason is not None:
                     request.finish(finish_reason)
                     finished_request_ids.append(request.request_id)

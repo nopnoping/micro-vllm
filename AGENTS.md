@@ -46,6 +46,9 @@ Enforce these boundaries:
 - Rely on type annotations and static checking for parameter types. Reserve
   runtime validation for domain values, state transitions, and invariants that
   static types cannot express.
+- Keep validation proportional. Validate external inputs and critical domain
+  invariants, but do not add guards for internal states already guaranteed by
+  types, constructors, or lifecycle rules.
 - Keep policy separate from mechanism, especially in scheduling, cache
   allocation, execution, and backend selection.
 - Treat execution plans as immutable contracts after scheduling.

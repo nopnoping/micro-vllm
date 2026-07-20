@@ -29,6 +29,7 @@ class FinishReason(Enum):
 
     EOS = auto()
     LENGTH = auto()
+    MODEL_LENGTH = auto()
     ABORTED = auto()
 
 

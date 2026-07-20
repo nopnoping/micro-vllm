@@ -44,13 +44,14 @@ def make_scheduler(
     token_budget: int,
     sequence_budget: int,
     *,
+    max_model_len: int = 128,
     block_size: int = 4,
     num_blocks: int = 128,
     enable_prefix_cache: bool = False,
     cache_namespace: str = "default",
 ) -> Scheduler:
     return Scheduler(
-        SchedulerConfig(token_budget, sequence_budget),
+        SchedulerConfig(token_budget, sequence_budget, max_model_len),
         KVCacheManager(
             CacheConfig(
                 block_size=block_size,
@@ -64,12 +65,12 @@ def make_scheduler(
 
 def test_scheduler_requires_explicit_kv_cache_manager() -> None:
     with pytest.raises(TypeError):
-        Scheduler(SchedulerConfig(4, 1))  # type: ignore[call-arg]
+        Scheduler(SchedulerConfig(4, 1, 128))  # type: ignore[call-arg]
 
 
 def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> None:
     manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
-    scheduler = Scheduler(SchedulerConfig(4, 1), manager)
+    scheduler = Scheduler(SchedulerConfig(4, 1, 128), manager)
     request = make_request("request-1", [1, 2, 3])
     request_state_before = (
         request.status,
@@ -92,8 +93,8 @@ def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> No
 def test_each_scheduler_uses_an_independent_cache_manager() -> None:
     first_manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
     second_manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
-    first_scheduler = Scheduler(SchedulerConfig(4, 1), first_manager)
-    second_scheduler = Scheduler(SchedulerConfig(4, 1), second_manager)
+    first_scheduler = Scheduler(SchedulerConfig(4, 1, 128), first_manager)
+    second_scheduler = Scheduler(SchedulerConfig(4, 1, 128), second_manager)
 
     first_scheduler.add_request(make_request("request-1", [1]))
     second_scheduler.add_request(make_request("request-1", [2]))
@@ -103,6 +104,23 @@ def test_each_scheduler_uses_an_independent_cache_manager() -> None:
     assert first_manager is not second_manager
     assert first_manager.get_block_table("request-1") == ()
     assert second_manager.get_block_table("request-1") == ()
+
+
+@pytest.mark.parametrize("prompt_length", [4, 5])
+def test_admission_requires_prompt_shorter_than_max_model_len(
+    prompt_length: int,
+) -> None:
+    scheduler = make_scheduler(4, 1, max_model_len=4)
+    request = make_request("request-1", list(range(prompt_length)))
+
+    with pytest.raises(
+        ValueError, match="prompt length must be less than max_model_len"
+    ):
+        scheduler.add_request(request)
+
+    assert scheduler.get_request("request-1") is None
+    with pytest.raises(KeyError):
+        scheduler._kv_cache_manager.get_block_table("request-1")
 
 
 def test_single_request_full_prompt_is_scheduled_in_one_step() -> None:
@@ -491,7 +509,7 @@ def test_prefix_hit_larger_than_cache_fails_without_claiming_blocks() -> None:
     ) == (0, 1)
     manager.free_request("seed")
     scheduler = Scheduler(
-        SchedulerConfig(1, 1),
+        SchedulerConfig(1, 1, 128),
         manager,
         cache_namespace="model-a",
     )
@@ -580,7 +598,7 @@ def test_preemption_selects_most_recent_unscheduled_victim() -> None:
 
 def test_preemption_stops_when_current_request_reaches_running_tail() -> None:
     manager = KVCacheManager(CacheConfig(block_size=2, num_blocks=2))
-    scheduler = Scheduler(SchedulerConfig(3, 2), manager)
+    scheduler = Scheduler(SchedulerConfig(3, 2, 128), manager)
     current = make_request("current", [1, 2, 3, 4, 5])
     victim = make_request("victim", [6, 7])
     scheduler.add_request(current)
@@ -610,7 +628,7 @@ def test_preempted_victim_reenters_from_cached_prefix() -> None:
         )
     )
     scheduler = Scheduler(
-        SchedulerConfig(4, 3),
+        SchedulerConfig(4, 3, 128),
         manager,
         cache_namespace="model-a",
     )
@@ -726,6 +744,53 @@ def test_max_tokens_finishes_request_and_removes_it_from_running() -> None:
     assert scheduler._kv_cache_manager._block_pool.free_block_ids == (1, 0)
     with pytest.raises(KeyError):
         scheduler._kv_cache_manager.get_block_table("request-1")
+
+
+def test_max_model_len_finishes_before_any_out_of_range_position() -> None:
+    scheduler = make_scheduler(
+        4,
+        1,
+        max_model_len=3,
+        block_size=4,
+        num_blocks=128,
+    )
+    request = make_request("request-1", [1], max_tokens=10)
+    scheduler.add_request(request)
+
+    first_plan = scheduler.schedule()
+    first_scheduled = first_plan.scheduled_requests[0]
+    assert (
+        first_scheduled.num_computed_tokens
+        + first_scheduled.num_scheduled_tokens
+        <= 3
+    )
+    scheduler.update(first_plan, make_output({"request-1": 2}))
+
+    second_plan = scheduler.schedule()
+    second_scheduled = second_plan.scheduled_requests[0]
+    assert (
+        second_scheduled.num_computed_tokens
+        + second_scheduled.num_scheduled_tokens
+        <= 3
+    )
+    scheduler.update(second_plan, make_output({"request-1": 3}))
+
+    assert request.output_token_ids == [2, 3]
+    assert request.finish_reason is FinishReason.MODEL_LENGTH
+    assert scheduler.has_unfinished_requests() is False
+    assert scheduler._kv_cache_manager.num_free_blocks == 128
+
+
+def test_max_tokens_takes_precedence_when_length_limits_arrive_together() -> None:
+    scheduler = make_scheduler(4, 1, max_model_len=2)
+    request = make_request("request-1", [1], max_tokens=1)
+    scheduler.add_request(request)
+    plan = scheduler.schedule()
+
+    scheduler.update(plan, make_output({"request-1": 2}))
+
+    assert request.num_known_tokens == 2
+    assert request.finish_reason is FinishReason.LENGTH
 
 
 def test_non_finished_update_keeps_request_cache_reserved() -> None:

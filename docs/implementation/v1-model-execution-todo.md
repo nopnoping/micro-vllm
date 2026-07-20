@@ -154,36 +154,41 @@ ssh aliyun-ecs \
 
 ### Scheduler/model length
 
-- [ ] 为 Scheduler 可访问的配置增加 `max_model_len`。
-- [ ] 校验 `max_model_len > 0`。
-- [ ] 首版要求 `prompt_length < max_model_len`，至少保留一个生成 token 位置。
-- [ ] 调度不得产生超出 `[0, max_model_len)` 的 model input position。
-- [ ] 达到 max model length 时以明确 finish reason 结束请求。
-- [ ] max tokens 和 max model length 同时达到时终止顺序有明确测试。
-- [ ] cache block capacity 不代替 max model length 语义。
+- [x] 为 Scheduler 可访问的配置增加 `max_model_len`。
+- [x] 校验 `max_model_len > 0`。
+- [x] 首版要求 `prompt_length < max_model_len`，至少保留一个生成 token 位置。
+- [x] 调度不得产生超出 `[0, max_model_len)` 的 model input position。
+- [x] 达到 max model length 时以明确 finish reason 结束请求。
+- [x] max tokens 和 max model length 同时达到时终止顺序有明确测试。
+- [x] cache block capacity 不代替 max model length 语义。
 
 ### Llama architecture config
 
-- [ ] 定义最小、frozen `LlamaModelConfig` 或等价结构。
-- [ ] 包含 `vocab_size`。
-- [ ] 包含 `hidden_size`。
-- [ ] 包含 `intermediate_size`。
-- [ ] 包含 `num_hidden_layers`。
-- [ ] 包含 `num_attention_heads`。
-- [ ] 包含 `num_key_value_heads`。
-- [ ] 包含 `max_position_embeddings`。
-- [ ] 包含 `rms_norm_eps`。
-- [ ] 包含 `rope_theta`。
-- [ ] 包含 activation 和是否 tied embedding 所需的最小字段。
-- [ ] 校验 head divisibility、hidden/head dim 和 GQA group ratio。
-- [ ] 不创建覆盖所有未来模型的万能 config。
+- [x] 定义最小、frozen `LlamaModelConfig` 或等价结构。
+- [x] 包含 `vocab_size`。
+- [x] 包含 `hidden_size`。
+- [x] 包含 `intermediate_size`。
+- [x] 包含 `num_hidden_layers`。
+- [x] 包含 `num_attention_heads`。
+- [x] 包含 `num_key_value_heads`。
+- [x] 包含 `max_position_embeddings`。
+- [x] 包含 `rms_norm_eps`。
+- [x] 包含 `rope_theta`。
+- [x] 包含 activation 和是否 tied embedding 所需的最小字段。
+- [x] 校验 head divisibility、hidden/head dim 和 GQA group ratio。
+- [x] 不创建覆盖所有未来模型的万能 config。
 
 ### Runner/device config
 
-- [ ] device 和 dtype 显式传入 Worker/ModelRunner。
-- [ ] CPU reference 默认使用 float32。
-- [ ] GPU test 至少验证一种 FP32/BF16/FP16 路径，依据远端硬件选择。
-- [ ] 不使用 mutable global device context。
+- [x] 通过 frozen `ModelExecutionConfig` 将 device 和 dtype 显式传入
+  Worker/ModelRunner。
+- [x] CPU reference 默认使用 float32。
+- [x] GPU test 使用远端 T4 已支持的 FP16 路径。
+- [x] 不使用 mutable global device context。
+
+Phase 1 实现说明：`MODEL_LENGTH` 是独立 finish reason；同一步同时命中时，
+终止优先级为 EOS、request `max_tokens`、`max_model_len`。本轮按要求只完成
+实现与测试代码，未在本地或远端执行测试。
 
 ## 7. Phase 2：Physical KV Cache
 

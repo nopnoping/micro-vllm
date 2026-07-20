@@ -43,7 +43,7 @@ V1 必须回答以下问题：
 - [x] 支持 EOS、LENGTH 和 ABORTED finish reason。
 - [x] preempt 只重置 computed progress，保留 prompt/output tokens。
 - [x] resume 可以从零或 prefix-cache hit boundary 恢复。
-- [ ] 支持 max model length 的 admission、调度和终止语义。
+- [x] 支持 max model length 的 admission、调度和终止语义。
 
 ### Engine
 
@@ -87,7 +87,7 @@ V1 必须回答以下问题：
 - [x] prompt 中间 chunk 不产生 sampled token。
 - [x] 只有计算追上最后一个已知 token 时才要求采样。
 - [x] pending plan 重试不会重复分配 cache block。
-- [ ] 调度同时遵守 max model length。
+- [x] 调度同时遵守 max model length。
 
 ### 策略与可扩展性
 
@@ -289,7 +289,7 @@ V1 必须回答以下问题：
 - [ ] top-p sampling。
 - [ ] per-request random generator/seed。
 - [x] EOS、ignore EOS 和 max tokens 控制流。
-- [ ] max model length admission 和终止原因。
+- [x] max model length admission 和终止原因。
 - [ ] tokenizer-backed `LLM.generate()`。
 
 ### 明确不实现的 sampling 功能

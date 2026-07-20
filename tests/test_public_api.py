@@ -6,7 +6,9 @@ import micro_vllm
 import micro_vllm.core as core
 import micro_vllm.engine as engine
 import micro_vllm.executor as executor
+import micro_vllm.models as models
 import micro_vllm.sampling as sampling
+import micro_vllm.worker as worker
 from micro_vllm.config import CacheConfig, SchedulerConfig
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
@@ -14,7 +16,9 @@ from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import Executor, ModelRunnerOutput, SampledToken
+from micro_vllm.models.llama import LlamaModelConfig
 from micro_vllm.sampling.params import SamplingParams
+from micro_vllm.worker.config import ModelExecutionConfig
 
 
 def test_top_level_exports_engine_entry_points() -> None:
@@ -60,6 +64,13 @@ def test_engine_executor_and_sampling_exports_are_explicit() -> None:
     assert executor.ModelRunnerOutput is ModelRunnerOutput
     assert executor.SampledToken is SampledToken
     assert sampling.SamplingParams is SamplingParams
+
+
+def test_model_and_worker_configuration_exports_are_explicit() -> None:
+    assert models.__all__ == ("LlamaModelConfig",)
+    assert worker.__all__ == ("ModelExecutionConfig",)
+    assert models.LlamaModelConfig is LlamaModelConfig
+    assert worker.ModelExecutionConfig is ModelExecutionConfig
 
 
 def test_fake_executor_is_not_public() -> None:
