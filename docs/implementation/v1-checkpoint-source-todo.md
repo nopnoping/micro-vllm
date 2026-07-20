@@ -21,13 +21,13 @@ local model directory
 
 ### 本阶段实现
 
-- [ ] 支持本地目录中的单文件 `model.safetensors`。
-- [ ] 支持 `model.safetensors.index.json` 描述的多 shard checkpoint。
-- [ ] 以确定性顺序逐个产出 `(weight_name, tensor)`。
-- [ ] 多 shard 模式一次只打开一个 shard。
-- [ ] tensor 在 CPU 上读取，保留 checkpoint 中的原始 dtype 和 shape。
-- [ ] 对缺失文件、非法 index、缺失或多余 tensor 给出带上下文的错误。
-- [ ] 为单文件、多 shard、流式生命周期和失败路径提供 CPU 单元测试。
+- [x] 支持本地目录中的单文件 `model.safetensors`。
+- [x] 支持 `model.safetensors.index.json` 描述的多 shard checkpoint。
+- [x] 以确定性顺序逐个产出 `(weight_name, tensor)`。
+- [x] 多 shard 模式一次只打开一个 shard。
+- [x] tensor 在 CPU 上读取，保留 checkpoint 中的原始 dtype 和 shape。
+- [x] 对缺失文件、非法 index、缺失或多余 tensor 给出带上下文的错误。
+- [x] 为单文件、多 shard、流式生命周期和失败路径提供 CPU 单元测试。
 
 ### 本阶段不实现
 
@@ -45,28 +45,28 @@ local model directory
 ### Source 负责
 
 - [x] 解析本地 checkpoint 布局。
-- [ ] 建立不可变、确定性的 shard/weight 遍历顺序。
-- [ ] 验证 index 与实际 safetensors 文件一致。
-- [ ] 管理 safetensors 文件句柄生命周期。
-- [ ] 逐个向调用方暴露原始 CPU tensor。
+- [x] 建立不可变、确定性的 shard/weight 遍历顺序。
+- [x] 验证 index 与实际 safetensors 文件一致。
+- [x] 管理 safetensors 文件句柄生命周期。
+- [x] 逐个向调用方暴露原始 CPU tensor。
 
 ### Source 不负责
 
-- [ ] 不导入或识别具体模型类。
-- [ ] 不访问 Worker、ModelRunner、Scheduler 或 KV Cache。
-- [ ] 不解释参数是否 tied、packed、replicated 或 sharded。
-- [ ] 不修改 tensor 的 dtype、shape、device 或数值。
-- [ ] 不保存已经产出的全部 tensor。
+- [x] 不导入或识别具体模型类。
+- [x] 不访问 Worker、ModelRunner、Scheduler 或 KV Cache。
+- [x] 不解释参数是否 tied、packed、replicated 或 sharded。
+- [x] 不修改 tensor 的 dtype、shape、device 或数值。
+- [x] 不保存已经产出的全部 tensor。
 
 ### 生命周期不变量
 
 - [x] 创建 source 或 manifest 时不读取 tensor 数据。
 - [x] 开始迭代前只做文件和 metadata 级发现。
-- [ ] 单文件只在实际迭代期间打开。
-- [ ] 多 shard 任意时刻最多打开一个 shard。
-- [ ] 一个 shard 的迭代结束后，在打开下一个 shard 前关闭当前文件。
-- [ ] 调用方中断或关闭 generator 时，当前文件句柄仍被可靠关闭。
-- [ ] source 只保证自身不缓存全部 tensor；调用方是否保留 tensor 由调用方负责。
+- [x] 单文件只在实际迭代期间打开。
+- [x] 多 shard 任意时刻最多打开一个 shard。
+- [x] 一个 shard 的迭代结束后，在打开下一个 shard 前关闭当前文件。
+- [x] 调用方中断或关闭 generator 时，当前文件句柄仍被可靠关闭。
+- [x] source 只保证自身不缓存全部 tensor；调用方是否保留 tensor 由调用方负责。
 
 ## 4. 最小接口
 
@@ -88,10 +88,10 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 - [x] `model_path` 首版只接受本地模型目录。
 - [x] 构造函数规范化路径，但不打开 tensor 文件。
-- [ ] `iter_tensors()` 每次调用创建独立 iterator，不复用半消费状态。
-- [ ] 返回名称使用 checkpoint 原始名称，不做模型侧重命名。
-- [ ] 返回 tensor 位于 CPU，dtype 和 shape 与文件一致。
-- [ ] 不暴露 safetensors 内部 file handle。
+- [x] `iter_tensors()` 每次调用创建独立 iterator，不复用半消费状态。
+- [x] 返回名称使用 checkpoint 原始名称，不做模型侧重命名。
+- [x] 返回 tensor 位于 CPU，dtype 和 shape 与文件一致。
+- [x] 不暴露 safetensors 内部 file handle。
 - [x] `weights/__init__.py` 只导出经过测试的公共入口。
 
 ## 5. Phase 0：依赖和测试基线
@@ -146,28 +146,31 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 ### 单文件
 
-- [ ] 使用 `safetensors.safe_open(..., framework="pt", device="cpu")`。
-- [ ] weight names 使用稳定排序。
-- [ ] 每个 tensor 恰好产出一次。
-- [ ] 空 safetensors 文件被明确拒绝。
-- [ ] tensor 名称、dtype、shape 和数值与写入内容一致。
+- [x] 使用 `safetensors.safe_open(..., framework="pt", device="cpu")`。
+- [x] weight names 使用稳定排序。
+- [x] 每个 tensor 恰好产出一次。
+- [x] 空 safetensors 文件被明确拒绝。
+- [x] tensor 名称、dtype、shape 和数值与写入内容一致。
 
 ### 多 shard
 
-- [ ] shard 按规范化 filename 稳定排序。
-- [ ] 每个 shard 内的 weight names 稳定排序。
-- [ ] 只产出 `weight_map` 声明的 tensor。
-- [ ] 每个声明的 weight 恰好产出一次。
-- [ ] shard 中缺少 index 声明的 tensor 时明确失败。
-- [ ] shard 中存在 index 未声明的 tensor 时明确失败。
-- [ ] 同一实际 tensor 不会因错误 index 被重复产出。
+- [x] shard 按规范化 filename 稳定排序。
+- [x] 每个 shard 内的 weight names 稳定排序。
+- [x] 只产出 `weight_map` 声明的 tensor。
+- [x] 每个声明的 weight 恰好产出一次。
+- [x] shard 中缺少 index 声明的 tensor 时明确失败。
+- [x] shard 中存在 index 未声明的 tensor 时明确失败。
+- [x] 同一实际 tensor 不会因错误 index 被重复产出。
 
 ### 文件句柄
 
-- [ ] `safe_open` 始终位于明确的 context manager 内。
-- [ ] 当前 shard 消费完毕后才打开下一个 shard。
-- [ ] 正常完成、读取异常和 generator 提前关闭均会释放当前句柄。
-- [ ] 测试能观察到最大并发打开 shard 数为 1。
+- [x] `safe_open` 始终位于明确的 context manager 内。
+- [x] 当前 shard 消费完毕后才打开下一个 shard。
+- [x] 正常完成、读取异常和 generator 提前关闭均会释放当前句柄。
+- [x] 测试能观察到最大并发打开 shard 数为 1。
+
+2026-07-20 Phase 2 远端验证：定向测试 `28 passed in 1.90s`，完整测试
+`373 passed in 6.44s`。
 
 ## 8. Phase 3：错误语义
 
@@ -200,22 +203,22 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 ### Single-file iteration
 
-- [ ] 多个不同名称 tensor 按确定性顺序产出。
-- [ ] dtype、shape 和数值保持不变。
-- [ ] tensor 位于 CPU。
-- [ ] 每次调用 `iter_tensors()` 都能从头完整遍历。
-- [ ] 空文件被拒绝。
+- [x] 多个不同名称 tensor 按确定性顺序产出。
+- [x] dtype、shape 和数值保持不变。
+- [x] tensor 位于 CPU。
+- [x] 每次调用 `iter_tensors()` 都能从头完整遍历。
+- [x] 空文件被拒绝。
 
 ### Sharded iteration
 
-- [ ] 两个以上 shard 按确定性顺序产出。
-- [ ] index 的 JSON key 顺序不影响结果顺序。
-- [ ] 每个 weight 只出现一次。
-- [ ] index 声明但 shard 缺少 weight。
-- [ ] shard 存在 index 未声明的 weight。
-- [ ] 任意时刻只打开一个 shard。
-- [ ] 消费部分 iterator 后主动关闭会释放文件句柄。
-- [ ] 第二个 shard 读取失败时第一个和第二个句柄均正确关闭。
+- [x] 两个以上 shard 按确定性顺序产出。
+- [x] index 的 JSON key 顺序不影响结果顺序。
+- [x] 每个 weight 只出现一次。
+- [x] index 声明但 shard 缺少 weight。
+- [x] shard 存在 index 未声明的 weight。
+- [x] 任意时刻只打开一个 shard。
+- [x] 消费部分 iterator 后主动关闭会释放文件句柄。
+- [x] 第二个 shard 读取失败时第一个和第二个句柄均正确关闭。
 
 ### 回归
 

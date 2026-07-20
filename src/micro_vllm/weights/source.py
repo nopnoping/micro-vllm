@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import torch
+from safetensors import safe_open
 
 
 _SINGLE_FILE_NAME = "model.safetensors"
@@ -26,6 +29,15 @@ class SafetensorsSource:
         normalized_path = Path(model_path).expanduser().resolve()
         self.model_path = normalized_path
         self._shards = _discover_checkpoint(normalized_path)
+
+    def iter_tensors(self) -> Iterator[tuple[str, torch.Tensor]]:
+        """Yield checkpoint tensors from one open shard at a time."""
+        for shard in self._shards:
+            with safe_open(shard.path, framework="pt", device="cpu") as checkpoint:
+                actual_names = tuple(sorted(checkpoint.keys()))
+                weight_names = _validated_weight_names(shard, actual_names)
+                for weight_name in weight_names:
+                    yield weight_name, checkpoint.get_tensor(weight_name)
 
 
 def _discover_checkpoint(model_path: Path) -> tuple[_CheckpointShard, ...]:
@@ -149,3 +161,29 @@ def _object_without_duplicates(pairs: Iterable[tuple[str, Any]]) -> dict[str, An
             raise ValueError(f"duplicate JSON key {key!r}")
         result[key] = value
     return result
+
+
+def _validated_weight_names(
+    shard: _CheckpointShard,
+    actual_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    if shard.weight_names is None:
+        if not actual_names:
+            raise ValueError(f"safetensors checkpoint is empty: {shard.path}")
+        return actual_names
+
+    expected_names = set(shard.weight_names)
+    actual_name_set = set(actual_names)
+    missing_names = sorted(expected_names - actual_name_set)
+    unexpected_names = sorted(actual_name_set - expected_names)
+    if missing_names or unexpected_names:
+        details = []
+        if missing_names:
+            details.append(f"missing weights {missing_names!r}")
+        if unexpected_names:
+            details.append(f"unexpected weights {unexpected_names!r}")
+        raise ValueError(
+            f"safetensors shard does not match its index: {shard.path}; "
+            + "; ".join(details)
+        )
+    return shard.weight_names
