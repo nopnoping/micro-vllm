@@ -18,6 +18,7 @@ from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import Executor, ModelRunnerOutput, SampledToken
 from micro_vllm.models.llama import LlamaModelConfig
 from micro_vllm.sampling.params import SamplingParams
+from micro_vllm.sampling.sampler import GreedySampler
 from micro_vllm.worker.config import ModelExecutionConfig
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 
@@ -57,13 +58,14 @@ def test_core_exports_only_stable_domain_and_scheduling_types() -> None:
 def test_engine_executor_and_sampling_exports_are_explicit() -> None:
     assert engine.__all__ == ("Engine", "RequestOutput")
     assert executor.__all__ == ("Executor", "ModelRunnerOutput", "SampledToken")
-    assert sampling.__all__ == ("SamplingParams",)
+    assert sampling.__all__ == ("GreedySampler", "SamplingParams")
 
     assert engine.Engine is Engine
     assert engine.RequestOutput is RequestOutput
     assert executor.Executor is Executor
     assert executor.ModelRunnerOutput is ModelRunnerOutput
     assert executor.SampledToken is SampledToken
+    assert sampling.GreedySampler is GreedySampler
     assert sampling.SamplingParams is SamplingParams
 
 

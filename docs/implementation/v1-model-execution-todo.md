@@ -517,22 +517,29 @@ eval model；实现不包含 attention/hidden dropout。本阶段未运行验证
 
 ### `sampling/sampler.py`
 
-- [ ] 接受 sampling hidden states 或 logits。
-- [ ] 只处理 ModelRunner 指定的 sampling rows。
-- [ ] 使用 `argmax(dim=-1)` 选择 token。
-- [ ] 输出 token 顺序与 sampling request IDs 完全一致。
-- [ ] 生成 `SampledToken(request_id, token_id)`。
-- [ ] 没有 sampling row 时返回空 ModelRunnerOutput。
-- [ ] 不读取或修改 Request。
-- [ ] 不实现随机数状态。
+- [x] 接受 sampling hidden states 或 logits。
+- [x] 只处理 ModelRunner 指定的 sampling rows。
+- [x] 使用 `argmax(dim=-1)` 选择 token。
+- [x] 输出 token 顺序与 sampling request IDs 完全一致。
+- [x] 生成 `SampledToken(request_id, token_id)`。
+- [x] 没有 sampling row 时返回空 ModelRunnerOutput。
+- [x] 不读取或修改 Request。
+- [x] 不实现随机数状态。
+
+`GreedySampler` 接受 ModelRunner 已筛选并计算的 logits rows 和对应 request ID
+tuple，使用单次 `argmax(dim=-1)` 返回 `ModelRunnerOutput`；除行数映射校验外不
+持有任何状态。本阶段未运行验证。
 
 ### 测试
 
-- [ ] 单 row greedy token 正确。
-- [ ] 多 row 映射到正确 request ID。
-- [ ] 空 sampling batch 正确返回。
-- [ ] 相同最大值 tie 行为与 PyTorch argmax 一致。
-- [ ] CPU/GPU 输出 token ID 一致。
+- [x] 单 row greedy token 正确。
+- [x] 多 row 映射到正确 request ID。
+- [x] 空 sampling batch 正确返回。
+- [x] 相同最大值 tie 行为与 PyTorch argmax 一致。
+- [x] CPU/GPU 输出 token ID 一致。
+
+CPU unit tests 覆盖单 row、多 row、空 batch 和 tie；GPU marker test 使用同一
+logits 验证 CPU/GPU token ID parity。本阶段未运行验证。
 
 ## 13. Phase 8：ModelRunner
 
