@@ -680,18 +680,29 @@ GPU FP16 hidden states 和 logits 使用独立的 `atol=3e-3, rtol=3e-3`。远�
 
 ## 16. Phase 11：Engine 端到端测试
 
-- [ ] Engine 使用真实 SingleProcessExecutor。
-- [ ] 单 request 能从 WAITING 运行到 FINISHED。
-- [ ] 生成 token 来自 tiny Llama logits，不使用 FakeExecutor。
-- [ ] chunked prefill 与 full prefill 生成相同首 token。
-- [ ] mixed decode/prefill batch 与独立执行生成一致。
-- [ ] prefix cache on/off 生成一致。
-- [ ] prefix hit 后 physical shared KV 被正确读取。
-- [ ] preemption/recompute 与无抢占生成一致。
-- [ ] physical block 被其他 request 复用后无 stale-value 污染。
-- [ ] EOS/max tokens/max model length 正确结束。
-- [ ] abort 后逻辑 block 释放，Worker 不再访问该 request block table。
-- [ ] FakeExecutor control-loop tests 保留为快速 core regression tests。
+- [x] Engine 使用真实 SingleProcessExecutor。
+- [x] 单 request 能从 WAITING 运行到 FINISHED。
+- [x] 生成 token 来自 tiny Llama logits，不使用 FakeExecutor。
+- [x] chunked prefill 与 full prefill 生成相同首 token。
+- [x] mixed decode/prefill batch 与独立执行生成一致。
+- [x] prefix cache on/off 生成一致。
+- [x] prefix hit 后 physical shared KV 被正确读取。
+- [x] preemption/recompute 与无抢占生成一致。
+- [x] physical block 被其他 request 复用后无 stale-value 污染。
+- [x] EOS/max tokens/max model length 正确结束。
+- [x] abort 后逻辑 block 释放，Worker 不再访问该 request block table。
+- [x] FakeExecutor control-loop tests 保留为快速 core regression tests。
+
+真实 Engine tests 使用 `RecordingSingleProcessExecutor` 子类记录 immutable plans，
+执行仍完整经过 `SingleProcessExecutor -> Worker -> ModelRunner -> tiny Llama`。
+首 token 与 LM head logits 的 argmax 直接对应；prefix hit 测试同时断言共享 logical
+prefix 映射到相同 physical block IDs，并通过生成 parity 验证 shared KV 被读取。
+preemption 测试使用受限 block pool 强制 victim recompute，再与无抢占执行对拍；
+stale-value 测试强制不同 request 复用同一 physical block。
+
+远端验证结果：真实 Engine 定向测试 `8 passed`；非 GPU
+`338 passed, 7 deselected`；GPU `7 passed, 338 deselected`；完整测试
+`345 passed`。
 
 ## 17. 可观察性
 
