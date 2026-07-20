@@ -351,16 +351,16 @@ parity tests 保证，contract 本身不增加运行时判断。本轮未运行�
 
 ### KV gather
 
-- [x] 对每个 request 独立处理 query range。
-- [x] 对绝对 query position `p` 读取 token positions `[0, p]`。
+- [x] 对每个 request 独立 gather 一次完整 context。
+- [x] 读取 token positions `[0, context_length)`，不逐 query 重复 gather。
 - [x] 使用 request block table 将 logical positions 映射到 physical cache。
 - [x] 不读取 padding block IDs 或 context length 之外的 stale values。
 - [x] chunked prefill 同时读取历史 cache 和当前 chunk 已写入的 K/V。
 - [x] decode 读取全部历史 full-attention context。
 
-`gather_kv_cache()` 按 request query range 和 flattened query 顺序返回每个 query
-的完整 causal K/V history；logical positions 只生成到当前绝对 position，因此不会
-索引 padded block table 或读取 context 之后的 stale slots。本阶段未运行验证。
+`gather_kv_cache()` 为每个 request 返回一个完整 K/V context；logical positions
+只生成到 `context_length`，因此不会索引 padded block table 或读取 context 之后的
+stale slots。本阶段未运行验证。
 
 ### Attention math
 
@@ -371,10 +371,11 @@ parity tests 保证，contract 本身不增加运行时判断。本轮未运行�
 - [x] 支持 `num_attention_heads == num_key_value_heads`。
 - [x] 支持 GQA/MQA，通过确定性 repeat/interleave 扩展 KV heads。
 - [x] 校验 attention heads 可被 KV heads 整除。
-- [x] reference 实现优先可读性，允许 request/query Python loop。
+- [x] reference 实现按 request 循环，同一 request 的 query 一次完成 attention。
 
-`ReferenceAttentionBackend` 先写入当前 K/V，再读取每个 flattened query 的完整
-causal history；Q/K/V attention math 使用 float32，最终结果写回 query dtype。
+`ReferenceAttentionBackend` 先写入当前 K/V，再读取每个 request 的完整
+context；同一 request 使用 batched Q×K attention，并根据 absolute query position
+应用 causal mask。Q/K/V attention math 使用 float32，最终结果写回 query dtype。
 MHA、GQA 和 MQA 共用同一路径，仅在 KV head 数较少时按组扩展。本阶段未运行
 验证。
 

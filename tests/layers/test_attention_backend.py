@@ -144,7 +144,7 @@ def test_kv_write_does_not_overwrite_shared_prefix_slots() -> None:
     assert torch.equal(flattened_cache[1, 8:10], value)
 
 
-def test_kv_gather_handles_each_request_and_query_independently() -> None:
+def test_kv_gather_handles_each_request_independently() -> None:
     layer_kv_cache = torch.full((2, 5, 2, 1, 1), 99.0)
     flattened_cache = layer_kv_cache.view(2, 10, 1, 1)
     flattened_cache[0, [6, 7, 2, 8]] = torch.tensor(
@@ -168,12 +168,10 @@ def test_kv_gather_handles_each_request_and_query_independently() -> None:
     histories = gather_kv_cache(layer_kv_cache, metadata)
 
     assert [keys.flatten().tolist() for keys, _ in histories] == [
-        [10.0, 11.0],
         [10.0, 11.0, 12.0],
         [20.0],
     ]
     assert [values.flatten().tolist() for _, values in histories] == [
-        [110.0, 111.0],
         [110.0, 111.0, 112.0],
         [120.0],
     ]
@@ -196,16 +194,13 @@ def test_kv_gather_sees_cached_history_and_current_prefill_chunk() -> None:
     )
 
     write_kv_cache(key, value, layer_kv_cache, metadata)
-    histories = gather_kv_cache(layer_kv_cache, metadata)
+    ((gathered_key, gathered_value),) = gather_kv_cache(
+        layer_kv_cache,
+        metadata,
+    )
 
-    assert [keys.flatten().tolist() for keys, _ in histories] == [
-        [1.0, 2.0, 3.0],
-        [1.0, 2.0, 3.0, 4.0],
-    ]
-    assert [values.flatten().tolist() for _, values in histories] == [
-        [11.0, 12.0, 13.0],
-        [11.0, 12.0, 13.0, 14.0],
-    ]
+    assert gathered_key.flatten().tolist() == [1.0, 2.0, 3.0, 4.0]
+    assert gathered_value.flatten().tolist() == [11.0, 12.0, 13.0, 14.0]
 
 
 def test_kv_gather_decode_reads_the_complete_context() -> None:

@@ -118,7 +118,7 @@ def gather_kv_cache(
     layer_kv_cache: torch.Tensor,
     metadata: AttentionMetadata,
 ) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
-    """Gather each flattened query's complete causal K/V history."""
+    """Gather each request's complete K/V context."""
 
     flattened_cache = layer_kv_cache.view(
         2,
@@ -127,27 +127,24 @@ def gather_kv_cache(
     )
     histories: list[tuple[torch.Tensor, torch.Tensor]] = []
     for request_index in range(metadata.num_requests):
-        query_start = metadata.query_start_locations[request_index].item()
-        query_end = metadata.query_start_locations[request_index + 1].item()
+        context_length = metadata.context_lengths[request_index].item()
         block_table = metadata.block_table[request_index]
-
-        for position in metadata.query_positions[query_start:query_end].tolist():
-            token_positions = torch.arange(
-                position + 1,
-                dtype=torch.int64,
-                device=metadata.query_positions.device,
+        token_positions = torch.arange(
+            context_length,
+            dtype=torch.int64,
+            device=metadata.query_positions.device,
+        )
+        slots = map_cache_slots(
+            token_positions,
+            block_table,
+            metadata.block_size,
+        )
+        histories.append(
+            (
+                flattened_cache[0].index_select(0, slots),
+                flattened_cache[1].index_select(0, slots),
             )
-            slots = map_cache_slots(
-                token_positions,
-                block_table,
-                metadata.block_size,
-            )
-            histories.append(
-                (
-                    flattened_cache[0].index_select(0, slots),
-                    flattened_cache[1].index_select(0, slots),
-                )
-            )
+        )
 
     return tuple(histories)
 
@@ -177,7 +174,9 @@ class ReferenceAttentionBackend:
         scale = 1.0 / math.sqrt(query.shape[-1])
         output = torch.empty_like(query)
 
-        for query_index, (cached_key, cached_value) in enumerate(histories):
+        for request_index, (cached_key, cached_value) in enumerate(histories):
+            query_start = metadata.query_start_locations[request_index].item()
+            query_end = metadata.query_start_locations[request_index + 1].item()
             if head_group_size > 1:
                 cached_key = cached_key.repeat_interleave(
                     head_group_size,
@@ -189,20 +188,29 @@ class ReferenceAttentionBackend:
                 )
 
             scores = torch.einsum(
-                "hd,thd->ht",
-                query[query_index].to(torch.float32),
+                "qhd,khd->hqk",
+                query[query_start:query_end].to(torch.float32),
                 cached_key.to(torch.float32),
             )
+            context_positions = torch.arange(
+                cached_key.shape[0],
+                dtype=torch.int64,
+                device=metadata.query_positions.device,
+            )
+            causal_mask = context_positions.unsqueeze(0) > metadata.query_positions[
+                query_start:query_end
+            ].unsqueeze(1)
+            scores.masked_fill_(causal_mask.unsqueeze(0), -torch.inf)
             weights = torch.softmax(
                 scores * scale,
                 dim=-1,
                 dtype=torch.float32,
             )
             attention = torch.einsum(
-                "ht,thd->hd",
+                "hqk,khd->qhd",
                 weights,
                 cached_value.to(torch.float32),
             )
-            output[query_index].copy_(attention)
+            output[query_start:query_end].copy_(attention)
 
         return output
