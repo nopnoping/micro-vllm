@@ -7,9 +7,17 @@ name = "micro-vllm"
 version = "0.1.0"
 description = "A small, educational vLLM implementation."
 requires-python = ">=3.10"
+dependencies = [
+    # Validated on the remote Tesla T4 baseline with PyTorch 2.8.x.
+    "torch>=2.4,<2.9",
+]
 
 [project.optional-dependencies]
-test = ["pytest>=8.0"]
+test = [
+    "pytest>=8.0",
+    # Used only to construct reference Llama models for parity tests.
+    "transformers>=4.45,<5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -17,3 +25,6 @@ include = ["micro_vllm*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "gpu: tests that require a visible CUDA GPU",
+]

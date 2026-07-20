@@ -92,21 +92,21 @@ executor/single_process.py
 
 ### 环境检查
 
-- [ ] 在 `aliyun-ecs` 记录 Python 版本。
-- [ ] 在 `aliyun-ecs` 记录 PyTorch、CUDA、Transformers 版本。
-- [ ] 确认远端至少有一块可见 CUDA GPU。
-- [ ] 记录 GPU 型号、compute capability 和支持 dtype。
-- [ ] 确认现有 CPU-only test suite 在远端通过。
-- [ ] 不在本地机器运行代码或测试。
+- [x] 在 `aliyun-ecs` 记录 Python 版本。
+- [x] 在 `aliyun-ecs` 记录 PyTorch、CUDA、Transformers 版本。
+- [x] 确认远端至少有一块可见 CUDA GPU。
+- [x] 记录 GPU 型号、compute capability 和支持 dtype。
+- [x] 确认现有 CPU-only test suite 在远端通过。
+- [x] 不在本地机器运行代码或测试。
 
 ### `pyproject.toml`
 
-- [ ] 增加经过远端验证的 PyTorch runtime dependency/兼容说明。
-- [ ] 增加 Transformers test dependency，用于 parity test。
-- [ ] 不提前添加 safetensors、flash-attn、triton 等本阶段未使用依赖。
-- [ ] 配置 `gpu` pytest marker。
-- [ ] CPU reference tests 和 GPU tests 可以独立选择。
-- [ ] 将稳定测试命令补充到根 `AGENTS.md`。
+- [x] 增加经过远端验证的 PyTorch runtime dependency/兼容说明。
+- [x] 增加 Transformers test dependency，用于 parity test。
+- [x] 不提前添加 safetensors、flash-attn、triton 等本阶段未使用依赖。
+- [x] 配置 `gpu` pytest marker。
+- [x] CPU reference tests 和 GPU tests 可以独立选择。
+- [x] 稳定测试命令保留在本清单，不写入项目根 `AGENTS.md`。
 
 ### 同步与执行规则
 
@@ -122,14 +122,33 @@ rsync -az \
 测试只能通过远端执行，例如：
 
 ```bash
-ssh aliyun-ecs 'cd /root/micro-vllm && python -m pytest -q'
-ssh aliyun-ecs 'cd /root/micro-vllm && python -m pytest -q -m gpu'
+ssh aliyun-ecs \
+  'cd /root/micro-vllm && .venv/bin/python -m pytest -q -m "not gpu"'
+ssh aliyun-ecs \
+  'cd /root/micro-vllm && .venv/bin/python -m pytest -q -m gpu'
 ```
 
-- [ ] 不在远端直接编辑源文件。
-- [ ] 每次远端测试前重新同步本地 working tree。
-- [ ] 远端生成的源码修改不得反向覆盖本地。
-- [ ] 测试报告记录远端 Python、Torch、CUDA 和 GPU 信息。
+- [x] 不在远端直接编辑源文件。
+- [x] 每次远端测试前重新同步本地 working tree。
+- [x] 远端生成的源码修改不得反向覆盖本地。
+- [x] 测试报告记录远端 Python、Torch、CUDA 和 GPU 信息。
+
+### Phase 0 远端验证记录（2026-07-19）
+
+- Host：`aliyun-ecs`，项目环境：`/root/micro-vllm/.venv`。
+- Python：`3.12.3`。
+- PyTorch：`2.8.0+cu128`，CUDA runtime build：`12.8`。
+- Transformers：`4.57.6`。
+- GPU：1 x Tesla T4，compute capability `7.5`，显存
+  `15,636,037,632` bytes，driver `580.126.09`。
+- dtype：FP32 和 FP16 CUDA matmul 实测通过；
+  `torch.cuda.is_bf16_supported()` 返回 `True`，但首版 T4 GPU 数值测试选择
+  FP16，不假定原生 BF16 Tensor Core 支持。
+- CPU-only：`177 passed, 1 deselected`。
+- GPU-only：`1 passed, 177 deselected`。
+- 完整测试：`178 passed`。
+- 项目未直接声明 safetensors、flash-attn 或 triton；Transformers/PyTorch
+  安装产生的传递依赖不作为本阶段功能使用。
 
 ## 6. Phase 1：模型长度和执行配置
 
