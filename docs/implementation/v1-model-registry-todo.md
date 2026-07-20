@@ -26,7 +26,7 @@ local model directory
 
 ### 本阶段实现
 
-- [ ] 从本地模型目录读取和校验 `config.json`。
+- [x] 从本地模型目录读取和校验 `config.json`。
 - [ ] 根据 Hugging Face `architectures` 解析支持的模型实现。
 - [ ] 首个注册项支持 `LlamaForCausalLM`。
 - [ ] 将 HF Llama 配置转换为 frozen `LlamaModelConfig`。
@@ -117,8 +117,8 @@ LlamaForCausalLM -> _resolve_llama(raw_config)
 
 ### `models/registry.py`
 
-- [ ] 读取本地 `config.json`。
-- [ ] 校验顶层 JSON 和 `architectures`。
+- [x] 读取本地 `config.json`。
+- [x] 校验顶层 JSON 和 `architectures`。
 - [ ] 从静态 Registry 选择首个受支持 architecture。
 - [ ] 返回 `ResolvedModel`。
 - [ ] 报告 unknown architecture 和当前支持列表。
@@ -147,40 +147,47 @@ LlamaForCausalLM -> _resolve_llama(raw_config)
 
 ## 5. Phase 0：基线与测试结构
 
-- [ ] 记录当前远端完整基线：`377 passed`。
-- [ ] 新建 `tests/models/test_registry.py`。
-- [ ] 扩展 `tests/models/test_llama_config.py` 覆盖 HF 配置转换。
-- [ ] 必要时扩展 `tests/worker/test_kv_cache.py` 覆盖 structural config。
-- [ ] 测试使用临时目录生成 tiny `config.json`，不访问网络。
-- [ ] 本阶段不新增 runtime dependency。
+- [x] 记录当前远端完整基线：`377 passed`。
+- [x] 新建 `tests/models/test_registry.py`。
+- [x] Phase 0/1 不涉及 HF Llama 字段转换，无需扩展
+      `tests/models/test_llama_config.py`。
+- [x] Phase 0/1 不改变 KV config 类型边界，无需扩展
+      `tests/worker/test_kv_cache.py`。
+- [x] 测试使用临时目录生成 tiny `config.json`，不访问网络。
+- [x] 本阶段不新增 runtime dependency。
+
+2026-07-20 远端基线：实现前完整测试为 `377 passed in 6.46s`。
 
 ## 6. Phase 1：读取 HF `config.json`
 
 ### 文件发现
 
-- [ ] 输入路径只接受本地模型目录。
-- [ ] 读取固定文件名 `config.json`。
-- [ ] 模型目录不存在时抛出 `FileNotFoundError`。
-- [ ] model path 不是目录时给出明确错误。
-- [ ] `config.json` 缺失时抛出带完整路径的 `FileNotFoundError`。
-- [ ] `config.json` 不是普通文件时明确拒绝。
+- [x] 输入路径只接受本地模型目录。
+- [x] 读取固定文件名 `config.json`。
+- [x] 模型目录不存在时抛出 `FileNotFoundError`。
+- [x] model path 不是目录时给出明确错误。
+- [x] `config.json` 缺失时抛出带完整路径的 `FileNotFoundError`。
+- [x] `config.json` 不是普通文件时明确拒绝。
 
 ### JSON 语义
 
-- [ ] 非法 JSON 或非法 UTF-8 转换为带 config path 的 `ValueError`。
-- [ ] 顶层值必须是 JSON object。
-- [ ] duplicate JSON key 被明确拒绝。
-- [ ] 未使用的合法 HF metadata 字段允许存在。
-- [ ] 解析阶段不修改原始文件。
+- [x] 非法 JSON 或非法 UTF-8 转换为带 config path 的 `ValueError`。
+- [x] 顶层值必须是 JSON object。
+- [x] duplicate JSON key 被明确拒绝。
+- [x] 未使用的合法 HF metadata 字段允许存在。
+- [x] 解析阶段不修改原始文件。
 
 ### `architectures`
 
-- [ ] `architectures` 必须是非空 list。
-- [ ] 每个 architecture 必须是非空字符串。
-- [ ] 按配置中的顺序选择首个受支持 architecture。
-- [ ] 没有受支持项时错误列出请求值和支持值。
-- [ ] 不使用 `model_type` 静默猜测 architecture。
-- [ ] 不执行 `auto_map` 或 remote code。
+- [x] `architectures` 必须是非空 list。
+- [x] 每个 architecture 必须是非空字符串。
+- [x] 按配置中的顺序选择首个受支持 architecture。
+- [x] 没有受支持项时错误列出请求值和支持值。
+- [x] 不使用 `model_type` 静默猜测 architecture。
+- [x] 不执行 `auto_map` 或 remote code。
+
+2026-07-20 Phase 0/1 远端验证：定向测试 `28 passed in 1.88s`，完整测试
+`405 passed in 6.52s`。
 
 ## 7. Phase 2：HF Llama Config 转换
 
@@ -246,19 +253,19 @@ LlamaForCausalLM -> _resolve_llama(raw_config)
 
 ### Config file
 
-- [ ] 不存在的 model directory。
-- [ ] model path 是普通文件。
-- [ ] 缺失或非普通文件 `config.json`。
-- [ ] 非法 JSON、非法 UTF-8、非 object 顶层和 duplicate key。
-- [ ] 空、错误类型或包含空字符串的 `architectures`。
+- [x] 不存在的 model directory。
+- [x] model path 是普通文件。
+- [x] 缺失或非普通文件 `config.json`。
+- [x] 非法 JSON、非法 UTF-8、非 object 顶层和 duplicate key。
+- [x] 空、错误类型或包含空字符串的 `architectures`。
 
 ### Registry
 
 - [ ] 单个受支持 Llama architecture。
 - [ ] unsupported architecture。
 - [ ] 多 architecture 的确定性选择。
-- [ ] 额外 HF metadata 不影响解析。
-- [ ] resolve 不打开或要求 checkpoint 文件。
+- [x] 额外 HF metadata 不影响 metadata 解析。
+- [x] metadata 解析不打开或要求 checkpoint 文件。
 - [ ] Registry 不可变。
 
 ### Llama config
