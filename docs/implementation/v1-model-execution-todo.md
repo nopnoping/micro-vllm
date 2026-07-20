@@ -583,38 +583,49 @@ physical KV cache，且只对 sampling rows 计算 logits。Fake model 测试覆
 
 ### `worker/worker.py`
 
-- [ ] Worker 构造时显式接收 model/cache/device 配置。
-- [ ] Worker 创建并拥有 model。
-- [ ] Worker 创建并拥有 physical KV cache。
-- [ ] Worker 创建并拥有 ModelRunner。
-- [ ] model 移动到目标 device/dtype 并进入 eval mode。
-- [ ] `execute(plan)` 委托 ModelRunner。
-- [ ] 提供显式 shutdown，释放 model/cache references。
-- [ ] CUDA shutdown 行为不隐藏全局 device side effect。
+- [x] Worker 构造时显式接收 model/cache/device 配置。
+- [x] Worker 创建并拥有 model。
+- [x] Worker 创建并拥有 physical KV cache。
+- [x] Worker 创建并拥有 ModelRunner。
+- [x] model 移动到目标 device/dtype 并进入 eval mode。
+- [x] `execute(plan)` 委托 ModelRunner。
+- [x] 提供显式 shutdown，释放 model/cache references。
+- [x] CUDA shutdown 行为不隐藏全局 device side effect。
 
 ### `executor/single_process.py`
 
-- [ ] 实现 Executor protocol。
-- [ ] 构造时接收或创建一个 Worker。
-- [ ] `execute(plan)` 只委托 Worker。
-- [ ] 不重排 request。
-- [ ] 不修改 plan。
-- [ ] 不做 admission、preemption 或 block allocation。
-- [ ] 提供 shutdown 委托。
+- [x] 实现 Executor protocol。
+- [x] 构造时接收或创建一个 Worker。
+- [x] `execute(plan)` 只委托 Worker。
+- [x] 不重排 request。
+- [x] 不修改 plan。
+- [x] 不做 admission、preemption 或 block allocation。
+- [x] 提供 shutdown 委托。
 
 ### Executor protocol
 
-- [ ] 评估是否将 shutdown 加入协议。
-- [ ] 若加入，更新 FakeExecutor 和现有 contract tests。
-- [ ] 不加入尚未使用的 distributed RPC、memory profiling 等方法。
+- [x] 评估是否将 shutdown 加入协议。
+- [x] 若加入，更新 FakeExecutor 和现有 contract tests。
+- [x] 不加入尚未使用的 distributed RPC、memory profiling 等方法。
 
 ### 测试
 
-- [ ] Executor 原样传递 plan。
-- [ ] Worker/Runner 的 ModelRunnerOutput 原样返回。
-- [ ] shutdown 后重复 execute 行为明确。
-- [ ] CPU Worker integration test。
-- [ ] GPU Worker integration test 使用 pytest marker。
+- [x] Executor 原样传递 plan。
+- [x] Worker/Runner 的 ModelRunnerOutput 原样返回。
+- [x] shutdown 后重复 execute 行为明确。
+- [x] CPU Worker integration test。
+- [x] GPU Worker integration test 使用 pytest marker。
+
+`Worker` 从三个 frozen config 创建 reference Llama、physical KV cache 和
+`ModelRunner`，并负责其完整生命周期。`shutdown()` 只释放 Worker 自身引用，
+不调用 `torch.cuda.empty_cache()`、同步 device 或改变全局 CUDA 状态；shutdown
+后的 `execute()` 明确抛出 `RuntimeError`。
+
+`SingleProcessExecutor` 只保存一个 Worker，并原样委托 `execute()` 和
+`shutdown()`。当前 Engine 使用的 `Executor` protocol 继续只包含 `execute()`；
+shutdown 是具体 executor 的生命周期 API，因此无需扩张 FakeExecutor contract。
+CPU/GPU integration 与委托测试代码已补齐；按当前开发阶段要求，本轮未运行本地
+或远端验证。
 
 ## 15. Phase 10：Transformers Parity
 
