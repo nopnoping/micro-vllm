@@ -298,9 +298,9 @@ slot = physical_block * block_size + block_offset
 - [x] slot 必须在 physical cache flattened capacity 内。
 - [x] 公式只在一个 helper 中实现，ModelRunner 和 backend 不重复实现。
 
-`build_slot_mapping()` 是 logical block、physical block 和 flattened slot 转换的
-唯一实现来源；返回与 flattened request/token 顺序一致的 `torch.int64` tensor。
-本轮未实现 block-table padding，也未运行验证。
+`map_cache_slots()` 是 logical block、physical block 和 flattened slot 转换公式的
+唯一实现来源；`build_slot_mapping()` 负责 ModelRunner 边界校验，并返回与
+flattened request/token 顺序一致的 `torch.int64` tensor。本阶段未运行验证。
 
 ### Block table tensor
 
@@ -329,39 +329,54 @@ ModelInput tensors。本轮未运行验证。
 
 ### Backend contract
 
-- [ ] 定义最小 `AttentionBackend` protocol 或明确 callable contract。
-- [ ] contract 接受 Q、K、V、单层 physical KV cache 和 AttentionMetadata。
-- [ ] contract 返回与 Q 相同 flattened query 数的 attention output。
-- [ ] backend 不访问 SchedulerOutput、Request 或 KVCacheManager。
-- [ ] backend 不执行 QKV projection、RoPE 或 output projection。
+- [x] 定义最小 `AttentionBackend` protocol 或明确 callable contract。
+- [x] contract 接受 Q、K、V、单层 physical KV cache 和 AttentionMetadata。
+- [x] contract 返回与 Q 相同 flattened query 数的 attention output。
+- [x] backend 不访问 SchedulerOutput、Request 或 KVCacheManager。
+- [x] backend 不执行 QKV projection、RoPE 或 output projection。
+
+`AttentionBackend` 使用最小 callable protocol；shape 约束由具体 backend 实现和
+parity tests 保证，contract 本身不增加运行时判断。本轮未运行验证。
 
 ### KV write
 
-- [ ] 根据 slot mapping 将当前 token K/V 写入 physical cache。
-- [ ] 写入前 reshape cache 为可按 flattened slot 索引的视图。
-- [ ] 每个 scheduled token 写入唯一 slot。
-- [ ] prefix/shared slots 不在当前 query slot mapping 中被覆盖。
-- [ ] 同一 plan 内较早 query 的 K/V 对后续 query 可见。
+- [x] 根据 slot mapping 将当前 token K/V 写入 physical cache。
+- [x] 写入前 reshape cache 为可按 flattened slot 索引的视图。
+- [x] 每个 scheduled token 写入唯一 slot。
+- [x] prefix/shared slots 不在当前 query slot mapping 中被覆盖。
+- [x] 同一 plan 内较早 query 的 K/V 对后续 query 可见。
+
+`write_kv_cache()` 在单层 cache 的 flattened slot 视图上执行 K/V
+`index_copy_`；slot 唯一性在 `build_slot_mapping()` 中保证。本阶段未运行验证。
 
 ### KV gather
 
-- [ ] 对每个 request 独立处理 query range。
-- [ ] 对绝对 query position `p` 读取 token positions `[0, p]`。
-- [ ] 使用 request block table 将 logical positions 映射到 physical cache。
-- [ ] 不读取 padding block IDs 或 context length 之外的 stale values。
-- [ ] chunked prefill 同时读取历史 cache 和当前 chunk 已写入的 K/V。
-- [ ] decode 读取全部历史 full-attention context。
+- [x] 对每个 request 独立处理 query range。
+- [x] 对绝对 query position `p` 读取 token positions `[0, p]`。
+- [x] 使用 request block table 将 logical positions 映射到 physical cache。
+- [x] 不读取 padding block IDs 或 context length 之外的 stale values。
+- [x] chunked prefill 同时读取历史 cache 和当前 chunk 已写入的 K/V。
+- [x] decode 读取全部历史 full-attention context。
+
+`gather_kv_cache()` 按 request query range 和 flattened query 顺序返回每个 query
+的完整 causal K/V history；logical positions 只生成到当前绝对 position，因此不会
+索引 padded block table 或读取 context 之后的 stale slots。本阶段未运行验证。
 
 ### Attention math
 
-- [ ] 应用 `1 / sqrt(head_dim)` scaling。
-- [ ] 使用 causal visibility，不允许 query 看到未来 token。
-- [ ] softmax 计算使用数值稳定 dtype，必要时临时转换 float32。
-- [ ] 输出转换回输入/model dtype。
-- [ ] 支持 `num_attention_heads == num_key_value_heads`。
-- [ ] 支持 GQA/MQA，通过确定性 repeat/interleave 扩展 KV heads。
-- [ ] 校验 attention heads 可被 KV heads 整除。
-- [ ] reference 实现优先可读性，允许 request/query Python loop。
+- [x] 应用 `1 / sqrt(head_dim)` scaling。
+- [x] 使用 causal visibility，不允许 query 看到未来 token。
+- [x] softmax 计算使用数值稳定 dtype，必要时临时转换 float32。
+- [x] 输出转换回输入/model dtype。
+- [x] 支持 `num_attention_heads == num_key_value_heads`。
+- [x] 支持 GQA/MQA，通过确定性 repeat/interleave 扩展 KV heads。
+- [x] 校验 attention heads 可被 KV heads 整除。
+- [x] reference 实现优先可读性，允许 request/query Python loop。
+
+`ReferenceAttentionBackend` 先写入当前 K/V，再读取每个 flattened query 的完整
+causal history；Q/K/V attention math 使用 float32，最终结果写回 query dtype。
+MHA、GQA 和 MQA 共用同一路径，仅在 KV head 数较少时按组扩展。本阶段未运行
+验证。
 
 ### Reference tests
 

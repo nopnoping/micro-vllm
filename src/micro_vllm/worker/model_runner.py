@@ -6,7 +6,11 @@ import torch
 
 from micro_vllm.config import CacheConfig
 from micro_vllm.core.scheduler_output import SchedulerOutput
-from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
+from micro_vllm.layers.attention_backend import (
+    AttentionMetadata,
+    PAD_BLOCK_ID,
+    map_cache_slots,
+)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -115,12 +119,13 @@ def build_slot_mapping(
 ) -> torch.Tensor:
     """Map every scheduled position to one flattened physical cache slot."""
 
-    slots: list[int] = []
+    slot_mappings: list[torch.Tensor] = []
+    used_slots: set[int] = set()
     for request in plan.scheduled_requests:
-        for position in range(
-            request.num_computed_tokens,
-            request.num_computed_tokens + request.num_scheduled_tokens,
-        ):
+        start_position = request.num_computed_tokens
+        end_position = start_position + request.num_scheduled_tokens
+        positions = range(start_position, end_position)
+        for position in positions:
             logical_block = position // cache_config.block_size
             if logical_block >= len(request.block_table):
                 raise ValueError(
@@ -137,10 +142,35 @@ def build_slot_mapping(
                     f"request {request.request_id} has out-of-range physical block "
                     f"{physical_block}"
                 )
-            block_offset = position % cache_config.block_size
-            slots.append(physical_block * cache_config.block_size + block_offset)
 
-    return torch.tensor(slots, dtype=torch.int64, device=device)
+        position_tensor = torch.arange(
+            start_position,
+            end_position,
+            dtype=torch.int64,
+            device=device,
+        )
+        block_table = torch.tensor(
+            [
+                PAD_BLOCK_ID if block_id is None else block_id
+                for block_id in request.block_table
+            ],
+            dtype=torch.int64,
+            device=device,
+        )
+        request_slots = map_cache_slots(
+            position_tensor,
+            block_table,
+            cache_config.block_size,
+        )
+        for slot in request_slots.tolist():
+            if slot in used_slots:
+                raise ValueError(f"duplicate physical cache slot: {slot}")
+            used_slots.add(slot)
+        slot_mappings.append(request_slots)
+
+    if not slot_mappings:
+        return torch.empty(0, dtype=torch.int64, device=device)
+    return torch.cat(slot_mappings)
 
 
 def build_block_table(

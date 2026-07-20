@@ -380,6 +380,32 @@ def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
     assert slot_mapping.item() < cache_config.num_blocks * cache_config.block_size
 
 
+def test_slot_mapping_rejects_duplicate_physical_slot() -> None:
+    first = ScheduledRequest(
+        request_id="first",
+        input_token_ids=(10,),
+        num_computed_tokens=0,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(2,),
+    )
+    second = ScheduledRequest(
+        request_id="second",
+        input_token_ids=(20,),
+        num_computed_tokens=0,
+        num_scheduled_tokens=1,
+        requires_sampling=True,
+        block_table=(2,),
+    )
+
+    with pytest.raises(ValueError, match="duplicate physical cache slot: 8"):
+        build_slot_mapping(
+            SchedulerOutput((first, second)),
+            CacheConfig(block_size=4, num_blocks=8),
+            device=torch.device("cpu"),
+        )
+
+
 def test_block_table_pads_different_request_lengths() -> None:
     first = ScheduledRequest(
         request_id="first",

@@ -43,7 +43,14 @@ def test_metadata_stores_only_flattened_attention_inputs() -> None:
 
 
 def test_layers_package_exports_attention_metadata_contract() -> None:
-    assert layers.__all__ == ("AttentionMetadata", "PAD_BLOCK_ID")
+    assert layers.__all__ == (
+        "AttentionBackend",
+        "AttentionMetadata",
+        "PAD_BLOCK_ID",
+        "ReferenceAttentionBackend",
+        "gather_kv_cache",
+        "write_kv_cache",
+    )
     assert layers.AttentionMetadata is AttentionMetadata
     assert layers.PAD_BLOCK_ID == PAD_BLOCK_ID
 

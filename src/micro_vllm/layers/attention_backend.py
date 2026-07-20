@@ -1,7 +1,8 @@
 """Reference and optimized attention backend contracts."""
 
+import math
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Protocol
 
 import torch
 
@@ -64,3 +65,144 @@ class AttentionMetadata:
         """Number of flattened query tokens."""
 
         return self.query_positions.numel()
+
+
+class AttentionBackend(Protocol):
+    """Callable boundary for attention over one layer's physical KV cache."""
+
+    def __call__(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        layer_kv_cache: torch.Tensor,
+        metadata: AttentionMetadata,
+        /,
+    ) -> torch.Tensor:
+        """Return attention output for every flattened query row."""
+
+        ...
+
+
+def map_cache_slots(
+    positions: torch.Tensor,
+    block_table: torch.Tensor,
+    block_size: int,
+) -> torch.Tensor:
+    """Map logical token positions to flattened physical cache slots."""
+
+    logical_blocks = positions // block_size
+    block_offsets = positions % block_size
+    physical_blocks = block_table.index_select(0, logical_blocks)
+    return physical_blocks * block_size + block_offsets
+
+
+def write_kv_cache(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    layer_kv_cache: torch.Tensor,
+    metadata: AttentionMetadata,
+) -> None:
+    """Write current query keys and values into their physical cache slots."""
+
+    flattened_cache = layer_kv_cache.view(
+        2,
+        -1,
+        *layer_kv_cache.shape[3:],
+    )
+    flattened_cache[0].index_copy_(0, metadata.slot_mapping, key)
+    flattened_cache[1].index_copy_(0, metadata.slot_mapping, value)
+
+
+def gather_kv_cache(
+    layer_kv_cache: torch.Tensor,
+    metadata: AttentionMetadata,
+) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
+    """Gather each flattened query's complete causal K/V history."""
+
+    flattened_cache = layer_kv_cache.view(
+        2,
+        -1,
+        *layer_kv_cache.shape[3:],
+    )
+    histories: list[tuple[torch.Tensor, torch.Tensor]] = []
+    for request_index in range(metadata.num_requests):
+        query_start = metadata.query_start_locations[request_index].item()
+        query_end = metadata.query_start_locations[request_index + 1].item()
+        block_table = metadata.block_table[request_index]
+
+        for position in metadata.query_positions[query_start:query_end].tolist():
+            token_positions = torch.arange(
+                position + 1,
+                dtype=torch.int64,
+                device=metadata.query_positions.device,
+            )
+            slots = map_cache_slots(
+                token_positions,
+                block_table,
+                metadata.block_size,
+            )
+            histories.append(
+                (
+                    flattened_cache[0].index_select(0, slots),
+                    flattened_cache[1].index_select(0, slots),
+                )
+            )
+
+    return tuple(histories)
+
+
+class ReferenceAttentionBackend:
+    """Readable full causal attention over paged physical K/V cache."""
+
+    def __call__(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        layer_kv_cache: torch.Tensor,
+        metadata: AttentionMetadata,
+        /,
+    ) -> torch.Tensor:
+        num_attention_heads = query.shape[1]
+        num_key_value_heads = key.shape[1]
+        if num_attention_heads % num_key_value_heads != 0:
+            raise ValueError(
+                "num_attention_heads must be divisible by num_key_value_heads"
+            )
+
+        write_kv_cache(key, value, layer_kv_cache, metadata)
+        histories = gather_kv_cache(layer_kv_cache, metadata)
+        head_group_size = num_attention_heads // num_key_value_heads
+        scale = 1.0 / math.sqrt(query.shape[-1])
+        output = torch.empty_like(query)
+
+        for query_index, (cached_key, cached_value) in enumerate(histories):
+            if head_group_size > 1:
+                cached_key = cached_key.repeat_interleave(
+                    head_group_size,
+                    dim=1,
+                )
+                cached_value = cached_value.repeat_interleave(
+                    head_group_size,
+                    dim=1,
+                )
+
+            scores = torch.einsum(
+                "hd,thd->ht",
+                query[query_index].to(torch.float32),
+                cached_key.to(torch.float32),
+            )
+            weights = torch.softmax(
+                scores * scale,
+                dim=-1,
+                dtype=torch.float32,
+            )
+            attention = torch.einsum(
+                "ht,thd->hd",
+                weights,
+                cached_value.to(torch.float32),
+            )
+            output[query_index].copy_(attention)
+
+        return output
