@@ -24,12 +24,6 @@ V1 必须回答以下问题：
 | V1.5 | sliding window、chunked-local、多 KV cache group、Mistral/hybrid model | 延后实现 |
 | V1.6 | optimized attention、CUDA Graph/compile、benchmark 和性能收尾 | 待实现 |
 
-详细执行清单：
-
-- [V1.1 Control Loop](../implementation/v1-control-loop-todo.md)
-- [V1.2 Paged KV Cache](../implementation/v1-paged-kv-cache-todo.md)
-- [V1.3 Model Execution](../implementation/v1-model-execution-todo.md)
-
 ## 3. V1.1：Request 与 Engine Control Loop
 
 ### Request 生命周期
