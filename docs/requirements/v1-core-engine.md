@@ -19,8 +19,8 @@ V1 必须回答以下问题：
 |---|---|---|
 | V1.1 | Request、统一 Scheduler、Engine control loop、Executor contract | 已完成 |
 | V1.2 | 单类型 full-attention 逻辑 Paged KV Cache、prefix cache、preemption/recompute | 主体已完成 |
-| V1.3 | Physical KV Cache、reference full attention、Tiny Llama、ModelRunner、Worker、SingleProcessExecutor | 当前阶段 |
-| V1.4 | safetensors 权重加载、真实 Llama/Qwen checkpoint、完整 sampling 和离线 API | 待实现 |
+| V1.3 | Physical KV Cache、reference full attention、Tiny Llama、ModelRunner、Worker、SingleProcessExecutor | 已完成 |
+| V1.4 | safetensors 权重加载、真实 Llama/Qwen checkpoint、完整 sampling 和离线 API | 当前阶段 |
 | V1.5 | sliding window、chunked-local、多 KV cache group、Mistral/hybrid model | 延后实现 |
 | V1.6 | optimized attention、CUDA Graph/compile、benchmark 和性能收尾 | 待实现 |
 
@@ -67,7 +67,7 @@ V1 必须回答以下问题：
 - [x] executor output 校验 unknown、duplicate 和不需要采样的 request。
 - [x] invalid executor result 不会部分提交 Request 状态。
 - [x] 同一 plan 不能重复 update，equal-but-foreign plan 被拒绝。
-- [ ] 实现真实 `SingleProcessExecutor`。
+- [x] 实现真实 `SingleProcessExecutor`。
 
 ## 4. V1.1：统一 Token-Budget Scheduler
 
@@ -132,7 +132,7 @@ V1 必须回答以下问题：
 - [x] 支持 `None` 表示 unmapped logical block。
 - [x] snapshot 不暴露可修改内部 list。
 - [x] BlockTable 不直接修改 BlockPool refcount。
-- [ ] 在 ModelRunner 中建立唯一的 token position → logical block → physical slot helper。
+- [x] 在 ModelRunner 中建立唯一的 token position → logical block → physical slot helper。
 
 ### Prefix Cache
 
@@ -180,86 +180,87 @@ V1 必须回答以下问题：
 - [x] victim 回到 WAITING 并从零 recompute。
 - [x] victim resume 时可以重新命中 prefix cache。
 - [x] 抢占过程不 double free，abort 被抢占 request 不泄漏 block。
-- [ ] 使用真实模型验证 prefix cache on/off 输出一致。
-- [ ] 使用真实模型验证 preempt/recompute 与无抢占输出一致。
+- [x] 使用真实模型验证 prefix cache on/off 输出一致。
+- [x] 使用真实模型验证 preempt/recompute 与无抢占输出一致。
 
-## 6. V1.3：Full-Attention Model Execution（当前阶段）
+## 6. V1.3：Full-Attention Model Execution（已完成）
 
 ### Physical KV Cache
 
-- [ ] Worker 为每个 decoder layer 创建 physical KV cache tensor。
-- [ ] KV tensor 的 block dimension 与 CacheConfig physical block ID 一一对应。
-- [ ] tensor shape 表达 K/V、block、block offset、KV heads 和 head dim。
-- [ ] physical cache dtype/device 由 Worker 配置决定。
-- [ ] Worker 拥有 tensor，Scheduler/KVCacheManager 不访问 tensor。
-- [ ] block 被逻辑释放后不强制清零，slot overwrite 和 block table 保证隔离。
+- [x] Worker 为每个 decoder layer 创建 physical KV cache tensor。
+- [x] KV tensor 的 block dimension 与 CacheConfig physical block ID 一一对应。
+- [x] tensor shape 表达 K/V、block、block offset、KV heads 和 head dim。
+- [x] physical cache dtype/device 由 Worker 配置决定。
+- [x] Worker 拥有 tensor，Scheduler/KVCacheManager 不访问 tensor。
+- [x] block 被逻辑释放后不强制清零，slot overwrite 和 block table 保证隔离。
 
 ### ModelInput 与 AttentionMetadata
 
-- [ ] 将 SchedulerOutput 转换为 flattened input IDs。
-- [ ] 生成每个 token 的 absolute position。
-- [ ] 使用唯一 helper 生成 slot mapping。
-- [ ] 将不同长度 block tables pad 为只读 metadata tensor。
-- [ ] 生成 query start locations 和每 request context length。
-- [ ] 生成 sampling row indices。
-- [ ] 支持 request 具有不同 scheduled token 数的 mixed batch。
-- [ ] 不建立 prefill/decode 两套 ModelInput。
+- [x] 将 SchedulerOutput 转换为 flattened input IDs。
+- [x] 生成每个 token 的 absolute position。
+- [x] 使用唯一 helper 生成 slot mapping。
+- [x] 将不同长度 block tables pad 为只读 metadata tensor。
+- [x] 生成 query start locations 和每 request context length。
+- [x] 生成 sampling row indices。
+- [x] 支持 request 具有不同 scheduled token 数的 mixed batch。
+- [x] 不建立 prefill/decode 两套 ModelInput。
 
 ### Reference Full Paged Attention
 
-- [ ] 将当前 query token 的 K/V 写入 slot mapping 指定位置。
-- [ ] 根据 request block table 读取完整 causal history。
-- [ ] chunked prefill 同时读取历史 KV 和当前 chunk。
-- [ ] decode 读取完整 full-attention context。
-- [ ] 支持 MHA、GQA 和 MQA。
-- [ ] softmax 使用数值稳定 dtype。
-- [ ] reference backend 不访问 Scheduler、Request 或 KVCacheManager。
-- [ ] full prefill、chunked prefill 和 decode 与 dense causal reference 对拍。
+- [x] 将当前 query token 的 K/V 写入 slot mapping 指定位置。
+- [x] 根据 request block table 读取完整 causal history。
+- [x] chunked prefill 同时读取历史 KV 和当前 chunk。
+- [x] decode 读取完整 full-attention context。
+- [x] 支持 MHA、GQA 和 MQA。
+- [x] softmax 使用数值稳定 dtype。
+- [x] reference backend 不访问 Scheduler、Request 或 KVCacheManager。
+- [x] full prefill、chunked prefill 和 decode 与 dense causal reference 对拍。
 
 ### Tiny Llama
 
-- [ ] 定义最小 Llama architecture config，不建立万能 model config。
-- [ ] 实现 RMSNorm。
-- [ ] 实现标准 Llama RoPE。
-- [ ] 实现单卡 dense Linear、Embedding 和 LM head。
-- [ ] 实现 SwiGLU MLP。
-- [ ] 实现 Q/K/V/O projection 和 full attention layer。
-- [ ] 实现 decoder layer residual/pre-norm 结构。
-- [ ] 实现多层 Llama model 和 final RMSNorm。
-- [ ] 模型 `forward()` 与 `compute_logits()` 分离。
-- [ ] 与 Transformers tiny Llama 的 layer、hidden state 和 logits 对拍。
+- [x] 定义最小 Llama architecture config，不建立万能 model config。
+- [x] 实现 RMSNorm。
+- [x] 实现标准 Llama RoPE。
+- [x] 实现单卡 dense Linear、Embedding 和 LM head。
+- [x] 实现 SwiGLU MLP。
+- [x] 实现 Q/K/V/O projection 和 full attention layer。
+- [x] 实现 decoder layer residual/pre-norm 结构。
+- [x] 实现多层 Llama model 和 final RMSNorm。
+- [x] 模型 `forward()` 与 `compute_logits()` 分离。
+- [x] 与 Transformers tiny Llama 的 layer、hidden state 和 logits 对拍。
 
 ### Sampler、ModelRunner、Worker 和 Executor
 
-- [ ] 实现 greedy sampler。
-- [ ] sampler 输出通过 request ID 显式关联。
-- [ ] ModelRunner 构造统一 flattened batch 和 attention metadata。
-- [ ] ModelRunner 只对 sampling rows 计算/收集 logits。
-- [ ] ModelRunner 不修改 Request、SchedulerOutput 或 Scheduler 状态。
-- [ ] Worker 拥有 device、model、physical KV cache 和 ModelRunner。
-- [ ] Worker 提供显式 shutdown。
-- [ ] 实现 SingleProcessExecutor 并只委托 Worker。
-- [ ] Engine 使用真实 SingleProcessExecutor 完成 tiny-model generation。
+- [x] 实现 greedy sampler。
+- [x] sampler 输出通过 request ID 显式关联。
+- [x] ModelRunner 构造统一 flattened batch 和 attention metadata。
+- [x] ModelRunner 只对 sampling rows 计算/收集 logits。
+- [x] ModelRunner 不修改 Request、SchedulerOutput 或 Scheduler 状态。
+- [x] Worker 拥有 device、model、physical KV cache 和 ModelRunner。
+- [x] Worker 提供显式 shutdown。
+- [x] 实现 SingleProcessExecutor 并只委托 Worker。
+- [x] Engine 使用真实 SingleProcessExecutor 完成 tiny-model generation。
 
 ### 执行正确性
 
-- [ ] 一次 full prefill 与多次 chunked prefill 的最后 logits/token 一致。
-- [ ] prefill + decode 与完整序列 forward 一致。
-- [ ] mixed decode/prefill batch 与逐 request 独立执行一致。
-- [ ] prefix cache on/off 输出一致。
-- [ ] preempt/recompute 与无抢占输出一致。
-- [ ] physical block 释放和复用后不存在 stale KV 污染。
-- [ ] CPU FP32 reference tests 通过。
-- [ ] 单 GPU eager tests 通过。
+- [x] 一次 full prefill 与多次 chunked prefill 的最后 logits/token 一致。
+- [x] prefill + decode 与完整序列 forward 一致。
+- [x] mixed decode/prefill batch 与逐 request 独立执行一致。
+- [x] prefix cache on/off 输出一致。
+- [x] preempt/recompute 与无抢占输出一致。
+- [x] physical block 释放和复用后不存在 stale KV 污染。
+- [x] CPU FP32 reference tests 通过。
+- [x] 单 GPU eager tests 通过。
 
-## 7. V1.4：权重加载、模型覆盖与完整 Sampling
+## 7. V1.4：权重加载、模型覆盖与完整 Sampling（当前阶段）
 
 ### Model Registry 和模型接口
 
 - [ ] Model Registry 根据 Hugging Face `architectures` 选择实现。
 - [ ] 模型类负责架构差异，不把模型判断放入 Scheduler/ModelRunner。
-- [ ] 模型 `forward()`、`compute_logits()` 和 `load_weights()` 职责分离。
-- [ ] 公共 RMSNorm、RoPE、MLP、Embedding、Linear 和 Attention layer 可复用。
+- [x] 模型 `forward()` 与 `compute_logits()` 职责分离。
+- [ ] 模型计算与 `load_weights()` 职责分离。
+- [x] 公共 RMSNorm、RoPE、MLP、Embedding、Linear 和 Attention layer 可复用。
 - [x] 不实现难以理解的万能声明式 Transformer builder。
 
 ### 权重加载
@@ -283,7 +284,7 @@ V1 必须回答以下问题：
 
 ### Sampling 和离线 API
 
-- [ ] greedy decoding。
+- [x] greedy decoding。
 - [ ] temperature sampling。
 - [ ] top-k sampling。
 - [ ] top-p sampling。
@@ -360,13 +361,15 @@ V1 必须回答以下问题：
 - [x] prefix hit 后 admission 和 block-aligned prompt 重算测试。
 - [x] preemption victim selection、recompute、prefix resume 和 abort 测试。
 - [x] finish/abort/pending-plan 的 block release 测试。
+- [x] mixed batch 与逐 request 真实模型执行结果一致。
+- [x] prefix cache on/off 真实模型输出一致。
+- [x] preempt/recompute 与无抢占真实模型输出一致。
+- [x] full attention 与 dense causal reference 对拍。
+- [x] tiny Llama hidden state、logits 和 GPU FP16 与 Transformers 对拍。
 
 ### 待补测试
 
-- [ ] mixed batch 与逐 request 真实模型执行结果一致。
-- [ ] prefix cache on/off 真实模型输出一致。
-- [ ] preempt/recompute 与无抢占真实模型输出一致。
-- [ ] full/sliding/chunked-local 与 dense reference 对拍。
+- [ ] sliding/chunked-local attention 与 dense reference 对拍。
 - [ ] Llama、Qwen 和 Mistral 最小权重端到端加载测试。
 - [ ] greedy 输出与 Transformers 逐 token 对拍。
 
@@ -399,11 +402,12 @@ V1 必须回答以下问题：
 ## 12. V1 发布验收
 
 - [ ] 单 GPU 可加载至少两个真实的小型 dense 模型族并生成文本。
-- [ ] decode 与 chunked prefill 在同一个真实模型 batch 中正确执行。
+- [x] decode 与 chunked prefill 在同一个真实模型 batch 中正确执行。
 - [x] 任意 Scheduler step 严格遵守 token 和 sequence budget。
-- [ ] KV 空间不足时能抢占并最终正确完成真实模型请求，无 OOM 或 block 泄漏。
-- [ ] prefix cache on/off 真实模型输出一致。
-- [ ] full、sliding window 和 chunked-local 均有独立 reference correctness test。
+- [x] KV 空间不足时能抢占并最终正确完成真实模型请求，无 OOM 或 block 泄漏。
+- [x] prefix cache on/off 真实模型输出一致。
+- [x] full attention 有独立 reference correctness test。
+- [ ] sliding window 和 chunked-local 有独立 reference correctness test。
 - [ ] reference 与 optimized attention 通过数值对拍。
 - [ ] 核心对象职责、不变量和一次完整 request trace 已文档化。
 - [ ] benchmark 记录 throughput、TTFT、ITL、显存和 KV utilization。
