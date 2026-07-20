@@ -240,38 +240,47 @@ Phase 2 已完成实现与测试代码；按当前开发阶段要求，本轮未
 
 放置在 `layers/attention_backend.py` 或独立低层 schema module。
 
-- [ ] frozen dataclass，不包含 Request 对象。
-- [ ] 包含 flattened query positions。
-- [ ] 包含 request query start locations，长度为 `num_requests + 1`。
-- [ ] 包含每个 request 计算后的 context length。
-- [ ] 包含 padded physical block table tensor。
-- [ ] 包含 flattened slot mapping。
-- [ ] 包含 block size。
-- [ ] padding block ID 使用明确 sentinel，例如 `-1`。
-- [ ] metadata shape 和 request 数具有一致性校验。
-- [ ] backend 可以仅凭 metadata 和 layer KV cache 完成读写。
+- [x] frozen dataclass，不包含 Request 对象。
+- [x] 包含 flattened query positions。
+- [x] 包含 request query start locations，长度为 `num_requests + 1`。
+- [x] 包含每个 request 计算后的 context length。
+- [x] 包含 padded physical block table tensor。
+- [x] 包含 flattened slot mapping。
+- [x] 包含 block size。
+- [x] padding block ID 使用明确 sentinel `PAD_BLOCK_ID = -1`。
+- [x] metadata shape 和 request 数具有一致性校验。
+- [x] backend 可以仅凭 metadata 和 layer KV cache 完成读写。
+
+`AttentionMetadata` schema 与测试代码已实现；按当前开发阶段要求，本轮未运行
+本地或远端验证。flattening 和 slot mapping builder 尚未实现。
 
 ### `ModelInput`
 
 定义在 `worker/model_runner.py`，仅供 Runner 内部使用。
 
-- [ ] 包含 flattened `input_ids`。
-- [ ] 包含 flattened absolute `positions`。
-- [ ] 包含 `AttentionMetadata`。
-- [ ] 包含 request IDs，顺序与 SchedulerOutput 一致。
-- [ ] 包含需要采样的 flattened row indices。
-- [ ] 不包含可变 Request。
-- [ ] 不包含 SamplingParams；本阶段仅支持 greedy。
+- [x] 包含 flattened `input_ids`。
+- [x] 包含 flattened absolute `positions`。
+- [x] 包含 `AttentionMetadata`。
+- [x] 包含 request IDs，顺序与 SchedulerOutput 一致。
+- [x] 包含需要采样的 flattened row indices。
+- [x] 不包含可变 Request。
+- [x] 不包含 SamplingParams；本阶段仅支持 greedy。
+
+`ModelInput` schema 与测试代码已实现；`positions` 直接复用
+`AttentionMetadata.query_positions`，不保存重复 tensor。本轮未运行验证。
 
 ### Flattening
 
-- [ ] 按 SchedulerOutput request 顺序拼接 input token IDs。
-- [ ] position 从每个 ScheduledRequest 的 `num_computed_tokens` 开始。
-- [ ] query start locations 以零开始并以总 query token 数结束。
-- [ ] mixed batch 中不同 request positions 相互独立。
-- [ ] 每个 scheduled token 都有且只有一个 slot mapping。
-- [ ] `requires_sampling=True` 时采样 row 是该 request 的最后一个 query row。
-- [ ] `requires_sampling=False` 的 request 不产生 sampling row。
+- [x] 按 SchedulerOutput request 顺序拼接 input token IDs。
+- [x] position 从每个 ScheduledRequest 的 `num_computed_tokens` 开始。
+- [x] query start locations 以零开始并以总 query token 数结束。
+- [x] mixed batch 中不同 request positions 相互独立。
+- [x] 每个 scheduled token 都有且只有一个 slot mapping。
+- [x] `requires_sampling=True` 时采样 row 是该 request 的最后一个 query row。
+- [x] `requires_sampling=False` 的 request 不产生 sampling row。
+
+`flatten_model_input()` 已实现上述 flattening，并接收后续步骤产生的 padded
+block table 和 slot mapping；本轮未实现二者的构建逻辑，也未运行验证。
 
 ### Slot mapping
 
