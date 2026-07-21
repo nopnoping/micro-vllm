@@ -252,19 +252,19 @@ V1 必须回答以下问题：
 - [x] CPU FP32 reference tests 通过。
 - [x] 单 GPU eager tests 通过。
 
-## 7. V1.4：权重加载、模型覆盖与完整 Sampling（当前阶段）
+## 7. V1.4：权重加载、模型覆盖与完整 Sampling（V1.4C 已完成）
 
 | 子阶段 | 内容 | 状态 | 技术清单 |
 |---|---|---|---|
 | V1.4A | Safetensors Checkpoint Reader | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
 | V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
-| V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 当前阶段 | [清单](../implementation/v1-real-llama-integration-todo.md) |
-| V1.4D | Qwen dense model 与 checkpoint | 待实现 | 待生成 |
+| V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 | [清单](../implementation/v1-real-llama-integration-todo.md) |
+| V1.4D | Qwen dense model 与 checkpoint | 下一阶段 | 待生成 |
 | V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 待实现 | 待生成 |
 
 V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
-验证。V1.4C Phase 4 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
-SingleProcessExecutor 和 Engine；公开固定 commit checkpoint 验收留在 Phase 5。
+验证。V1.4C 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
+SingleProcessExecutor 和 Engine，并完成固定公开 TinyLlama commit 的 GPU/cache 验收。
 
 ### 当前模型加载架构
 
@@ -288,6 +288,8 @@ model name/path
   通用字段读取方法，不解释 Llama/Qwen 专属语义。
 - `model_loader` 拥有路径/Hub 解析、config IO、commit 固定、checkpoint 下载与遍历，
   但不导入具体模型或解释参数布局。
+- 固定 40 位 commit SHA 不需要在线 metadata 解析；`local_files_only` 可从同一 commit
+  的标准 Hub cache 完全离线重载 config 和 checkpoint。
 - `models.registry` 是不可变的 architecture → model class mapping，不建立 Registry
   object、动态 `register()` 或 plugin discovery。
 - 具体模型负责从 `ModelConfig` 读取字段、组装网络，并在 `load_weights()` 中解释
@@ -344,7 +346,7 @@ model name/path
 
 ### 模型覆盖
 
-- [ ] 加载真实 Llama-family dense checkpoint。
+- [x] 加载真实 Llama-family dense checkpoint。
 - [ ] 加载真实 Qwen2/Qwen3 dense checkpoint。
 - [ ] Llama 和 Qwen greedy 输出与 Transformers 逐 token 对拍。
 - [ ] 至少两个真实小型模型族完成端到端生成。
@@ -354,6 +356,8 @@ model name/path
       逐 token 一致。
 - [x] loaded Llama 的 mixed batch、prefix cache、preemption/recompute、block reuse 和
       finish/abort KV 生命周期通过端到端测试。
+- [x] 固定公开 TinyLlama commit 支持首次下载、完全离线 cache 重载、T4 FP16 logits
+      对拍、4-token greedy decode 和强制 chunked prefill。
 
 ### Sampling 和离线 API
 
@@ -443,7 +447,6 @@ model name/path
 ### 待补测试
 
 - [ ] sliding/chunked-local attention 与 dense reference 对拍。
-- [ ] 固定 commit 的公开 Llama checkpoint 端到端 GPU 验收。
 - [ ] Qwen 和 Mistral 外部 checkpoint 端到端加载测试。
 
 ### Trace 和指标

@@ -102,6 +102,7 @@ def test_load_model_pins_config_and_weights_to_one_hf_commit(
         revision="branch",
         cache_dir=tmp_path / "cache",
         token="token",
+        local_files_only=True,
     )
 
     assert isinstance(model, FakeModel)
@@ -120,9 +121,44 @@ def test_load_model_pins_config_and_weights_to_one_hf_commit(
         assert kwargs["revision"] == "commit-sha"
         assert kwargs["cache_dir"] == tmp_path / "cache"
         assert kwargs["token"] == "token"
+        assert kwargs["local_files_only"] is True
     assert calls["snapshot"]["allow_patterns"] == [
         "config.json",
         "model.safetensors",
         "model.safetensors.index.json",
         "model-*.safetensors",
     ]
+
+
+def test_pinned_commit_does_not_require_online_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commit_hash = "d9128824c0c80111be21424e68086f52413fb413"
+
+    class UnexpectedApi:
+        def __init__(self) -> None:
+            raise AssertionError("pinned commit must not query model metadata")
+
+    monkeypatch.setattr(loader_module, "HfApi", UnexpectedApi)
+
+    assert loader_module._resolve_hf_commit(
+        "org/model",
+        commit_hash,
+        None,
+    ) == commit_hash
+
+
+def test_hub_metadata_error_is_not_reclassified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingApi:
+        def model_info(self, repo_id, *, revision, token):
+            raise ConnectionError(f"network unavailable for {repo_id}@{revision}")
+
+    monkeypatch.setattr(loader_module, "HfApi", FailingApi)
+
+    with pytest.raises(
+        ConnectionError,
+        match="network unavailable for org/model@main",
+    ):
+        loader_module._resolve_hf_commit("org/model", "main", None)

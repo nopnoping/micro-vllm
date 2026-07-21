@@ -46,7 +46,7 @@ Paged KV 执行语义，并消除 Worker 原先重新构造随机模型的断点
 - [x] 使用 loaded model 打通 Worker、Executor 和 Engine。
 - [ ] 真实 checkpoint 的 full/chunked prefill、decode 和 greedy token 与
       Transformers 对拍。
-- [ ] 使用一个公开、固定 commit 的小型 Llama-family checkpoint 完成远端 smoke test。
+- [x] 使用一个公开、固定 commit 的小型 Llama-family checkpoint 完成远端 smoke test。
 - [x] 在 loaded model 上验证 prefix cache、preemption/recompute 和 block reuse。
 
 ### 本阶段不实现
@@ -301,25 +301,40 @@ Model Loader、Models、Worker、Executor、loaded logits 和 loaded Engine 定�
 
 ## 10. Phase 5：公开 Llama Checkpoint 验收
 
-- [ ] 通过固定 repo id 和 commit SHA 调用 Hub `load_model()`。
-- [ ] 首次下载和已有 cache 两种路径都能加载。
-- [ ] config 与 checkpoint 实际来自同一 commit。
-- [ ] 模型可移动到远端 GPU 指定 dtype。
-- [ ] 固定 token IDs 的 prefill logits 与 Transformers 对拍。
-- [ ] 至少生成 4 个 greedy tokens 并逐 token 一致。
-- [ ] token budget 强制 chunked prefill 后结果仍一致。
-- [ ] 记录运行时间、CPU peak memory、GPU peak memory 和 checkpoint 大小。
-- [ ] 测试结束后不主动删除共享 Hub cache。
+- [x] 通过固定 repo id 和 commit SHA 调用 Hub `load_model()`。
+- [x] 首次下载和已有 cache 两种路径都能加载。
+- [x] config 与 checkpoint 实际来自同一 commit。
+- [x] 模型可移动到远端 GPU 指定 dtype。
+- [x] 固定 token IDs 的 prefill logits 与 Transformers 对拍。
+- [x] 至少生成 4 个 greedy tokens 并逐 token 一致。
+- [x] token budget 强制 chunked prefill 后结果仍一致。
+- [x] 记录运行时间、CPU peak memory、GPU peak memory 和 checkpoint 大小。
+- [x] 测试结束后不主动删除共享 Hub cache。
+
+首次验收前远端 cache 只有 20KB config；2,200,119,864-byte 权重首次下载约 179 秒，
+未在测试后删除。固定 SHA 路径随后使用 `local_files_only=True`，并额外在
+`HF_HUB_OFFLINE=1` 下验证完全离线重载。Tesla T4 FP16 实测 cached load 约 9.8 秒，
+CPU peak RSS 7,300,128,768 bytes，GPU peak allocated 4,436,969,984 bytes，Runner
+warmup peak activation 8,908,288 bytes，可用于 KV cache 的预算为
+11,606,777,548 bytes；测试用例以 64 blocks 上限避免验收进程占满共享 GPU。
+环境为 Python 3.12.3、PyTorch 2.8.0、Transformers 4.57.6、safetensors 0.8.0、
+huggingface-hub 0.36.2，以及 15,360MiB Tesla T4（driver 580.126.09）。
+
+真实 22-layer checkpoint 的 FP16 logits 最大绝对误差实测为 `0.01758`，因此公开模型
+使用独立 `atol=rtol=2e-2`；4 个 greedy token 仍逐 token 严格相等。显式模型集合为
+`2 passed, 1 deselected in 29.20s`，完全离线 cache 验收为 `1 passed in 24.55s`。
+Phase 5 完成后的 Model Loader + Models 定向回归为 `79 passed in 1.49s`；完整默认
+回归为 `442 passed, 2 skipped in 7.74s`，两个显式外部模型用例按约定 skip。
 
 ## 11. 错误与兼容性边界
 
-- [ ] 不支持的真实 Llama config 在模型执行前给出明确错误。
-- [ ] checkpoint parameter 名称不匹配时错误包含 parameter name。
-- [ ] tensor shape 不兼容时保留 PyTorch shape 错误和模型来源上下文。
-- [ ] Hub 网络或下载失败不伪装成模型数值错误。
+- [x] 不支持的真实 Llama config 在模型执行前给出明确错误。
+- [x] checkpoint parameter 名称不匹配时错误包含 parameter name。
+- [x] tensor shape 不兼容时保留 PyTorch shape 错误和模型来源上下文。
+- [x] Hub 网络或下载失败不伪装成模型数值错误。
 - [x] ModelRunner device/dtype placement 失败不回退到其他 device/dtype。
-- [x] Scheduler `max_model_len` 不得超过模型支持的最大 position；本阶段 loaded-engine
-      fixture 明确保证不超过 checkpoint 的 32-token limit，不在 Scheduler 中引入模型依赖。
+- [x] Scheduler `max_model_len` 不得超过模型支持的最大 position；本阶段各验收 fixture
+      明确保证不超过对应 checkpoint limit，不在 Scheduler 中引入模型依赖。
 
 本阶段不新增一套完整 missing/unexpected/duplicate 状态机；只有真实 checkpoint 暴露
 无法定位的问题时，才以最小改动补充 Loader/Model 的错误上下文。
@@ -330,7 +345,7 @@ Model Loader、Models、Worker、Executor、loaded logits 和 loaded Engine 定�
 
 - [x] `tests/integration/test_loaded_llama.py`：本地 HF-format checkpoint 数值对拍。
 - [x] `tests/integration/test_loaded_llama_engine.py`：loaded model Engine 语义。
-- [ ] `tests/integration/test_hub_llama.py`：显式公开模型测试。
+- [x] `tests/integration/test_hub_llama.py`：显式公开模型测试。
 
 ### 更新
 
@@ -347,7 +362,7 @@ Model Loader、Models、Worker、Executor、loaded logits 和 loaded Engine 定�
 - [x] Worker/Executor 定向测试通过。
 - [x] CPU 非网络测试通过。
 - [x] GPU 非网络测试通过。
-- [ ] 显式公开模型测试通过。
+- [x] 显式公开模型测试通过。
 - [x] 完整默认测试通过，外部模型测试按约定 skip。
 
 ## 13. 建议提交顺序
@@ -390,12 +405,12 @@ ssh aliyun-ecs \
   'cd /root/micro-vllm && .venv/bin/python -m pytest -q'
 ```
 
-- [ ] 记录 Python、PyTorch、Transformers、safetensors 和 huggingface-hub 版本。
-- [ ] 记录公开模型 repo、commit、dtype 和硬件。
+- [x] 记录 Python、PyTorch、Transformers、safetensors 和 huggingface-hub 版本。
+- [x] 记录公开模型 repo、commit、dtype 和硬件。
 - [x] 本地 HF-format checkpoint tests 通过。
 - [x] Worker/Engine integration tests 通过。
 - [x] CPU/GPU 默认测试通过。
-- [ ] 公开 checkpoint 显式测试通过。
+- [x] 公开 checkpoint 显式测试通过。
 - [x] 完整默认测试通过。
 
 ## 15. 完成标准
@@ -407,7 +422,7 @@ ssh aliyun-ecs \
 - [x] loaded model 可通过 Engine 完成 chunked prefill 和多 token decode。
 - [x] greedy token IDs 与 Transformers 逐 token 一致。
 - [x] loaded model 的 prefix cache、preemption 和 block reuse 语义正确。
-- [ ] 至少一个固定 commit 的公开 Llama-family checkpoint 通过 GPU smoke test。
+- [x] 至少一个固定 commit 的公开 Llama-family checkpoint 通过 GPU smoke test。
 - [x] 快速测试不依赖网络，公开模型测试可显式启用。
 - [x] `docs/requirements/v1-core-engine.md` 按实际证据更新。
 

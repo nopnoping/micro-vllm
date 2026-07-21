@@ -117,11 +117,13 @@ models/
 
 - [x] 显式添加 `huggingface-hub` runtime dependency。
 - [x] config 下载前将 revision 解析为 commit hash。
+- [x] 已固定的 40 位 commit SHA 直接使用，不依赖在线 metadata 查询。
 - [x] config 和 checkpoint 使用同一 commit hash。
 - [x] 构造模型前只下载 config。
 - [x] config 校验并构造模型后才下载 checkpoint snapshot。
 - [x] 下载范围限制为 config、index 和标准 safetensors 文件。
 - [x] 支持标准 cache directory 和 token 参数。
+- [x] 支持 `local_files_only`，固定 commit 的已有 cache 可在无网络时加载。
 - [ ] 加入经过确认的内置短名称 alias。
 
 ## 9. Phase 5：模型参数加载
@@ -149,8 +151,11 @@ models/
 
 ## 11. 验证状态
 
-2026-07-21：重构代码与测试已编写。按本轮约定未同步云端、
-未运行 Python 或 pytest；所有 runtime 行为仍待远端验证。
+2026-07-21：Model Loader、Models 和公开 TinyLlama cache 路径已在
+`aliyun-ecs` 验证。固定 commit 首次下载后，`local_files_only=True` 和
+`HF_HUB_OFFLINE=1` 均可从标准共享 cache 重新加载；Hub 网络异常保持原异常类型。
+Model Loader + Models 定向回归为 `79 passed in 1.49s`，完整默认回归为
+`442 passed, 2 skipped in 7.74s`。
 
 允许验证后执行：
 

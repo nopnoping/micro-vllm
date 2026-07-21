@@ -1,5 +1,6 @@
 """Tests for Llama-specific checkpoint parameter semantics."""
 
+import pytest
 import torch
 
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
@@ -82,3 +83,12 @@ def test_llama_load_weights_accepts_lm_head_alias_when_tied() -> None:
         model.embed_tokens.weight,
         expected["embed_tokens.weight"].to(model.embed_tokens.weight.dtype),
     )
+
+
+def test_llama_load_weights_unknown_name_preserves_parameter_name() -> None:
+    model = make_model()
+
+    with pytest.raises(KeyError, match="unexpected.weight"):
+        model.load_weights(
+            [("model.unexpected.weight", torch.zeros(1))]
+        )

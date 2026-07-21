@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -32,6 +33,7 @@ def load_model(
     revision: str | None = None,
     cache_dir: str | Path | None = None,
     token: str | bool | None = None,
+    local_files_only: bool = False,
 ) -> nn.Module:
     """Load one registered model from a local directory or Hugging Face Hub."""
     local_path = _resolve_local_model_path(model_name_or_path)
@@ -52,6 +54,7 @@ def load_model(
             revision=commit_hash,
             cache_dir=cache_dir,
             token=token,
+            local_files_only=local_files_only,
         )
         config = _read_model_config(config_path)
 
@@ -75,11 +78,17 @@ def load_model(
                 revision=commit_hash,
                 cache_dir=cache_dir,
                 token=token,
+                local_files_only=local_files_only,
                 allow_patterns=list(_CHECKPOINT_PATTERNS),
             )
         )
 
-    model.load_weights(SafetensorsCheckpoint(checkpoint_path).iter_tensors())
+    try:
+        model.load_weights(SafetensorsCheckpoint(checkpoint_path).iter_tensors())
+    except RuntimeError as error:
+        raise RuntimeError(
+            f"failed to load model weights from {source_label}: {error}"
+        ) from error
     model.eval()
     return model
 
@@ -118,6 +127,8 @@ def _resolve_hf_commit(
     revision: str | None,
     token: str | bool | None,
 ) -> str:
+    if revision is not None and re.fullmatch(r"[0-9a-f]{40}", revision):
+        return revision
     model_info = HfApi().model_info(
         repo_id,
         revision=revision,

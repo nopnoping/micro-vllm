@@ -13,7 +13,11 @@ from micro_vllm.config import ModelConfig
 from micro_vllm.models.llama import LlamaModel
 
 
-def write_local_model(tmp_path: Path) -> ModelConfig:
+def write_local_model(
+    tmp_path: Path,
+    *,
+    invalid_embedding_shape: bool = False,
+) -> ModelConfig:
     raw_config = {
         "architectures": ["UnknownModel", "LlamaForCausalLM"],
         "vocab_size": 32,
@@ -41,6 +45,11 @@ def write_local_model(tmp_path: Path) -> ModelConfig:
             start=1,
         )
     }
+    if invalid_embedding_shape:
+        tensors["model.embed_tokens.weight"] = torch.zeros(
+            (2, 3),
+            dtype=torch.float16,
+        )
     save_file(tensors, tmp_path / "model.safetensors")
     return config
 
@@ -90,4 +99,17 @@ def test_load_model_adds_source_context_to_model_config_error(
 
     message = str(error_info.value)
     assert "missing required model config field 'hidden_size'" in message
+    assert str(tmp_path) in message
+
+
+def test_load_model_preserves_shape_error_and_adds_source_context(
+    tmp_path: Path,
+) -> None:
+    write_local_model(tmp_path, invalid_embedding_shape=True)
+
+    with pytest.raises(RuntimeError) as error_info:
+        load_model(tmp_path, ReferenceAttentionBackend())
+
+    message = str(error_info.value)
+    assert "size of tensor" in message
     assert str(tmp_path) in message
