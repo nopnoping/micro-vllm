@@ -252,19 +252,21 @@ V1 必须回答以下问题：
 - [x] CPU FP32 reference tests 通过。
 - [x] 单 GPU eager tests 通过。
 
-## 7. V1.4：权重加载、模型覆盖与完整 Sampling（V1.4C 已完成）
+## 7. V1.4：权重加载、模型覆盖与完整 Sampling（V1.4D 进行中）
 
 | 子阶段 | 内容 | 状态 | 技术清单 |
 |---|---|---|---|
 | V1.4A | Safetensors Checkpoint Reader | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
 | V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
 | V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 | [清单](../implementation/v1-real-llama-integration-todo.md) |
-| V1.4D | Qwen dense model 与 checkpoint | 下一阶段 | 待生成 |
+| V1.4D | Qwen dense model 与 checkpoint | 进行中（Phase 0 已完成） | [清单](../implementation/v1-qwen-integration-todo.md) |
 | V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 待实现 | 待生成 |
 
 V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
 验证。V1.4C 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
 SingleProcessExecutor 和 Engine，并完成固定公开 TinyLlama commit 的 GPU/cache 验收。
+V1.4D Phase 0 已固定公开 `Qwen/Qwen3-0.6B` commit，并使用现有 `model` marker
+隔离外部 metadata/checkpoint 测试；模型架构与真实执行尚未完成。
 
 ### 当前模型加载架构
 
