@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.sampling.params import SamplingParams
 
 
 def make_scheduled_request() -> ScheduledRequest:
@@ -15,6 +16,8 @@ def make_scheduled_request() -> ScheduledRequest:
         num_scheduled_tokens=2,
         requires_sampling=True,
         block_table=(0,),
+        sampling_params=SamplingParams(max_tokens=2),
+        sample_index=0,
     )
 
 
@@ -27,6 +30,8 @@ def make_scheduled_request() -> ScheduledRequest:
         ("num_scheduled_tokens", 1),
         ("requires_sampling", False),
         ("block_table", (1,)),
+        ("sampling_params", None),
+        ("sample_index", 1),
     ],
 )
 def test_scheduled_request_is_frozen(field_name: str, new_value: object) -> None:
@@ -63,6 +68,8 @@ def test_original_token_list_does_not_change_plan_snapshot() -> None:
         num_scheduled_tokens=2,
         requires_sampling=True,
         block_table=(0,),
+        sampling_params=SamplingParams(max_tokens=2),
+        sample_index=0,
     )
     input_token_ids[0] = 9
     input_token_ids.append(3)
@@ -98,6 +105,8 @@ def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
         num_scheduled_tokens=1,
         requires_sampling=True,
         block_table=block_table,
+        sampling_params=SamplingParams(max_tokens=1),
+        sample_index=0,
     )
 
     block_table[0] = 9
@@ -105,3 +114,29 @@ def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
 
     assert scheduled_request.block_table == (0, None)
     assert isinstance(scheduled_request.block_table, tuple)
+
+
+def test_sampling_metadata_must_match_sampling_boundary() -> None:
+    params = SamplingParams(max_tokens=1)
+
+    with pytest.raises(ValueError, match="require params and sample_index"):
+        ScheduledRequest("request", (1,), 0, 1, True, (0,))
+    with pytest.raises(ValueError, match="cannot carry sampling metadata"):
+        ScheduledRequest("request", (1,), 0, 1, False, (0,), params, 0)
+
+
+@pytest.mark.parametrize("sample_index", [True, -1, 1.5])
+def test_sampling_boundary_rejects_invalid_sample_index(
+    sample_index: object,
+) -> None:
+    with pytest.raises(ValueError, match="non-negative integer"):
+        ScheduledRequest(
+            "request",
+            (1,),
+            0,
+            1,
+            True,
+            (0,),
+            SamplingParams(max_tokens=1),
+            sample_index,
+        )

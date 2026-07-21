@@ -16,7 +16,7 @@ from micro_vllm.layers.attention_backend import (
     PAD_BLOCK_ID,
     map_cache_slots,
 )
-from micro_vllm.sampling.sampler import GreedySampler
+from micro_vllm.sampling.sampler import Sampler
 from micro_vllm.worker.config import (
     KVCacheInitializationConfig,
     ModelExecutionConfig,
@@ -274,7 +274,7 @@ class ModelRunner:
         self._cache_config: CacheConfig | None = None
         self._available_kv_cache_memory_bytes: int | None = None
         self._peak_activation_memory_bytes = 0
-        self._sampler = GreedySampler()
+        self._sampler = Sampler()
 
     def initialize_model(self) -> ModelConfig:
         """Construct, place, and retain the execution model exactly once."""
@@ -425,7 +425,7 @@ class ModelRunner:
                     input_token_ids=(0,) * num_tokens,
                     num_computed_tokens=0,
                     num_scheduled_tokens=num_tokens,
-                    requires_sampling=True,
+                    requires_sampling=False,
                     block_table=tuple(
                         range(next_block_id, next_block_id + num_blocks)
                     ),
@@ -468,9 +468,12 @@ class ModelRunner:
                 layer_kv_caches,
                 model_input.attention_metadata,
             )
+            sampling_row_indices = (
+                model_input.attention_metadata.query_start_locations[1:] - 1
+            )
             sampling_hidden_states = hidden_states.index_select(
                 0,
-                model_input.sampling_row_indices,
+                sampling_row_indices,
             )
             model.compute_logits(sampling_hidden_states)
 
@@ -543,7 +546,26 @@ class ModelRunner:
             for request in plan.scheduled_requests
             if request.requires_sampling
         )
-        return self._sampler(logits, sampling_request_ids)
+        sampling_params = tuple(
+            request.sampling_params
+            for request in plan.scheduled_requests
+            if request.requires_sampling
+        )
+        sample_indices = tuple(
+            request.sample_index
+            for request in plan.scheduled_requests
+            if request.requires_sampling
+        )
+        if any(params is None for params in sampling_params):
+            raise ValueError("sampling plan is missing sampling params")
+        if any(index is None for index in sample_indices):
+            raise ValueError("sampling plan is missing sample indices")
+        return self._sampler(
+            logits,
+            sampling_request_ids,
+            sampling_params,
+            sample_indices,
+        )
 
     def _build_model_input(self, plan: SchedulerOutput) -> ModelInput:
         cache_config = self._cache_config

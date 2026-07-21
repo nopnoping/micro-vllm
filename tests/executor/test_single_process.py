@@ -5,6 +5,7 @@ import pytest
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
 from micro_vllm.executor.single_process import SingleProcessExecutor
+from micro_vllm.sampling.params import SamplingParams
 
 
 class RecordingWorker:
@@ -33,6 +34,8 @@ def make_plan() -> SchedulerOutput:
                 num_scheduled_tokens=1,
                 requires_sampling=True,
                 block_table=(2,),
+                sampling_params=SamplingParams(max_tokens=1),
+                sample_index=0,
             ),
             ScheduledRequest(
                 request_id="prefill",

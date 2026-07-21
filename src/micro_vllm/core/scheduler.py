@@ -248,6 +248,7 @@ class Scheduler:
             return None
 
         end_computed = num_computed_tokens + num_scheduled_tokens
+        requires_sampling = end_computed == request.num_known_tokens
         return ScheduledRequest(
             request_id=request.request_id,
             input_token_ids=request.all_token_ids[
@@ -255,6 +256,12 @@ class Scheduler:
             ],
             num_computed_tokens=num_computed_tokens,
             num_scheduled_tokens=num_scheduled_tokens,
-            requires_sampling=end_computed == request.num_known_tokens,
+            requires_sampling=requires_sampling,
             block_table=allocation.block_table,
+            sampling_params=(
+                request.sampling_params if requires_sampling else None
+            ),
+            sample_index=(
+                request.num_output_tokens if requires_sampling else None
+            ),
         )

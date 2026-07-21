@@ -118,16 +118,16 @@ output text、output token IDs 和 `FinishReason`。它是 frozen snapshot，不
 
 ## 5. Phase 1：Sampling 快照与算法
 
-- [ ] `ScheduledRequest` 仅在 sampling step 携带 params 和 sample index。
-- [ ] prefix hit、chunked prefill、decode 和 preemption 后 sample index 正确。
-- [ ] warmup plan 不伪造用户 sampling state。
-- [ ] Sampler 按 row 校验 request ID、params 和 sample index 数量。
-- [ ] greedy 与当前 argmax 结果完全一致。
-- [ ] temperature scaling 与 PyTorch reference 对拍。
-- [ ] top-k 保留正确候选集合并处理 `k >= vocab_size`。
-- [ ] top-p 始终保留至少一个 token，并与排序 cumulative reference 对拍。
-- [ ] mixed greedy/stochastic batch 正确采样。
-- [ ] 相同 seed/sample index 结果一致，不同 seed 可产生不同序列。
+- [x] `ScheduledRequest` 仅在 sampling step 携带 params 和 sample index。
+- [x] prefix hit、chunked prefill、decode 和 preemption 后 sample index 正确。
+- [x] warmup plan 不伪造用户 sampling state。
+- [x] Sampler 按 row 校验 request ID、params 和 sample index 数量。
+- [x] greedy 与当前 argmax 结果完全一致。
+- [x] temperature scaling 与 PyTorch reference 对拍。
+- [x] top-k 保留正确候选集合并处理 `k >= vocab_size`。
+- [x] top-p 始终保留至少一个 token，并与排序 cumulative reference 对拍。
+- [x] mixed greedy/stochastic batch 正确采样。
+- [x] 相同 seed/sample index 结果一致，不同 seed 可产生不同序列。
 
 ## 6. Phase 2：Engine 随机语义
 
@@ -206,8 +206,9 @@ ssh aliyun-ecs \
 
 ## 12. 实现状态
 
-2026-07-21 已开始实现并完成 Phase 0。`SamplingParams` 新增 temperature、top-k、
-top-p、seed 和明确的 `is_greedy` 判定，同时保持现有 `max_tokens`/EOS 调用兼容。
-远端 sampling 定向回归为 `45 passed`，完整默认回归为
-`494 passed, 4 skipped`。Phase 1 的 immutable sampling snapshot 与实际 sampling
-算法尚未实现。
+2026-07-21 已完成 Phase 0–1。`SamplingParams` 新增 temperature、top-k、top-p、
+seed 和明确的 `is_greedy` 判定，同时保持现有 `max_tokens`/EOS 调用兼容。
+`ScheduledRequest` 在 sampling boundary 携带 frozen params/sample index；ModelRunner
+使用通用 Sampler 完成 greedy、temperature、top-k 和 top-p，warmup 不伪造用户参数。
+Phase 1 完整默认回归为 `513 passed, 4 skipped`。Phase 2 的跨 Engine batching、
+preemption 和 pending-plan retry 随机语义尚未完成。

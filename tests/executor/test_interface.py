@@ -6,12 +6,22 @@ import pytest
 
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
+from micro_vllm.sampling.params import SamplingParams
 
 
 def make_plan() -> SchedulerOutput:
     return SchedulerOutput(
         (
-            ScheduledRequest("sampling", (1,), 0, 1, True, (0,)),
+            ScheduledRequest(
+                "sampling",
+                (1,),
+                0,
+                1,
+                True,
+                (0,),
+                SamplingParams(max_tokens=1),
+                0,
+            ),
             ScheduledRequest("no-sampling", (2,), 0, 1, False, (1,)),
         )
     )

@@ -171,6 +171,39 @@ def test_long_prompt_is_split_across_multiple_chunks() -> None:
     assert request.output_token_ids == [10]
 
 
+def test_sampling_snapshot_and_index_only_appear_at_sampling_boundary() -> None:
+    scheduler = make_scheduler(2, 1)
+    params = SamplingParams(
+        max_tokens=2,
+        temperature=0.7,
+        top_k=4,
+        top_p=0.8,
+        seed=9,
+    )
+    request = Request("request-1", [1, 2, 3], params)
+    scheduler.add_request(request)
+
+    first_plan = scheduler.schedule()
+    first = first_plan.scheduled_requests[0]
+    assert first.requires_sampling is False
+    assert first.sampling_params is None
+    assert first.sample_index is None
+    scheduler.update(first_plan, ModelRunnerOutput())
+
+    second_plan = scheduler.schedule()
+    second = second_plan.scheduled_requests[0]
+    assert second.requires_sampling is True
+    assert second.sampling_params is params
+    assert second.sample_index == 0
+    scheduler.update(second_plan, make_output({"request-1": 7}))
+
+    third_plan = scheduler.schedule()
+    third = third_plan.scheduled_requests[0]
+    assert third.requires_sampling is True
+    assert third.sampling_params is params
+    assert third.sample_index == 1
+
+
 def test_prompt_chunks_append_blocks_only_when_crossing_boundary() -> None:
     scheduler = make_scheduler(3, 1, block_size=4, num_blocks=4)
     request = make_request("request-1", [1, 2, 3, 4, 5])
@@ -683,6 +716,9 @@ def test_preempted_victim_reenters_from_cached_prefix() -> None:
     assert resumed.request_id == "victim"
     assert resumed.num_computed_tokens == 2
     assert resumed.input_token_ids == (4, 40)
+    assert resumed.requires_sampling is True
+    assert resumed.sampling_params is victim.sampling_params
+    assert resumed.sample_index == 1
     assert victim.status is RequestStatus.RUNNING
 
 

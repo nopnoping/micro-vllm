@@ -8,6 +8,7 @@ import torch
 from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.config import CacheConfig
+from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.model_runner import (
     ModelInput,
     build_block_table,
@@ -127,6 +128,10 @@ def make_scheduled_request(
         num_scheduled_tokens=len(input_token_ids),
         requires_sampling=requires_sampling,
         block_table=(0,),
+        sampling_params=(
+            SamplingParams(max_tokens=1) if requires_sampling else None
+        ),
+        sample_index=0 if requires_sampling else None,
     )
 
 
@@ -260,7 +265,7 @@ def test_slot_mapping_crosses_physical_block_boundary() -> None:
         input_token_ids=(10, 11),
         num_computed_tokens=3,
         num_scheduled_tokens=2,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(2, 5),
     )
 
@@ -281,7 +286,7 @@ def test_slot_mapping_preserves_mixed_request_order() -> None:
         input_token_ids=(10,),
         num_computed_tokens=4,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(0, 3),
     )
     second = ScheduledRequest(
@@ -308,7 +313,7 @@ def test_slot_mapping_rejects_missing_logical_block() -> None:
         input_token_ids=(10,),
         num_computed_tokens=4,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(0,),
     )
 
@@ -326,7 +331,7 @@ def test_slot_mapping_rejects_none_physical_block() -> None:
         input_token_ids=(10,),
         num_computed_tokens=4,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(0, None),
     )
 
@@ -347,7 +352,7 @@ def test_slot_mapping_rejects_out_of_range_physical_block(
         input_token_ids=(10,),
         num_computed_tokens=0,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(physical_block,),
     )
 
@@ -365,7 +370,7 @@ def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
         input_token_ids=(10,),
         num_computed_tokens=7,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(0, 7),
     )
     cache_config = CacheConfig(block_size=4, num_blocks=8)
@@ -386,7 +391,7 @@ def test_slot_mapping_rejects_duplicate_physical_slot() -> None:
         input_token_ids=(10,),
         num_computed_tokens=0,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(2,),
     )
     second = ScheduledRequest(
@@ -394,7 +399,7 @@ def test_slot_mapping_rejects_duplicate_physical_slot() -> None:
         input_token_ids=(20,),
         num_computed_tokens=0,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(2,),
     )
 
@@ -412,7 +417,7 @@ def test_block_table_pads_different_request_lengths() -> None:
         input_token_ids=(10,),
         num_computed_tokens=0,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(2,),
     )
     second = ScheduledRequest(
@@ -420,7 +425,7 @@ def test_block_table_pads_different_request_lengths() -> None:
         input_token_ids=(20,),
         num_computed_tokens=4,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(3, 5, 7),
     )
 
@@ -443,7 +448,7 @@ def test_block_table_encodes_none_as_padding_sentinel() -> None:
         input_token_ids=(10,),
         num_computed_tokens=0,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(2, None),
     )
 
@@ -471,7 +476,7 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
         input_token_ids=(10,),
         num_computed_tokens=0,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(2,),
     )
     second = ScheduledRequest(
@@ -479,7 +484,7 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
         input_token_ids=(20,),
         num_computed_tokens=4,
         num_scheduled_tokens=1,
-        requires_sampling=True,
+        requires_sampling=False,
         block_table=(3, 5),
     )
     plan = SchedulerOutput((first, second))

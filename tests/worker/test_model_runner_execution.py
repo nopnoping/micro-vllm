@@ -9,6 +9,7 @@ from torch.nn import functional as F
 from micro_vllm.config import ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
+from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.config import (
     KVCacheInitializationConfig,
     ModelExecutionConfig,
@@ -125,6 +126,15 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     with pytest.raises(RuntimeError, match="already initialized"):
         runner.initialize_model()
 
+    warmup_plan, _ = runner._make_warmup_plan(model.config)
+    assert warmup_plan.scheduled_requests
+    assert all(
+        not request.requires_sampling
+        and request.sampling_params is None
+        and request.sample_index is None
+        for request in warmup_plan.scheduled_requests
+    )
+
     cache_config = runner.initialize_kv_cache()
     cache = runner._physical_kv_cache
     assert cache_config.num_blocks == 8
@@ -240,6 +250,10 @@ def make_request(
         num_scheduled_tokens=len(input_token_ids),
         requires_sampling=requires_sampling,
         block_table=block_table,
+        sampling_params=(
+            SamplingParams(max_tokens=4) if requires_sampling else None
+        ),
+        sample_index=0 if requires_sampling else None,
     )
 
 

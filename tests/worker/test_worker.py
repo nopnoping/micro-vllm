@@ -8,6 +8,7 @@ from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.llama import LlamaModel
+from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.config import (
     KVCacheInitializationConfig,
     ModelExecutionConfig,
@@ -60,6 +61,8 @@ def make_plan() -> SchedulerOutput:
                 num_scheduled_tokens=2,
                 requires_sampling=True,
                 block_table=(3,),
+                sampling_params=SamplingParams(max_tokens=1),
+                sample_index=0,
             ),
         )
     )
