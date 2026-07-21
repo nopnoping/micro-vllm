@@ -65,6 +65,7 @@ config.py            shared immutable ModelConfig
 models/
     registry.py      static architecture to model-class mapping
     llama.py         architecture and parameter loading
+    qwen.py          Qwen3 architecture and parameter loading
 ```
 
 当前只有本地目录和 Hugging Face Hub 两种直接分支，不定义
@@ -151,11 +152,10 @@ models/
 
 ## 11. 验证状态
 
-2026-07-21：Model Loader、Models 和公开 TinyLlama cache 路径已在
+2026-07-21：Model Loader、Llama/Qwen3 Models 和两个公开 checkpoint cache 路径已在
 `aliyun-ecs` 验证。固定 commit 首次下载后，`local_files_only=True` 和
 `HF_HUB_OFFLINE=1` 均可从标准共享 cache 重新加载；Hub 网络异常保持原异常类型。
-Model Loader + Models 定向回归为 `79 passed in 1.49s`，完整默认回归为
-`442 passed, 2 skipped in 7.74s`。
+V1.4D 完成后的完整默认回归为 `461 passed, 4 skipped in 9.48s`。
 
 允许验证后执行：
 

@@ -7,11 +7,17 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import LlamaConfig, LlamaForCausalLM
+from transformers import (
+    LlamaConfig,
+    LlamaForCausalLM,
+    Qwen3Config,
+    Qwen3ForCausalLM,
+)
 
 
 _MODEL_TEST_ENV = "MICRO_VLLM_TEST_MODEL"
 _TINY_LLAMA_SEED = 0
+_TINY_QWEN3_SEED = 1
 
 
 @pytest.fixture
@@ -42,6 +48,40 @@ def tied_tiny_hf_llama_checkpoint(
         tmp_path / "tied-tiny-llama",
         tie_word_embeddings=True,
     )
+
+
+@pytest.fixture
+def tiny_hf_qwen3_checkpoint(
+    tmp_path: Path,
+) -> tuple[Qwen3ForCausalLM, Path]:
+    """Create one deterministic, single-file HF Qwen3 checkpoint."""
+    checkpoint_path = tmp_path / "tiny-qwen3"
+    config = Qwen3Config(
+        architectures=["Qwen3ForCausalLM"],
+        vocab_size=32,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        max_position_embeddings=32,
+        rms_norm_eps=1e-5,
+        rope_theta=1_000_000.0,
+        hidden_act="silu",
+        tie_word_embeddings=True,
+        attention_bias=False,
+        attention_dropout=0.0,
+        use_sliding_window=False,
+    )
+    with torch.random.fork_rng():
+        torch.manual_seed(_TINY_QWEN3_SEED)
+        reference_model = Qwen3ForCausalLM(config).eval()
+    reference_model.save_pretrained(
+        checkpoint_path,
+        safe_serialization=True,
+    )
+    return reference_model, checkpoint_path
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

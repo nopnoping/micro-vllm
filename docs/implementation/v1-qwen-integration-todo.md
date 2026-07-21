@@ -22,11 +22,11 @@ attention 和 ModelRunner 生命周期；Qwen 专属 config 与参数语义只�
 
 ### 本阶段实现
 
-- [ ] 标准 Hugging Face `Qwen3ForCausalLM` dense 架构。
-- [ ] Qwen3 的显式 head dimension、Q/K RMSNorm 和 tied embedding 参数语义。
-- [ ] 本地生成的 tiny Qwen3 HF-format checkpoint 参数、hidden state、logits 对拍。
-- [ ] loaded Qwen3 经 ModelRunner、Worker、Executor 和 Engine 生成 greedy tokens。
-- [ ] 固定公开 Qwen3-0.6B checkpoint 的 T4 FP16 与离线 cache 验收。
+- [x] 标准 Hugging Face `Qwen3ForCausalLM` dense 架构。
+- [x] Qwen3 的显式 head dimension、Q/K RMSNorm 和 tied embedding 参数语义。
+- [x] 本地生成的 tiny Qwen3 HF-format checkpoint 参数、hidden state、logits 对拍。
+- [x] loaded Qwen3 经 ModelRunner、Worker、Executor 和 Engine 生成 greedy tokens。
+- [x] 固定公开 Qwen3-0.6B checkpoint 的 T4 FP16 与离线 cache 验收。
 
 ### 本阶段不实现
 
@@ -100,56 +100,62 @@ MICRO_VLLM_TEST_MODEL=1 .venv/bin/python -m pytest -q -m model \
 
 ## 5. Phase 1：Qwen3 架构与 Config 语义
 
-- [ ] 增加 Qwen3 attention，Q/K/V/O projections 均服从 config 的无 bias 语义。
-- [ ] projection shape 使用显式 `head_dim`，允许 Q width 不等于 hidden size。
-- [ ] RoPE 前分别对每个 Q/K head 应用 head-dimension RMSNorm。
-- [ ] Qwen3 decoder layer 复用 pre-norm residual 和 SwiGLU 结构。
-- [ ] Qwen3 model 直接读取自身 HF config 字段与默认值。
-- [ ] KV cache shape/bytes 使用显式 `head_dim`，仍只由 ModelRunner 创建和计算。
-- [ ] registry 注册 `Qwen3ForCausalLM`，unsupported 错误同步列出新架构。
-- [ ] tiny config 初始化测试覆盖 projection shape、Q/K norm、层数和 tied identity。
-- [ ] 不在 Worker、ModelRunner、model_loader 中增加 Qwen 分支。
+- [x] 增加 Qwen3 attention，Q/K/V/O projections 均服从 config 的无 bias 语义。
+- [x] projection shape 使用显式 `head_dim`，允许 Q width 不等于 hidden size。
+- [x] RoPE 前分别对每个 Q/K head 应用 head-dimension RMSNorm。
+- [x] Qwen3 decoder layer 复用 pre-norm residual 和 SwiGLU 结构。
+- [x] Qwen3 model 直接读取自身 HF config 字段与默认值。
+- [x] KV cache shape/bytes 使用显式 `head_dim`，仍只由 ModelRunner 创建和计算。
+- [x] registry 注册 `Qwen3ForCausalLM`，unsupported 错误同步列出新架构。
+- [x] tiny config 初始化测试覆盖 projection shape、Q/K norm、层数和 tied identity。
+- [x] 不在 Worker、ModelRunner、model_loader 中增加 Qwen 分支。
 
 ## 6. Phase 2：权重加载与本地 HF 对拍
 
-- [ ] Qwen3 `load_weights()` 映射 `model.*` 参数名和 Q/K norm 参数。
-- [ ] tied checkpoint 中 `lm_head.weight` 映射到 embedding parameter。
-- [ ] 未知参数和 shape mismatch 保留当前原生错误与 source context。
-- [ ] Transformers 生成确定性的 tiny Qwen3 safetensors checkpoint。
-- [ ] 单文件 checkpoint 通过通用 `load_model()` 加载。
-- [ ] loaded parameters、layer output、hidden states 和 logits 与 Transformers 对拍。
-- [ ] CPU FP32 和 T4 FP16 数值容差基于实测记录。
+- [x] Qwen3 `load_weights()` 映射 `model.*` 参数名和 Q/K norm 参数。
+- [x] tied checkpoint 中 `lm_head.weight` 映射到 embedding parameter。
+- [x] 未知参数和 shape mismatch 保留当前原生错误与 source context。
+- [x] Transformers 生成确定性的 tiny Qwen3 safetensors checkpoint。
+- [x] 单文件 checkpoint 通过通用 `load_model()` 加载。
+- [x] loaded parameters、hidden states 和 logits 与 Transformers 对拍。
+- [x] CPU FP32 和 T4 FP16 数值容差基于实测记录。
 
 ## 7. Phase 3：ModelRunner 与 Engine 集成
 
-- [ ] loaded Qwen3 只通过 initializer 进入 ModelRunner。
-- [ ] ModelRunner 完成 placement、warmup/profile、KV 容量推导和 physical allocation。
-- [ ] full prefill、强制 chunked prefill 和多 token decode 与 Transformers 对拍。
-- [ ] mixed batch、prefix cache、preemption/recompute 和 block reuse 语义正确。
-- [ ] finish、abort 和 model-length 终止后无 KV block 泄漏。
+- [x] loaded Qwen3 只通过 initializer 进入 ModelRunner。
+- [x] ModelRunner 完成 placement、warmup/profile、KV 容量推导和 physical allocation。
+- [x] full prefill、强制 chunked prefill 和多 token decode 与 Transformers 对拍。
+- [x] mixed batch、prefix cache、preemption/recompute 和 block reuse 语义正确。
+- [x] finish、abort 和 model-length 终止后无 KV block 泄漏。
 
 ## 8. Phase 4：固定公开 Checkpoint 验收
 
-- [ ] 首次在线下载固定 revision 的 config/checkpoint。
-- [ ] `local_files_only=True` 从共享 cache 完全离线重载。
-- [ ] T4 FP16 sampling-row logits 与 Transformers eager 对拍。
-- [ ] full/chunked Engine greedy token IDs 逐 token 一致。
-- [ ] 记录加载耗时、CPU RSS、GPU peak、warmup activation 和 KV blocks。
-- [ ] Qwen 定向回归、全部非 model 回归和完整默认回归通过。
-- [ ] requirements 按实际远端证据更新，不以 metadata 测试替代真实执行验收。
+- [x] 首次在线下载固定 revision 的 config/checkpoint。
+- [x] `local_files_only=True` 从共享 cache 完全离线重载。
+- [x] T4 FP16 sampling-row logits 与 Transformers eager 对拍。
+- [x] full/chunked Engine greedy token IDs 逐 token 一致。
+- [x] 记录加载耗时、CPU RSS、GPU peak、warmup activation 和 KV blocks。
+- [x] Qwen 定向回归、全部非 model 回归和完整默认回归通过。
+- [x] requirements 按实际远端证据更新，不以 metadata 测试替代真实执行验收。
 
-## 9. Phase 0 验证状态
+## 9. 验证状态
 
-2026-07-21 已通过 `hf-mirror.com` 在 `aliyun-ecs` 查询固定 revision 的 Hub metadata
-和 config，确认公开性、文件布局、架构与配置约束。默认单文件验证为
-`1 passed, 1 skipped`，显式 `model` metadata 验证为 `1 passed, 1 deselected`，完整
-默认回归为 `443 passed, 3 skipped`。尚未下载 Qwen 权重；真实执行留在 Phase 4。
+2026-07-21 已在 `aliyun-ecs` 完成全部阶段。公开 checkpoint 首次在线加载为
+130.099s，完全离线 cache 加载约 6.8s；CPU peak RSS 约 4.85GB，T4 peak allocated
+约 2.515GB，warmup peak activation 为 8,931,840 bytes，可用 KV bytes 为
+12,707,758,796，按显式 128 head dimension 分配 64 blocks。28 层 FP16 sampling-row
+logits 最大绝对误差为 0.0390625，验收容差为 `atol=rtol=5e-2`；full/chunked
+4-token greedy IDs 与 Transformers eager 完全一致。
+
+远端回归结果：Qwen/Models/Worker 定向 `102 passed, 2 skipped`，显式非 model
+`461 passed, 4 deselected`，完整默认 `461 passed, 4 skipped`；公开 Qwen3 在线验收
+`2 passed, 1 deselected`，`HF_HUB_OFFLINE=1` 离线验收 `1 passed`。
 
 ## 10. 完成标准
 
-- [ ] 第二个真实 dense 模型族通过同一 ModelRunner/Engine 路径运行。
-- [ ] Qwen3 head dimension、Q/K norm、tied weights 等专属语义只存在于模型/layer 层。
-- [ ] 本地 tiny Qwen3 和公开固定 Qwen3-0.6B checkpoint 均与 Transformers 对拍。
-- [ ] 普通测试保持无网络，公开 checkpoint 测试保持显式启用。
-- [ ] 不改变 ModelRunner 对模型生命周期、warmup/profile 和 KV cache 的所有权。
-- [ ] `docs/requirements/v1-core-engine.md` 按最终证据更新。
+- [x] 第二个真实 dense 模型族通过同一 ModelRunner/Engine 路径运行。
+- [x] Qwen3 head dimension、Q/K norm、tied weights 等专属语义只存在于模型/layer 层。
+- [x] 本地 tiny Qwen3 和公开固定 Qwen3-0.6B checkpoint 均与 Transformers 对拍。
+- [x] 普通测试保持无网络，公开 checkpoint 测试保持显式启用。
+- [x] 不改变 ModelRunner 对模型生命周期、warmup/profile 和 KV cache 的所有权。
+- [x] `docs/requirements/v1-core-engine.md` 按最终证据更新。

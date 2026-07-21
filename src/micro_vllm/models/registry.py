@@ -8,11 +8,13 @@ from torch import nn
 
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.llama import LlamaModel
+from micro_vllm.models.qwen import Qwen3Model
 
 
 _MODEL_CLASSES = MappingProxyType(
     {
         "LlamaForCausalLM": LlamaModel,
+        "Qwen3ForCausalLM": Qwen3Model,
     }
 )
 

@@ -7,7 +7,10 @@ from micro_vllm.config import CacheConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.config import ModelConfig
 from micro_vllm.worker.config import ModelExecutionConfig
-from micro_vllm.worker.kv_cache import PhysicalKVCache
+from micro_vllm.worker.kv_cache import (
+    PhysicalKVCache,
+    kv_cache_block_size_bytes,
+)
 
 
 def make_model_config() -> ModelConfig:
@@ -48,6 +51,34 @@ def test_cpu_cache_uses_model_cache_and_execution_configuration() -> None:
         assert layer_cache.shape == cache.shape
         assert layer_cache.dtype is cache.dtype
         assert layer_cache.device == cache.device
+
+
+def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
+    model_config = ModelConfig(
+        {
+            "architectures": ["Qwen3ForCausalLM"],
+            "num_hidden_layers": 2,
+            "hidden_size": 16,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "head_dim": 8,
+        }
+    )
+    cache_config = CacheConfig(block_size=4, num_blocks=3)
+    execution_config = ModelExecutionConfig(dtype=torch.float32)
+
+    cache = PhysicalKVCache(
+        cache_config,
+        model_config,
+        execution_config,
+    )
+
+    assert cache.shape == torch.Size((2, 3, 4, 2, 8))
+    assert kv_cache_block_size_bytes(
+        model_config,
+        block_size=4,
+        dtype=torch.float32,
+    ) == 2 * 2 * 4 * 2 * 8 * 4
 
 
 def test_physical_block_id_indexes_the_block_dimension() -> None:

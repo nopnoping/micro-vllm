@@ -252,21 +252,22 @@ V1 必须回答以下问题：
 - [x] CPU FP32 reference tests 通过。
 - [x] 单 GPU eager tests 通过。
 
-## 7. V1.4：权重加载、模型覆盖与完整 Sampling（V1.4D 进行中）
+## 7. V1.4：权重加载、模型覆盖与完整 Sampling（V1.4D 已完成）
 
 | 子阶段 | 内容 | 状态 | 技术清单 |
 |---|---|---|---|
 | V1.4A | Safetensors Checkpoint Reader | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
 | V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
 | V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 | [清单](../implementation/v1-real-llama-integration-todo.md) |
-| V1.4D | Qwen dense model 与 checkpoint | 进行中（Phase 0 已完成） | [清单](../implementation/v1-qwen-integration-todo.md) |
-| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 待实现 | 待生成 |
+| V1.4D | Qwen dense model 与 checkpoint | 已完成 | [清单](../implementation/v1-qwen-integration-todo.md) |
+| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 下一阶段 | 待生成 |
 
 V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
 验证。V1.4C 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
 SingleProcessExecutor 和 Engine，并完成固定公开 TinyLlama commit 的 GPU/cache 验收。
-V1.4D Phase 0 已固定公开 `Qwen/Qwen3-0.6B` commit，并使用现有 `model` marker
-隔离外部 metadata/checkpoint 测试；模型架构与真实执行尚未完成。
+V1.4D 已实现 Qwen3 的显式 head dimension、Q/K RMSNorm、tied weights 和模型专属
+参数加载，并完成本地 tiny checkpoint 与固定公开 `Qwen/Qwen3-0.6B` commit 的
+CPU/GPU、ModelRunner、Engine、在线/离线 cache 对拍。
 
 ### 当前模型加载架构
 
@@ -349,9 +350,9 @@ model name/path
 ### 模型覆盖
 
 - [x] 加载真实 Llama-family dense checkpoint。
-- [ ] 加载真实 Qwen2/Qwen3 dense checkpoint。
-- [ ] Llama 和 Qwen greedy 输出与 Transformers 逐 token 对拍。
-- [ ] 至少两个真实小型模型族完成端到端生成。
+- [x] 加载真实 Qwen3 dense checkpoint。
+- [x] Llama 和 Qwen greedy 输出与 Transformers 逐 token 对拍。
+- [x] 至少两个真实小型模型族完成端到端生成。
 - [x] 本地标准 HF-format GQA Llama checkpoint 经 ModelRunner initializer 加载并完成
       CPU/GPU Engine generation。
 - [x] loaded Llama 的 full/chunked prefill 和多 token greedy decode 与 Transformers
@@ -360,6 +361,8 @@ model name/path
       finish/abort KV 生命周期通过端到端测试。
 - [x] 固定公开 TinyLlama commit 支持首次下载、完全离线 cache 重载、T4 FP16 logits
       对拍、4-token greedy decode 和强制 chunked prefill。
+- [x] 固定公开 Qwen3-0.6B commit 支持首次下载、完全离线 cache 重载、显式
+      128 head dimension 的 T4 FP16 logits 对拍、4-token greedy decode 和 chunked prefill。
 
 ### Sampling 和离线 API
 
@@ -449,7 +452,8 @@ model name/path
 ### 待补测试
 
 - [ ] sliding/chunked-local attention 与 dense reference 对拍。
-- [ ] Qwen 和 Mistral 外部 checkpoint 端到端加载测试。
+- [x] Qwen 外部 checkpoint 端到端加载测试。
+- [ ] Mistral 外部 checkpoint 端到端加载测试。
 
 ### Trace 和指标
 
@@ -479,7 +483,7 @@ model name/path
 
 ## 12. V1 发布验收
 
-- [ ] 单 GPU 可加载至少两个真实的小型 dense 模型族并生成文本。
+- [x] 单 GPU 可加载至少两个真实的小型 dense 模型族并生成 token IDs。
 - [x] decode 与 chunked prefill 在同一个随机 tiny Llama batch 中正确执行。
 - [x] 任意 Scheduler step 严格遵守 token 和 sequence budget。
 - [x] KV 空间不足时能抢占并最终正确完成随机 tiny Llama 请求，无 block 泄漏。

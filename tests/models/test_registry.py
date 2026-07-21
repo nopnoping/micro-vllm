@@ -4,6 +4,7 @@ import pytest
 
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.llama import LlamaModel
+from micro_vllm.models.qwen import Qwen3Model
 from micro_vllm.models.registry import get_model_class
 
 
@@ -15,6 +16,12 @@ def test_registry_uses_first_supported_requested_architecture() -> None:
     assert get_model_class(config, source_label="test-model") is LlamaModel
 
 
+def test_registry_resolves_qwen3_architecture() -> None:
+    config = ModelConfig({"architectures": ["Qwen3ForCausalLM"]})
+
+    assert get_model_class(config, source_label="test-model") is Qwen3Model
+
+
 def test_registry_reports_requested_supported_and_source() -> None:
     config = ModelConfig({"architectures": ["Unknown", "Other"]})
 
@@ -23,5 +30,5 @@ def test_registry_reports_requested_supported_and_source() -> None:
 
     message = str(error_info.value)
     assert "['Unknown', 'Other']" in message
-    assert "['LlamaForCausalLM']" in message
+    assert "['LlamaForCausalLM', 'Qwen3ForCausalLM']" in message
     assert "test-model" in message

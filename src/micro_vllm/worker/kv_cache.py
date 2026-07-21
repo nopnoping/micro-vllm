@@ -15,7 +15,7 @@ def kv_cache_block_size_bytes(
     """Return the physical bytes consumed by one block across all layers."""
 
     num_layers = model_config.require_positive_int("num_hidden_layers")
-    hidden_size = model_config.require_positive_int("hidden_size")
+    head_dim = _model_head_dim(model_config)
     num_attention_heads = model_config.require_positive_int(
         "num_attention_heads"
     )
@@ -23,15 +23,13 @@ def kv_cache_block_size_bytes(
         "num_key_value_heads",
         num_attention_heads,
     )
-    if hidden_size % num_attention_heads != 0:
-        raise ValueError("hidden_size must be divisible by num_attention_heads")
     element_size = torch.empty((), dtype=dtype).element_size()
     return (
         num_layers
         * 2
         * block_size
         * num_key_value_heads
-        * (hidden_size // num_attention_heads)
+        * head_dim
         * element_size
     )
 
@@ -54,7 +52,7 @@ class PhysicalKVCache:
         execution_config: ModelExecutionConfig,
     ) -> None:
         self._num_layers = model_config.require_positive_int("num_hidden_layers")
-        hidden_size = model_config.require_positive_int("hidden_size")
+        head_dim = _model_head_dim(model_config)
         num_attention_heads = model_config.require_positive_int(
             "num_attention_heads"
         )
@@ -68,7 +66,7 @@ class PhysicalKVCache:
                 cache_config.num_blocks,
                 cache_config.block_size,
                 num_key_value_heads,
-                hidden_size // num_attention_heads,
+                head_dim,
             )
         )
         self._dtype = execution_config.dtype
@@ -131,3 +129,15 @@ class PhysicalKVCache:
         """Drop owned tensor references without changing global device state."""
 
         self._layer_caches = ()
+
+
+def _model_head_dim(model_config: ModelConfig) -> int:
+    hidden_size = model_config.require_positive_int("hidden_size")
+    num_attention_heads = model_config.require_positive_int(
+        "num_attention_heads"
+    )
+    if "head_dim" in model_config.values:
+        return model_config.require_positive_int("head_dim")
+    if hidden_size % num_attention_heads != 0:
+        raise ValueError("hidden_size must be divisible by num_attention_heads")
+    return hidden_size // num_attention_heads

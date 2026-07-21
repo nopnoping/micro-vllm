@@ -17,8 +17,8 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=8.0",
-    # Used only to construct reference Llama models for parity tests.
-    "transformers>=4.45,<5",
+    # Used only to construct reference Llama/Qwen models for parity tests.
+    "transformers>=4.51,<5",
 ]
 
 [tool.setuptools.packages.find]
