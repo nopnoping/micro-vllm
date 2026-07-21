@@ -151,19 +151,32 @@ MICRO_VLLM_TEST_MODEL=1 .venv/bin/python -m pytest -q -m model \
 该命令使用测试文件固定的 repo/revision；Phase 5 执行配置固定为
 `device=cuda` 和 `dtype=float16`。
 
-2026-07-21 Phase 0 本地实现完成。按本轮约定未同步云端、未运行
-Python 或 pytest；marker 默认 skip 和外部元数据校验仍待远端验证。
+2026-07-21 Phase 0 远端验证：默认不开启外部模型时为
+`1 passed, 1 skipped in 0.01s`。阿里云 DNS 将 `huggingface.co` 解析到错误 IP，
+官方端点在 60 秒内超时；临时设置 `HF_ENDPOINT=https://hf-mirror.com`
+后显式元数据测试为 `1 passed, 1 deselected in 4.14s`。
 
 ## 6. Phase 1：HF-format Tiny Checkpoint Fixture
 
-- [ ] 使用 Transformers tiny `LlamaConfig` 构造 reference model。
-- [ ] 固定 torch seed 并设置 eval mode。
-- [ ] 使用 `save_pretrained(..., safe_serialization=True)` 写入临时目录。
-- [ ] 保存的 `config.json` 包含受支持 architecture。
-- [ ] checkpoint 使用标准 `model.*` 和 `lm_head.weight` 名称。
-- [ ] fixture 默认生成单文件 checkpoint。
-- [ ] 增加一个强制小 shard size 的多 shard fixture，覆盖 index 路径。
-- [ ] fixture 不使用网络，不写入仓库，不依赖进程外缓存。
+- [x] 使用 Transformers tiny `LlamaConfig` 构造 reference model。
+- [x] 固定 torch seed 并设置 eval mode。
+- [x] 使用 `save_pretrained(..., safe_serialization=True)` 写入临时目录。
+- [x] 保存的 `config.json` 包含受支持 architecture。
+- [x] checkpoint 使用标准 `model.*` 和 `lm_head.weight` 名称。
+- [x] fixture 默认生成单文件 checkpoint。
+- [x] 增加一个强制小 shard size 的多 shard fixture，覆盖 index 路径。
+- [x] fixture 不使用网络，不写入仓库，不依赖进程外缓存。
+
+`tests/conftest.py` 提供 `tiny_hf_llama_checkpoint` 和
+`sharded_tiny_hf_llama_checkpoint`。两者使用相同的 tiny GQA config 和
+seed 0，并使用 `torch.random.fork_rng()` 避免污染其他测试的 RNG 状态。
+分片 fixture 使用 `max_shard_size="5KB"`；所有输出只位于 pytest
+`tmp_path`。
+
+2026-07-21 Phase 1 远端验证：`tests/integration/test_loaded_llama.py` 为
+`3 passed in 0.36s`。同时修复 V1.4B 留下的 Loader 缺失字段错误语义和
+Worker 测试对旧 config 属性的引用，定向测试为 `8 passed in 1.10s`，
+完整默认测试为 `406 passed, 1 skipped in 2.24s`。
 
 ## 7. Phase 2：加载参数与数值对拍
 
@@ -263,7 +276,7 @@ Python 或 pytest；marker 默认 skip 和外部元数据校验仍待远端验�
 - [ ] `tests/worker/test_worker.py`：model injection、placement 和 ownership。
 - [ ] `tests/integration/test_real_model_engine.py`：保留随机模型快速路径并适配新 Worker。
 - [x] `pyproject.toml`：注册外部模型测试 marker。
-- [ ] 必要时更新 `tests/conftest.py`，集中 tiny HF checkpoint fixture。
+- [x] 必要时更新 `tests/conftest.py`，集中 tiny HF checkpoint fixture。
 
 ### 回归要求
 
