@@ -6,20 +6,23 @@ import torch
 from micro_vllm.config import CacheConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
-from micro_vllm.models.llama import LlamaModelConfig
+from micro_vllm.config import ModelConfig
 from micro_vllm.worker.config import ModelExecutionConfig
 from micro_vllm.worker.worker import Worker
 
 
-def make_model_config() -> LlamaModelConfig:
-    return LlamaModelConfig(
-        vocab_size=32,
-        hidden_size=8,
-        intermediate_size=16,
-        num_hidden_layers=2,
-        num_attention_heads=2,
-        num_key_value_heads=1,
-        max_position_embeddings=32,
+def make_model_config() -> ModelConfig:
+    return ModelConfig(
+        {
+            "architectures": ["LlamaForCausalLM"],
+            "vocab_size": 32,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "max_position_embeddings": 32,
+        }
     )
 
 

@@ -19,13 +19,16 @@ opaque behavior.
 ## Architecture Boundaries
 
 - `engine` owns public orchestration and request lifecycle coordination.
+- `config` owns shared immutable configuration contracts.
 - `core` owns device-independent scheduling and logical cache state.
 - `executor` owns execution interfaces and worker lifecycle coordination.
 - `worker` owns device resources and turns execution plans into model runs.
-- `models` owns model assembly and architecture-specific behavior.
+- `models` owns the architecture registry, model assembly, and loading tensor
+  streams into model parameters.
+- `model_loader` owns user model resolution, config file parsing, remote
+  download, checkpoint discovery, tensor iteration, and load orchestration.
 - `layers` owns reusable neural-network layers and execution backends.
 - `sampling` owns sampling configuration and logits-to-token behavior.
-- `weights` owns checkpoint discovery, mapping, and parameter loading.
 
 Enforce these boundaries:
 
@@ -34,6 +37,12 @@ Enforce these boundaries:
   owns logical block allocation, sharing, and release mechanisms.
 - Executors and model runners must not mutate scheduler-owned request state.
 - Models and layers must not allocate, free, or preempt logical cache blocks.
+- Models must not access external config files, model paths, networks, Hub APIs,
+  or checkpoint files.
+- Model loaders must not import concrete models or interpret model-specific
+  config fields.
+- Model loaders must not interpret architecture-specific parameter layouts;
+  they pass tensor streams to the selected model.
 - Workers own physical device tensors; the control plane owns logical IDs and
   lifecycle state.
 - Shared schemas must not import concrete implementations or create dependency

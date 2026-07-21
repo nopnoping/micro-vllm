@@ -10,7 +10,8 @@ from micro_vllm.layers.attention_backend import (
     ReferenceAttentionBackend,
     map_cache_slots,
 )
-from micro_vllm.models.llama import LlamaModel, LlamaModelConfig
+from micro_vllm.config import ModelConfig
+from micro_vllm.models.llama import LlamaModel
 
 
 class RecordingZeroBackend:
@@ -30,8 +31,9 @@ class RecordingZeroBackend:
         return torch.zeros_like(query)
 
 
-def make_config(**overrides: object) -> LlamaModelConfig:
+def make_config(**overrides: object) -> ModelConfig:
     values = {
+        "architectures": ["LlamaForCausalLM"],
         "vocab_size": 32,
         "hidden_size": 16,
         "intermediate_size": 32,
@@ -41,7 +43,7 @@ def make_config(**overrides: object) -> LlamaModelConfig:
         "max_position_embeddings": 32,
     }
     values.update(overrides)
-    return LlamaModelConfig(**values)
+    return ModelConfig(values)
 
 
 def make_metadata(
@@ -70,7 +72,7 @@ def make_metadata(
 
 
 def make_layer_caches(
-    config: LlamaModelConfig,
+    config: ModelConfig,
     *,
     num_blocks: int,
     block_size: int,
@@ -83,29 +85,36 @@ def make_layer_caches(
                 2,
                 num_blocks,
                 block_size,
-                config.num_key_value_heads,
-                config.head_dim,
+                config.positive_int(
+                    "num_key_value_heads",
+                    config.require_positive_int("num_attention_heads"),
+                ),
+                config.require_positive_int("hidden_size")
+                // config.require_positive_int("num_attention_heads"),
             ),
             device=device,
             dtype=dtype,
         )
-        for _ in range(config.num_hidden_layers)
+        for _ in range(config.require_positive_int("num_hidden_layers"))
     )
 
 
-def make_reference_config(config: LlamaModelConfig) -> LlamaConfig:
+def make_reference_config(config: ModelConfig) -> LlamaConfig:
     return LlamaConfig(
-        vocab_size=config.vocab_size,
-        hidden_size=config.hidden_size,
-        intermediate_size=config.intermediate_size,
-        num_hidden_layers=config.num_hidden_layers,
-        num_attention_heads=config.num_attention_heads,
-        num_key_value_heads=config.num_key_value_heads,
-        max_position_embeddings=config.max_position_embeddings,
-        rms_norm_eps=config.rms_norm_eps,
-        rope_theta=config.rope_theta,
-        hidden_act=config.hidden_act,
-        tie_word_embeddings=config.tie_word_embeddings,
+        vocab_size=config.require_positive_int("vocab_size"),
+        hidden_size=config.require_positive_int("hidden_size"),
+        intermediate_size=config.require_positive_int("intermediate_size"),
+        num_hidden_layers=config.require_positive_int("num_hidden_layers"),
+        num_attention_heads=config.require_positive_int("num_attention_heads"),
+        num_key_value_heads=config.positive_int(
+            "num_key_value_heads",
+            config.require_positive_int("num_attention_heads"),
+        ),
+        max_position_embeddings=config.require_positive_int("max_position_embeddings"),
+        rms_norm_eps=float(config.get("rms_norm_eps", 1e-6)),
+        rope_theta=float(config.get("rope_theta", 10_000.0)),
+        hidden_act=config.get("hidden_act", "silu"),
+        tie_word_embeddings=config.get("tie_word_embeddings", False),
         attention_bias=False,
         attention_dropout=0.0,
         mlp_bias=False,
@@ -126,7 +135,7 @@ def map_from_transformers_state_dict(
 
 
 def make_model_pair(
-    config: LlamaModelConfig,
+    config: ModelConfig,
     *,
     device: torch.device | str = "cpu",
     dtype: torch.dtype = torch.float32,
@@ -158,7 +167,9 @@ def test_llama_model_uses_one_physical_cache_per_layer() -> None:
         metadata,
     )
 
-    assert hidden_states.shape == torch.Size((3, config.hidden_size))
+    assert hidden_states.shape == torch.Size(
+        (3, config.require_positive_int("hidden_size"))
+    )
     assert len(backend.layer_caches) == len(layer_caches)
     assert all(
         received is expected
@@ -198,7 +209,9 @@ def test_forward_and_compute_logits_are_separate() -> None:
 
     assert len(lm_head_inputs) == 1
     assert lm_head_inputs[0] is sampling_hidden_states
-    assert logits.shape == torch.Size((2, config.vocab_size))
+    assert logits.shape == torch.Size(
+        (2, config.require_positive_int("vocab_size"))
+    )
 
 
 def test_gqa_tiny_llama_layers_hidden_states_and_logits_match_transformers() -> None:
@@ -368,7 +381,7 @@ def run_batch(
     )
 
 
-def clone_model(model: LlamaModel, config: LlamaModelConfig) -> LlamaModel:
+def clone_model(model: LlamaModel, config: ModelConfig) -> LlamaModel:
     parameter = next(model.parameters())
     clone = LlamaModel(config, ReferenceAttentionBackend()).to(
         device=parameter.device,
@@ -435,7 +448,7 @@ def test_chunked_prefill_last_logits_match_full_prefill_and_transformers() -> No
 @torch.no_grad()
 def incremental_logits(
     model: LlamaModel,
-    config: LlamaModelConfig,
+    config: ModelConfig,
     tokens: tuple[int, ...],
     chunk_sizes: tuple[int, ...],
 ) -> torch.Tensor:

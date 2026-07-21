@@ -14,7 +14,7 @@ from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.executor.single_process import SingleProcessExecutor
-from micro_vllm.models.llama import LlamaModelConfig
+from micro_vllm.config import ModelConfig
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.config import ModelExecutionConfig
 from micro_vllm.worker.worker import Worker
@@ -46,15 +46,18 @@ class RealEngineHarness:
     executor: RecordingSingleProcessExecutor
 
 
-def make_model_config() -> LlamaModelConfig:
-    return LlamaModelConfig(
-        vocab_size=32,
-        hidden_size=16,
-        intermediate_size=32,
-        num_hidden_layers=2,
-        num_attention_heads=4,
-        num_key_value_heads=2,
-        max_position_embeddings=32,
+def make_model_config() -> ModelConfig:
+    return ModelConfig(
+        {
+            "architectures": ["LlamaForCausalLM"],
+            "vocab_size": 32,
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "max_position_embeddings": 32,
+        }
     )
 
 

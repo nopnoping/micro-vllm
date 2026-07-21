@@ -3,7 +3,7 @@
 import torch
 
 from micro_vllm.config import CacheConfig
-from micro_vllm.models.llama import LlamaModelConfig
+from micro_vllm.config import ModelConfig
 from micro_vllm.worker.config import ModelExecutionConfig
 
 
@@ -21,17 +21,25 @@ class PhysicalKVCache:
     def __init__(
         self,
         cache_config: CacheConfig,
-        model_config: LlamaModelConfig,
+        model_config: ModelConfig,
         execution_config: ModelExecutionConfig,
     ) -> None:
-        self._num_layers = model_config.num_hidden_layers
+        self._num_layers = model_config.require_positive_int("num_hidden_layers")
+        hidden_size = model_config.require_positive_int("hidden_size")
+        num_attention_heads = model_config.require_positive_int(
+            "num_attention_heads"
+        )
+        num_key_value_heads = model_config.positive_int(
+            "num_key_value_heads",
+            num_attention_heads,
+        )
         self._shape = torch.Size(
             (
                 2,
                 cache_config.num_blocks,
                 cache_config.block_size,
-                model_config.num_key_value_heads,
-                model_config.head_dim,
+                num_key_value_heads,
+                hidden_size // num_attention_heads,
             )
         )
         self._dtype = execution_config.dtype

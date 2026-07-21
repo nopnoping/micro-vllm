@@ -9,8 +9,8 @@ import torch
 from safetensors import SafetensorError, safe_open
 from safetensors.torch import save_file
 
-import micro_vllm.weights.source as source_module
-from micro_vllm.weights import SafetensorsSource
+import micro_vllm.model_loader.checkpoint as checkpoint_module
+from micro_vllm.model_loader.checkpoint import SafetensorsCheckpoint
 
 
 def write_index(model_path: Path, weight_map: object) -> Path:
@@ -49,7 +49,7 @@ def test_source_rejects_missing_model_directory(tmp_path: Path) -> None:
     model_path = tmp_path / "missing"
 
     with pytest.raises(FileNotFoundError, match=str(model_path)):
-        SafetensorsSource(model_path)
+        SafetensorsCheckpoint(model_path)
 
 
 def test_source_rejects_model_path_that_is_not_a_directory(tmp_path: Path) -> None:
@@ -57,19 +57,19 @@ def test_source_rejects_model_path_that_is_not_a_directory(tmp_path: Path) -> No
     model_path.touch()
 
     with pytest.raises(ValueError, match="model path must be a directory"):
-        SafetensorsSource(model_path)
+        SafetensorsCheckpoint(model_path)
 
 
 def test_source_rejects_model_directory_without_checkpoint(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=str(tmp_path)):
-        SafetensorsSource(tmp_path)
+        SafetensorsCheckpoint(tmp_path)
 
 
 def test_source_discovers_single_file_without_opening_it(tmp_path: Path) -> None:
     checkpoint_path = tmp_path / "model.safetensors"
     checkpoint_path.write_bytes(b"not opened during discovery")
 
-    source = SafetensorsSource(tmp_path / ".")
+    source = SafetensorsCheckpoint(tmp_path / ".")
 
     assert source.model_path == tmp_path.resolve()
     assert len(source._shards) == 1
@@ -94,7 +94,7 @@ def test_source_discovers_sharded_index_in_deterministic_order(
         },
     )
 
-    source = SafetensorsSource(tmp_path)
+    source = SafetensorsCheckpoint(tmp_path)
 
     assert tuple(shard.path for shard in source._shards) == (
         first_shard.resolve(),
@@ -113,7 +113,7 @@ def test_source_rejects_ambiguous_checkpoint_layout(tmp_path: Path) -> None:
     write_index(tmp_path, {"weight": "shard.safetensors"})
 
     with pytest.raises(ValueError, match="ambiguous safetensors checkpoint layout"):
-        SafetensorsSource(tmp_path)
+        SafetensorsCheckpoint(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -139,7 +139,7 @@ def test_source_rejects_invalid_index_schema(
     )
 
     with pytest.raises(ValueError, match=message):
-        SafetensorsSource(tmp_path)
+        SafetensorsCheckpoint(tmp_path)
 
 
 def test_source_rejects_duplicate_weight_definition(tmp_path: Path) -> None:
@@ -151,7 +151,7 @@ def test_source_rejects_duplicate_weight_definition(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="duplicate JSON key 'weight'"):
-        SafetensorsSource(tmp_path)
+        SafetensorsCheckpoint(tmp_path)
 
 
 def test_source_rejects_missing_shard(tmp_path: Path) -> None:
@@ -161,7 +161,7 @@ def test_source_rejects_missing_shard(tmp_path: Path) -> None:
         FileNotFoundError,
         match=r"model\.weight.*missing\.safetensors",
     ):
-        SafetensorsSource(tmp_path)
+        SafetensorsCheckpoint(tmp_path)
 
 
 @pytest.mark.parametrize("path_kind", ["relative", "absolute"])
@@ -179,7 +179,7 @@ def test_source_rejects_shard_outside_model_directory(
     write_index(tmp_path, {"model.weight": shard_filename})
 
     with pytest.raises(ValueError, match="model directory"):
-        SafetensorsSource(tmp_path)
+        SafetensorsCheckpoint(tmp_path)
 
 
 def test_source_rejects_shard_that_is_not_a_file(tmp_path: Path) -> None:
@@ -188,7 +188,7 @@ def test_source_rejects_shard_that_is_not_a_file(tmp_path: Path) -> None:
     write_index(tmp_path, {"model.weight": shard_path.name})
 
     with pytest.raises(ValueError, match="is not a file"):
-        SafetensorsSource(tmp_path)
+        SafetensorsCheckpoint(tmp_path)
 
 
 def test_single_file_iteration_is_deterministic_and_preserves_tensors(
@@ -201,7 +201,7 @@ def test_single_file_iteration_is_deterministic_and_preserves_tensors(
     }
     save_tensors(checkpoint_path, expected)
 
-    actual = list(SafetensorsSource(tmp_path).iter_tensors())
+    actual = list(SafetensorsCheckpoint(tmp_path).iter_tensors())
 
     assert [name for name, _ in actual] == ["model.a_weight", "model.z_weight"]
     for name, tensor in actual:
@@ -216,7 +216,7 @@ def test_single_file_iteration_restarts_for_each_iterator(tmp_path: Path) -> Non
         tmp_path / "model.safetensors",
         {"weight": torch.tensor([1.0])},
     )
-    source = SafetensorsSource(tmp_path)
+    source = SafetensorsCheckpoint(tmp_path)
 
     first = list(source.iter_tensors())
     second = list(source.iter_tensors())
@@ -230,7 +230,7 @@ def test_single_file_iteration_rejects_empty_checkpoint(tmp_path: Path) -> None:
     save_tensors(tmp_path / "model.safetensors", {})
 
     with pytest.raises(ValueError, match=r"checkpoint is empty.*model\.safetensors"):
-        list(SafetensorsSource(tmp_path).iter_tensors())
+        list(SafetensorsCheckpoint(tmp_path).iter_tensors())
 
 
 def test_sharded_iteration_uses_sorted_shards_and_weight_names(
@@ -257,7 +257,7 @@ def test_sharded_iteration_uses_sorted_shards_and_weight_names(
         },
     )
 
-    actual = list(SafetensorsSource(tmp_path).iter_tensors())
+    actual = list(SafetensorsCheckpoint(tmp_path).iter_tensors())
 
     assert [name for name, _ in actual] == ["model.a", "model.b", "model.c"]
     assert len({name for name, _ in actual}) == len(actual)
@@ -277,7 +277,7 @@ def test_sharded_iteration_rejects_missing_declared_weight(tmp_path: Path) -> No
         ValueError,
         match=r"shard\.safetensors.*missing weights \['missing'\]",
     ):
-        list(SafetensorsSource(tmp_path).iter_tensors())
+        list(SafetensorsCheckpoint(tmp_path).iter_tensors())
 
 
 def test_sharded_iteration_rejects_unexpected_weight(tmp_path: Path) -> None:
@@ -292,7 +292,7 @@ def test_sharded_iteration_rejects_unexpected_weight(tmp_path: Path) -> None:
         ValueError,
         match=r"shard\.safetensors.*unexpected weights \['extra'\]",
     ):
-        list(SafetensorsSource(tmp_path).iter_tensors())
+        list(SafetensorsCheckpoint(tmp_path).iter_tensors())
 
 
 def test_sharded_iteration_opens_only_one_shard_at_a_time(
@@ -308,9 +308,9 @@ def test_sharded_iteration_opens_only_one_shard_at_a_time(
         {"second": second_shard.name, "first": first_shard.name},
     )
     tracker = OpenTracker()
-    monkeypatch.setattr(source_module, "safe_open", tracker.safe_open)
+    monkeypatch.setattr(checkpoint_module, "safe_open", tracker.safe_open)
 
-    names = [name for name, _ in SafetensorsSource(tmp_path).iter_tensors()]
+    names = [name for name, _ in SafetensorsCheckpoint(tmp_path).iter_tensors()]
 
     assert names == ["first", "second"]
     assert tracker.maximum_open == 1
@@ -332,8 +332,8 @@ def test_closing_partial_iterator_closes_current_shard(
         {"first": torch.tensor([1.0]), "second": torch.tensor([2.0])},
     )
     tracker = OpenTracker()
-    monkeypatch.setattr(source_module, "safe_open", tracker.safe_open)
-    iterator = SafetensorsSource(tmp_path).iter_tensors()
+    monkeypatch.setattr(checkpoint_module, "safe_open", tracker.safe_open)
+    iterator = SafetensorsCheckpoint(tmp_path).iter_tensors()
 
     assert next(iterator)[0] == "first"
     assert tracker.currently_open == 1
@@ -359,10 +359,10 @@ def test_later_shard_read_failure_closes_each_context(
         {"second": second_shard.name, "first": first_shard.name},
     )
     tracker = OpenTracker(fail_on_filename=second_shard.name)
-    monkeypatch.setattr(source_module, "safe_open", tracker.safe_open)
+    monkeypatch.setattr(checkpoint_module, "safe_open", tracker.safe_open)
 
     with pytest.raises(RuntimeError, match="simulated tensor read failure"):
-        list(SafetensorsSource(tmp_path).iter_tensors())
+        list(SafetensorsCheckpoint(tmp_path).iter_tensors())
 
     assert tracker.currently_open == 0
     assert tracker.maximum_open == 1
@@ -381,13 +381,13 @@ def test_iteration_wraps_corrupt_checkpoint_with_original_cause(
     checkpoint_path = tmp_path / "model.safetensors"
     checkpoint_path.write_bytes(b"invalid safetensors")
     tracker = OpenTracker()
-    monkeypatch.setattr(source_module, "safe_open", tracker.safe_open)
+    monkeypatch.setattr(checkpoint_module, "safe_open", tracker.safe_open)
 
     with pytest.raises(
         ValueError,
         match=r"failed to read safetensors shard.*model\.safetensors",
     ) as exc_info:
-        list(SafetensorsSource(tmp_path).iter_tensors())
+        list(SafetensorsCheckpoint(tmp_path).iter_tensors())
 
     assert isinstance(exc_info.value.__cause__, SafetensorError)
     assert tracker.currently_open == 0
@@ -400,7 +400,7 @@ def test_iteration_wraps_corrupt_checkpoint_with_original_cause(
 def test_new_iterator_can_retry_after_failure(tmp_path: Path) -> None:
     checkpoint_path = tmp_path / "model.safetensors"
     checkpoint_path.write_bytes(b"invalid safetensors")
-    source = SafetensorsSource(tmp_path)
+    source = SafetensorsCheckpoint(tmp_path)
 
     with pytest.raises(ValueError, match="failed to read safetensors shard"):
         list(source.iter_tensors())
@@ -415,7 +415,7 @@ def test_new_iterator_can_retry_after_failure(tmp_path: Path) -> None:
 def test_iteration_reports_shard_removed_after_discovery(tmp_path: Path) -> None:
     checkpoint_path = tmp_path / "model.safetensors"
     save_tensors(checkpoint_path, {"weight": torch.tensor([1.0])})
-    source = SafetensorsSource(tmp_path)
+    source = SafetensorsCheckpoint(tmp_path)
     checkpoint_path.unlink()
 
     with pytest.raises(
@@ -433,13 +433,13 @@ def test_index_mismatch_closes_current_shard(
     save_tensors(shard_path, {"actual": torch.tensor([1.0])})
     write_index(tmp_path, {"declared": shard_path.name})
     tracker = OpenTracker()
-    monkeypatch.setattr(source_module, "safe_open", tracker.safe_open)
+    monkeypatch.setattr(checkpoint_module, "safe_open", tracker.safe_open)
 
     with pytest.raises(
         ValueError,
         match=r"shard\.safetensors.*missing weights.*unexpected weights",
     ):
-        list(SafetensorsSource(tmp_path).iter_tensors())
+        list(SafetensorsCheckpoint(tmp_path).iter_tensors())
 
     assert tracker.currently_open == 0
     assert tracker.events == [

@@ -1,6 +1,53 @@
 """Top-level configuration objects shared across micro-vLLM components."""
 
+from __future__ import annotations
+
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ModelConfig:
+    """Read-only model metadata shared by every registered architecture."""
+
+    _values: Mapping[str, object]
+    architectures: tuple[str, ...]
+
+    def __init__(self, values: Mapping[str, object]) -> None:
+        copied_values = dict(values)
+        architectures = copied_values.get("architectures")
+        if not isinstance(architectures, list) or not architectures:
+            raise ValueError("architectures must be a non-empty list")
+        for index, architecture in enumerate(architectures):
+            if not isinstance(architecture, str) or not architecture.strip():
+                raise ValueError(
+                    f"architecture at index {index} must be a non-empty string"
+                )
+
+        object.__setattr__(self, "_values", MappingProxyType(copied_values))
+        object.__setattr__(self, "architectures", tuple(architectures))
+
+    @property
+    def values(self) -> Mapping[str, object]:
+        return self._values
+
+    def get(self, name: str, default: object = None) -> object:
+        return self._values.get(name, default)
+
+    def require_positive_int(self, name: str) -> int:
+        if name not in self._values:
+            raise ValueError(f"missing required model config field {name!r}")
+        value = self._values[name]
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+        return value
+
+    def positive_int(self, name: str, default: int) -> int:
+        value = self._values.get(name, default)
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+        return value
 
 
 @dataclass(frozen=True, slots=True)

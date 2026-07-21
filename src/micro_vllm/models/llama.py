@@ -1,6 +1,8 @@
-"""Llama-family model configuration and assembly."""
+"""Llama-family architecture and parameter loading."""
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from collections.abc import Iterable
 
 import torch
 from torch import nn
@@ -13,65 +15,7 @@ from micro_vllm.layers.attention_backend import (
 from micro_vllm.layers.embedding import LMHead, TokenEmbedding
 from micro_vllm.layers.mlp import SwiGLUMLP
 from micro_vllm.layers.normalization import RMSNorm
-
-
-@dataclass(frozen=True, slots=True)
-class LlamaModelConfig:
-    """Minimal architecture contract for the V1 dense Llama model."""
-
-    vocab_size: int
-    hidden_size: int
-    intermediate_size: int
-    num_hidden_layers: int
-    num_attention_heads: int
-    num_key_value_heads: int
-    max_position_embeddings: int
-    rms_norm_eps: float = 1e-6
-    rope_theta: float = 10_000.0
-    hidden_act: str = "silu"
-    tie_word_embeddings: bool = False
-
-    def __post_init__(self) -> None:
-        for field_name in (
-            "vocab_size",
-            "hidden_size",
-            "intermediate_size",
-            "num_hidden_layers",
-            "num_attention_heads",
-            "num_key_value_heads",
-            "max_position_embeddings",
-        ):
-            if getattr(self, field_name) <= 0:
-                raise ValueError(f"{field_name} must be greater than zero")
-
-        if self.hidden_size % self.num_attention_heads != 0:
-            raise ValueError(
-                "hidden_size must be divisible by num_attention_heads"
-            )
-        if self.num_attention_heads % self.num_key_value_heads != 0:
-            raise ValueError(
-                "num_attention_heads must be divisible by num_key_value_heads"
-            )
-        if self.head_dim % 2 != 0:
-            raise ValueError("attention head_dim must be even for rotary embedding")
-        if self.rms_norm_eps <= 0:
-            raise ValueError("rms_norm_eps must be greater than zero")
-        if self.rope_theta <= 0:
-            raise ValueError("rope_theta must be greater than zero")
-        if self.hidden_act != "silu":
-            raise ValueError("hidden_act must be 'silu' for the V1 Llama model")
-
-    @property
-    def head_dim(self) -> int:
-        """Per-head hidden dimension."""
-
-        return self.hidden_size // self.num_attention_heads
-
-    @property
-    def num_query_heads_per_kv_head(self) -> int:
-        """Number of query heads sharing each key/value head."""
-
-        return self.num_attention_heads // self.num_key_value_heads
+from micro_vllm.config import ModelConfig
 
 
 class LlamaDecoderLayer(nn.Module):
@@ -79,28 +23,34 @@ class LlamaDecoderLayer(nn.Module):
 
     def __init__(
         self,
-        config: LlamaModelConfig,
+        *,
+        hidden_size: int,
+        intermediate_size: int,
+        num_attention_heads: int,
+        num_key_value_heads: int,
+        rope_theta: float,
+        rms_norm_eps: float,
         attention_backend: AttentionBackend,
     ) -> None:
         super().__init__()
         self.self_attn = LlamaAttention(
-            hidden_size=config.hidden_size,
-            num_attention_heads=config.num_attention_heads,
-            num_key_value_heads=config.num_key_value_heads,
-            rope_theta=config.rope_theta,
+            hidden_size=hidden_size,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            rope_theta=rope_theta,
             backend=attention_backend,
         )
         self.mlp = SwiGLUMLP(
-            config.hidden_size,
-            config.intermediate_size,
+            hidden_size,
+            intermediate_size,
         )
         self.input_layernorm = RMSNorm(
-            config.hidden_size,
-            eps=config.rms_norm_eps,
+            hidden_size,
+            eps=rms_norm_eps,
         )
         self.post_attention_layernorm = RMSNorm(
-            config.hidden_size,
-            eps=config.rms_norm_eps,
+            hidden_size,
+            eps=rms_norm_eps,
         )
 
     def forward(
@@ -131,22 +81,44 @@ class LlamaModel(nn.Module):
 
     def __init__(
         self,
-        config: LlamaModelConfig,
+        config: ModelConfig,
         attention_backend: AttentionBackend,
     ) -> None:
         super().__init__()
-        self.config = config
-        self.embed_tokens = TokenEmbedding(config.vocab_size, config.hidden_size)
-        self.layers = nn.ModuleList(
-            LlamaDecoderLayer(config, attention_backend)
-            for _ in range(config.num_hidden_layers)
+        values = config.values
+        vocab_size = values["vocab_size"]
+        hidden_size = values["hidden_size"]
+        intermediate_size = values["intermediate_size"]
+        num_hidden_layers = values["num_hidden_layers"]
+        num_attention_heads = values["num_attention_heads"]
+        num_key_value_heads = values.get(
+            "num_key_value_heads",
+            num_attention_heads,
         )
-        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        rms_norm_eps = values.get("rms_norm_eps", 1e-6)
+        rope_theta = values.get("rope_theta", 10_000.0)
+        self._tie_word_embeddings = values.get("tie_word_embeddings", False)
+
+        self.config = config
+        self.embed_tokens = TokenEmbedding(vocab_size, hidden_size)
+        self.layers = nn.ModuleList(
+            LlamaDecoderLayer(
+                hidden_size=hidden_size,
+                intermediate_size=intermediate_size,
+                num_attention_heads=num_attention_heads,
+                num_key_value_heads=num_key_value_heads,
+                rope_theta=rope_theta,
+                rms_norm_eps=rms_norm_eps,
+                attention_backend=attention_backend,
+            )
+            for _ in range(num_hidden_layers)
+        )
+        self.norm = RMSNorm(hidden_size, eps=rms_norm_eps)
         self.lm_head = LMHead(
-            config.hidden_size,
-            config.vocab_size,
+            hidden_size,
+            vocab_size,
             tied_embedding=(
-                self.embed_tokens if config.tie_word_embeddings else None
+                self.embed_tokens if self._tie_word_embeddings else None
             ),
         )
         self.eval()
@@ -172,3 +144,32 @@ class LlamaModel(nn.Module):
         """Compute logits only for hidden-state rows selected by the caller."""
 
         return self.lm_head(hidden_states)
+
+    def load_weights(
+        self,
+        weights: Iterable[tuple[str, torch.Tensor]],
+    ) -> None:
+        """Copy checkpoint tensors directly into model parameters."""
+        parameters = dict(self.named_parameters())
+
+        with torch.no_grad():
+            for checkpoint_name, checkpoint_tensor in weights:
+                parameter_name = _llama_parameter_name(
+                    checkpoint_name,
+                    tied_embeddings=self._tie_word_embeddings,
+                )
+                parameters[parameter_name].copy_(checkpoint_tensor)
+
+
+def _llama_parameter_name(
+    checkpoint_name: str,
+    *,
+    tied_embeddings: bool,
+) -> str:
+    if checkpoint_name.startswith("model."):
+        parameter_name = checkpoint_name.removeprefix("model.")
+    else:
+        parameter_name = checkpoint_name
+    if tied_embeddings and parameter_name == "lm_head.weight":
+        return "embed_tokens.weight"
+    return parameter_name

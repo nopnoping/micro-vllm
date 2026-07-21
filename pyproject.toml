@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "A small, educational vLLM implementation."
 requires-python = ">=3.10"
 dependencies = [
+    "huggingface-hub>=0.26,<2",
     "safetensors>=0.4,<1",
     # Validated on the remote Tesla T4 baseline with PyTorch 2.8.x.
     "torch>=2.4,<2.9",

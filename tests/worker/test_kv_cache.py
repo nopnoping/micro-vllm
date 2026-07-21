@@ -5,20 +5,23 @@ import torch
 
 from micro_vllm.config import CacheConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
-from micro_vllm.models.llama import LlamaModelConfig
+from micro_vllm.config import ModelConfig
 from micro_vllm.worker.config import ModelExecutionConfig
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 
 
-def make_model_config() -> LlamaModelConfig:
-    return LlamaModelConfig(
-        vocab_size=256,
-        hidden_size=64,
-        intermediate_size=128,
-        num_hidden_layers=2,
-        num_attention_heads=4,
-        num_key_value_heads=2,
-        max_position_embeddings=128,
+def make_model_config() -> ModelConfig:
+    return ModelConfig(
+        {
+            "architectures": ["LlamaForCausalLM"],
+            "vocab_size": 256,
+            "hidden_size": 64,
+            "intermediate_size": 128,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "max_position_embeddings": 128,
+        }
     )
 
 

@@ -3,7 +3,7 @@
 ## 1. 目标
 
 实现本地 Hugging Face safetensors checkpoint 的最小读取链路，为后续
-Model Registry、参数映射和真实模型加载提供稳定的 tensor source：
+Model Loader、参数映射和真实模型加载提供稳定的 tensor source：
 
 ```text
 local model directory
@@ -33,7 +33,7 @@ local model directory
 
 - Hugging Face Hub 下载、缓存、revision 或鉴权。
 - PyTorch `.bin`、GGUF 或其他 checkpoint 格式。
-- `config.json` 解析和 Model Registry。
+- `config.json` 解析和 architecture 选择。
 - checkpoint 名称到模型参数名称的映射。
 - 参数复制、dtype/device 转换或模型初始化。
 - tied embedding、packed QKV、packed gate/up 的加载语义。
@@ -70,12 +70,12 @@ local model directory
 
 ## 4. 最小接口
 
-目标模块：`src/micro_vllm/weights/source.py`。
+目标模块现为：`src/micro_vllm/model_loader/checkpoint.py`。
 
 首版只暴露一个具体 safetensors source，不预先定义多格式抽象基类。建议接口：
 
 ```python
-class SafetensorsSource:
+class SafetensorsCheckpoint:
     def __init__(self, model_path: str | Path) -> None: ...
 
     def iter_tensors(self) -> Iterator[tuple[str, torch.Tensor]]: ...
@@ -92,7 +92,7 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 - [x] 返回名称使用 checkpoint 原始名称，不做模型侧重命名。
 - [x] 返回 tensor 位于 CPU，dtype 和 shape 与文件一致。
 - [x] 不暴露 safetensors 内部 file handle。
-- [x] `weights/__init__.py` 只导出经过测试的公共入口。
+- [x] checkpoint reader 保持为 `model_loader` 内部实现。
 
 ## 5. Phase 0：依赖和测试基线
 
@@ -105,7 +105,7 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 
 ### 测试目录
 
-- [x] 新建 `tests/weights/test_source.py`。
+- [x] 新建 `tests/model_loader/test_checkpoint.py`。
 - [x] 测试使用临时目录生成 tiny safetensors，不依赖网络和外部模型。
 - [x] 测试 tensor 足够小，不把 checkpoint IO 测试变成性能测试。
 - [x] 记录开始实现前的远端完整测试基线。
@@ -186,9 +186,9 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 2026-07-20 Phase 3 远端验证：定向测试 `32 passed in 1.91s`，完整测试
 `377 passed in 6.50s`。
 
-不要求 source 检查模型参数层面的 missing、unexpected 或 shape mismatch；这些属于
-下一阶段 parameter loader。这里的 missing/unexpected 只描述 index 与 safetensors
-文件内容不一致。
+不要求 source 或 model loader 汇总模型参数层面的 missing、unexpected 或 shape
+mismatch；模型按名称直接复制参数。这里的 missing/unexpected 只描述 index 与
+safetensors 文件内容不一致。
 
 ## 9. 测试清单
 
@@ -242,7 +242,7 @@ shard 对应的 weight names；该类型不作为公共扩展协议。
 6. `docs: complete checkpoint source milestone`
 
 提交不是强制按文件拆分；紧密耦合且无法独立验证的 discovery 与 iteration 改动可以
-合并，但不在同一提交中加入 Model Registry 或 parameter loader。
+合并，但不在同一提交中加入 Model Loader 或 parameter loader。
 
 ## 11. 远端验证
 
@@ -259,7 +259,8 @@ rsync -az \
 
 ```bash
 ssh aliyun-ecs \
-  'cd /root/micro-vllm && .venv/bin/python -m pytest -q tests/weights/test_source.py'
+  'cd /root/micro-vllm && \
+   .venv/bin/python -m pytest -q tests/model_loader/test_checkpoint.py'
 ssh aliyun-ecs \
   'cd /root/micro-vllm && .venv/bin/python -m pytest -q -m "not gpu"'
 ssh aliyun-ecs \
@@ -291,6 +292,5 @@ CPU 测试 `370 passed, 7 deselected in 5.83s`；GPU 测试
 - [x] 定向、CPU、GPU 和完整远端测试全部通过。
 - [x] `docs/requirements/v1-core-engine.md` 中对应完成项按证据更新。
 
-完成后下一阶段进入 V1.4B：HF `config.json` 解析、最小 Model Registry 和
-Llama model factory；随后 V1.4C 实现 parameter loader 并打通真实 Llama
-checkpoint。
+完成后下一阶段进入 V1.4B：Model Loader、HF `config.json` 解析和
+Llama 参数加载。

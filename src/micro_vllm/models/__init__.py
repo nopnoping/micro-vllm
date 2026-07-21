@@ -1,5 +1,3 @@
-"""Supported model architectures and model registration."""
+"""Supported model architectures and registration."""
 
-from micro_vllm.models.llama import LlamaModelConfig
-
-__all__ = ("LlamaModelConfig",)
+__all__ = ()

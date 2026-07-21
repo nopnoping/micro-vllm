@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from micro_vllm.config import CacheConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
-from micro_vllm.models.llama import LlamaModelConfig
+from micro_vllm.config import ModelConfig
 from micro_vllm.worker.config import ModelExecutionConfig
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 from micro_vllm.worker.model_runner import ModelRunner
@@ -48,14 +48,17 @@ def make_runner() -> tuple[ModelRunner, FakeModel, PhysicalKVCache]:
     dtype = torch.float32
     cache = PhysicalKVCache(
         CacheConfig(block_size=2, num_blocks=8),
-        LlamaModelConfig(
-            vocab_size=64,
-            hidden_size=8,
-            intermediate_size=16,
-            num_hidden_layers=2,
-            num_attention_heads=2,
-            num_key_value_heads=1,
-            max_position_embeddings=32,
+        ModelConfig(
+            {
+                "architectures": ["LlamaForCausalLM"],
+                "vocab_size": 64,
+                "hidden_size": 8,
+                "intermediate_size": 16,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 1,
+                "max_position_embeddings": 32,
+            }
         ),
         ModelExecutionConfig(device=device, dtype=dtype),
     )

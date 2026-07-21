@@ -112,7 +112,7 @@ V6 首版不从 cross-attention 架构开始，以免同时引入 encoder KV cac
 
 ## 8. 模型与权重加载
 
-- [ ] Model Registry 支持至少一个 LLaVA 风格模型。
+- [ ] Model Loader 支持至少一个 LLaVA 风格模型。
 - [ ] config adapter 能找到 text config、vision config 和 projector config。
 - [ ] safetensors loader 支持 vision、projector 和 language model 参数前缀映射。
 - [ ] 支持独立或组合 checkpoint 的明确一种形式。

@@ -1,10 +1,13 @@
 """Device resource, model, and physical KV-cache ownership."""
 
+from torch import nn
+
 from micro_vllm.config import CacheConfig
 from micro_vllm.core.scheduler_output import SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
-from micro_vllm.models.llama import LlamaModel, LlamaModelConfig
+from micro_vllm.config import ModelConfig
+from micro_vllm.models.registry import get_model_class
 from micro_vllm.worker.config import ModelExecutionConfig
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 from micro_vllm.worker.model_runner import ModelRunner
@@ -17,11 +20,15 @@ class Worker:
 
     def __init__(
         self,
-        model_config: LlamaModelConfig,
+        model_config: ModelConfig,
         cache_config: CacheConfig,
         execution_config: ModelExecutionConfig,
     ) -> None:
-        model = LlamaModel(model_config, ReferenceAttentionBackend()).to(
+        model_class = get_model_class(
+            model_config,
+            source_label="worker model config",
+        )
+        model = model_class(model_config, ReferenceAttentionBackend()).to(
             device=execution_config.device,
             dtype=execution_config.dtype,
         )
@@ -32,7 +39,7 @@ class Worker:
             execution_config,
         )
 
-        self._model: LlamaModel | None = model
+        self._model: nn.Module | None = model
         self._physical_kv_cache: PhysicalKVCache | None = physical_kv_cache
         self._model_runner: ModelRunner | None = ModelRunner(
             model,

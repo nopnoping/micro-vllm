@@ -1,4 +1,4 @@
-"""Discovery for local safetensors checkpoints."""
+"""Discovery and streaming for local safetensors checkpoints."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class _CheckpointShard:
     weight_names: tuple[str, ...] | None
 
 
-class SafetensorsSource:
+class SafetensorsCheckpoint:
     """A discovered local single-file or sharded safetensors checkpoint."""
 
     def __init__(self, model_path: str | Path) -> None:

@@ -5,19 +5,22 @@ import torch
 from torch.nn import functional as F
 
 from micro_vllm.layers.embedding import LMHead, TokenEmbedding
-from micro_vllm.models.llama import LlamaModelConfig
+from micro_vllm.config import ModelConfig
 
 
-def make_config(*, tie_word_embeddings: bool) -> LlamaModelConfig:
-    return LlamaModelConfig(
-        vocab_size=16,
-        hidden_size=8,
-        intermediate_size=16,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=1,
-        max_position_embeddings=32,
-        tie_word_embeddings=tie_word_embeddings,
+def make_config(*, tie_word_embeddings: bool) -> ModelConfig:
+    return ModelConfig(
+        {
+            "architectures": ["LlamaForCausalLM"],
+            "vocab_size": 16,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "max_position_embeddings": 32,
+            "tie_word_embeddings": tie_word_embeddings,
+        }
     )
 
 
@@ -26,11 +29,14 @@ def test_embedding_weight_tying_follows_model_config(
     tie_word_embeddings: bool,
 ) -> None:
     config = make_config(tie_word_embeddings=tie_word_embeddings)
-    embedding = TokenEmbedding(config.vocab_size, config.hidden_size)
+    vocab_size = config.require_positive_int("vocab_size")
+    hidden_size = config.require_positive_int("hidden_size")
+    tied = config.get("tie_word_embeddings", False)
+    embedding = TokenEmbedding(vocab_size, hidden_size)
     lm_head = LMHead(
-        config.hidden_size,
-        config.vocab_size,
-        tied_embedding=embedding if config.tie_word_embeddings else None,
+        hidden_size,
+        vocab_size,
+        tied_embedding=embedding if tied else None,
     )
 
     assert (lm_head.weight is embedding.weight) is tie_word_embeddings

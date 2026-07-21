@@ -251,17 +251,17 @@ V1 必须回答以下问题：
 | 子阶段 | 内容 | 状态 | 技术清单 |
 |---|---|---|---|
 | V1.4A | Safetensors Checkpoint Source | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
-| V1.4B | HF Config 与 Weight Loader | 当前阶段 | [清单](../implementation/v1-weight-loader-todo.md) |
-| V1.4C | Parameter Loader、真实 Llama checkpoint | 待实现 | 待生成 |
+| V1.4B | Model Loader 与 HF checkpoint | 当前阶段 | [清单](../implementation/v1-model-loader-todo.md) |
+| V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 待实现 | 待生成 |
 | V1.4D | Qwen dense model 与 checkpoint | 待实现 | 待生成 |
 | V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 待实现 | 待生成 |
 
-### Model Registry 和模型接口
+### Model Loader 和模型接口
 
-- [ ] Model Registry 根据 Hugging Face `architectures` 选择实现。
-- [ ] 模型类负责架构差异，不把模型判断放入 Scheduler/ModelRunner。
+- [x] `models` registry 根据 Hugging Face `architectures` 选择实现。
+- [x] 模型类负责架构差异，不把模型判断放入 Scheduler/ModelRunner。
 - [x] 模型 `forward()` 与 `compute_logits()` 职责分离。
-- [ ] 模型计算与 `load_weights()` 职责分离。
+- [x] 模型计算与 checkpoint IO 职责分离。
 - [x] 公共 RMSNorm、RoPE、MLP、Embedding、Linear 和 Attention layer 可复用。
 - [x] 不实现难以理解的万能声明式 Transformer builder。
 
@@ -270,12 +270,11 @@ V1 必须回答以下问题：
 - [x] 支持单文件 safetensors。
 - [x] 支持 safetensors index 和多 shard 流式加载。
 - [x] 避免同时将全部 checkpoint tensor 常驻 CPU 内存。
-- [ ] 支持 tied embedding/lm_head。
-- [ ] 支持 QKV packed parameter 映射。
-- [ ] 支持 gate/up packed parameter 映射。
-- [ ] module/parameter 可以注册自己的 weight loader。
-- [ ] loader 接受 size=1 的显式 ParallelContext 或等价 shard context。
-- [ ] missing、unexpected、shape mismatch 权重给出明确错误。
+- [x] 支持本地目录和 Hugging Face Hub 延迟 checkpoint 下载。
+- [x] config 和 checkpoint 固定到同一个 Hub commit。
+- [x] 支持 tied embedding/lm_head。
+- [x] 当前分离的 Q/K/V 和 gate/up checkpoint 参数直接映射。
+- [x] 参数名称映射后直接复制，不维护额外的完整性校验状态。
 
 ### 模型覆盖
 

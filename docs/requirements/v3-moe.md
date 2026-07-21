@@ -55,7 +55,7 @@ class RoutingPlan:
 
 ## 4. 模型与权重加载
 
-- [ ] Model Registry 支持至少一个代表性 MoE 模型族。
+- [ ] Model Loader 支持至少一个代表性 MoE 模型族。
 - [ ] 推荐首个模型选择 Mixtral 或结构清晰的 Qwen MoE。
 - [ ] 支持 routed expert 和 shared expert 权重命名映射。
 - [ ] 支持 packed expert 参数加载。
