@@ -43,8 +43,14 @@ Enforce these boundaries:
   config fields.
 - Model loaders must not interpret architecture-specific parameter layouts;
   they pass tensor streams to the selected model.
-- Workers own physical device tensors; the control plane owns logical IDs and
-  lifecycle state.
+- Model runners own model construction/loading invocation, placement, warmup,
+  memory profiling, physical KV tensor allocation, execution, and those device
+  resources' lifecycles.
+- Workers only orchestrate device processes and model-runner lifecycle; they do
+  not construct, load, place, warm up, profile, retain models, or own model KV
+  tensors directly.
+- Model runners expose the profiled physical block capacity to the control
+  plane; the control plane owns logical block IDs and lifecycle state.
 - Shared schemas must not import concrete implementations or create dependency
   cycles.
 

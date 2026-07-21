@@ -3,11 +3,15 @@
 import pytest
 import torch
 
-from micro_vllm.config import CacheConfig
+from micro_vllm.config import ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
-from micro_vllm.config import ModelConfig
-from micro_vllm.worker.config import ModelExecutionConfig
+from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
+from micro_vllm.models.llama import LlamaModel
+from micro_vllm.worker.config import (
+    KVCacheInitializationConfig,
+    ModelExecutionConfig,
+)
 from micro_vllm.worker.worker import Worker
 
 
@@ -28,12 +32,20 @@ def make_model_config() -> ModelConfig:
 
 def make_worker(
     *,
+    model: LlamaModel | None = None,
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
 ) -> Worker:
+    if model is None:
+        model = LlamaModel(make_model_config(), ReferenceAttentionBackend())
     return Worker(
-        make_model_config(),
-        CacheConfig(block_size=2, num_blocks=8),
+        lambda: model,
+        KVCacheInitializationConfig(block_size=2, max_num_blocks=8),
+        SchedulerConfig(
+            max_num_batched_tokens=8,
+            max_num_seqs=2,
+            max_model_len=32,
+        ),
         ModelExecutionConfig(device=device, dtype=dtype),
     )
 
@@ -53,17 +65,25 @@ def make_plan() -> SchedulerOutput:
     )
 
 
-def test_worker_owns_configured_model_cache_and_runner() -> None:
-    worker = make_worker()
+def test_worker_orchestrates_model_runner_lifecycle() -> None:
+    model = LlamaModel(make_model_config(), ReferenceAttentionBackend())
+    model.train()
+    worker = make_worker(model=model)
 
-    assert worker._model is not None
-    assert worker._model.training is False
-    assert next(worker._model.parameters()).device == torch.device("cpu")
-    assert next(worker._model.parameters()).dtype is torch.float32
-    assert worker._physical_kv_cache is not None
-    assert worker._physical_kv_cache.device == torch.device("cpu")
-    assert worker._physical_kv_cache.dtype is torch.float32
+    assert not hasattr(worker, "_model")
     assert worker._model_runner is not None
+    assert worker._model_runner._model is model
+    assert worker._model_runner._available_kv_cache_memory_bytes is None
+    assert model.training is False
+    assert next(model.parameters()).device == torch.device("cpu")
+    assert next(model.parameters()).dtype is torch.float32
+    assert not hasattr(worker, "_physical_kv_cache")
+    physical_kv_cache = worker._model_runner._physical_kv_cache
+    assert physical_kv_cache is not None
+    assert physical_kv_cache.shape == torch.Size((2, 8, 2, 1, 4))
+    assert physical_kv_cache.device == torch.device("cpu")
+    assert physical_kv_cache.dtype is torch.float32
+    assert worker.cache_config.num_blocks == 8
 
 
 def test_worker_returns_model_runner_output_unchanged() -> None:
@@ -91,15 +111,17 @@ def test_worker_returns_model_runner_output_unchanged() -> None:
 
 def test_shutdown_releases_resources_and_execute_fails() -> None:
     worker = make_worker()
-    physical_kv_cache = worker._physical_kv_cache
+    model_runner = worker._model_runner
+    assert model_runner is not None
+    physical_kv_cache = model_runner._physical_kv_cache
     assert physical_kv_cache is not None
 
     worker.shutdown()
     worker.shutdown()
 
     assert len(physical_kv_cache) == 0
-    assert worker._model is None
-    assert worker._physical_kv_cache is None
+    assert model_runner._model is None
+    assert model_runner._physical_kv_cache is None
     assert worker._model_runner is None
     with pytest.raises(RuntimeError, match="worker is shut down"):
         worker.execute(make_plan())
@@ -122,10 +144,19 @@ def test_cpu_worker_executes_reference_model() -> None:
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
 def test_gpu_worker_executes_reference_model() -> None:
-    worker = make_worker(device="cuda", dtype=torch.float16)
+    model = LlamaModel(make_model_config(), ReferenceAttentionBackend())
+    worker = make_worker(model=model, device="cuda", dtype=torch.float16)
 
     output = worker.execute(make_plan())
 
+    assert worker._model_runner is not None
+    assert worker._model_runner._model is model
+    assert worker._model_runner._available_kv_cache_memory_bytes is not None
+    assert worker._model_runner._available_kv_cache_memory_bytes > 0
+    assert worker._model_runner._peak_activation_memory_bytes >= 0
+    assert worker.cache_config.num_blocks == 8
+    assert next(model.parameters()).device.type == "cuda"
+    assert next(model.parameters()).dtype is torch.float16
     assert len(output.sampled_tokens) == 1
     assert output.sampled_tokens[0].request_id == "request-1"
     assert (

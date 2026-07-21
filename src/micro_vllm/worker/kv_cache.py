@@ -1,14 +1,43 @@
-"""Worker-owned physical KV-cache tensor storage."""
+"""ModelRunner-owned physical KV-cache tensor storage."""
 
 import torch
 
-from micro_vllm.config import CacheConfig
-from micro_vllm.config import ModelConfig
+from micro_vllm.config import CacheConfig, ModelConfig
 from micro_vllm.worker.config import ModelExecutionConfig
 
 
+def kv_cache_block_size_bytes(
+    model_config: ModelConfig,
+    *,
+    block_size: int,
+    dtype: torch.dtype,
+) -> int:
+    """Return the physical bytes consumed by one block across all layers."""
+
+    num_layers = model_config.require_positive_int("num_hidden_layers")
+    hidden_size = model_config.require_positive_int("hidden_size")
+    num_attention_heads = model_config.require_positive_int(
+        "num_attention_heads"
+    )
+    num_key_value_heads = model_config.positive_int(
+        "num_key_value_heads",
+        num_attention_heads,
+    )
+    if hidden_size % num_attention_heads != 0:
+        raise ValueError("hidden_size must be divisible by num_attention_heads")
+    element_size = torch.empty((), dtype=dtype).element_size()
+    return (
+        num_layers
+        * 2
+        * block_size
+        * num_key_value_heads
+        * (hidden_size // num_attention_heads)
+        * element_size
+    )
+
+
 class PhysicalKVCache:
-    """Per-layer physical KV tensors owned by one Worker."""
+    """Per-layer physical KV tensors owned by one ModelRunner."""
 
     __slots__ = (
         "_device",

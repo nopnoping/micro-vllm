@@ -181,11 +181,11 @@ V1 必须回答以下问题：
 
 ### Physical KV Cache
 
-- [x] Worker 为每个 decoder layer 创建 physical KV cache tensor。
+- [x] ModelRunner 为每个 decoder layer 创建 physical KV cache tensor。
 - [x] KV tensor 的 block dimension 与 CacheConfig physical block ID 一一对应。
 - [x] tensor shape 表达 K/V、block、block offset、KV heads 和 head dim。
-- [x] physical cache dtype/device 由 Worker 配置决定。
-- [x] Worker 拥有 tensor，Scheduler/KVCacheManager 不访问 tensor。
+- [x] physical cache dtype/device 由 ModelRunner execution config 决定。
+- [x] ModelRunner 拥有 tensor，Scheduler/KVCacheManager 不访问 tensor。
 - [x] block 被逻辑释放后不强制清零，slot overwrite 和 block table 保证隔离。
 
 ### ModelInput 与 AttentionMetadata
@@ -231,7 +231,12 @@ V1 必须回答以下问题：
 - [x] ModelRunner 构造统一 flattened batch 和 attention metadata。
 - [x] ModelRunner 只对 sampling rows 计算/收集 logits。
 - [x] ModelRunner 不修改 Request、SchedulerOutput 或 Scheduler 状态。
-- [x] Worker 拥有 device、model、physical KV cache 和 ModelRunner。
+- [x] ModelRunner 拥有模型初始化、placement、warmup/profile、physical KV cache
+      allocation、执行和 device tensor 生命周期。
+- [x] Worker 只编排 device process 和 ModelRunner 生命周期。
+- [x] Worker 不直接构造、加载或持有 model。
+- [x] ModelRunner 根据 CUDA warmup peak 和 GPU memory utilization 推导实际 block 数。
+- [x] ModelRunner 返回实际 `CacheConfig`，control plane 再据此创建逻辑 block pool。
 - [x] Worker 提供显式 shutdown。
 - [x] 实现 SingleProcessExecutor 并只委托 Worker。
 - [x] Engine 使用真实 SingleProcessExecutor 完成 tiny-model generation。
@@ -264,12 +269,18 @@ V1.4B 的代码与测试已经实现；2026-07-21 按当前约定暂不运行远
 
 ```text
 model name/path
+    -> ModelInitializer
+    -> ModelRunner.initialize_model()
     -> model_loader.load_model()
         -> local directory or pinned Hugging Face commit
         -> config.json -> read-only ModelConfig
         -> models.registry -> model class
         -> SafetensorsCheckpoint.iter_tensors()
         -> model.load_weights(tensor iterable)
+    -> ModelRunner warmup/profile
+    -> available GPU KV bytes / bytes per block -> actual num_blocks
+    -> ModelRunner allocates and owns physical KV tensor storage
+    -> Worker exposes actual CacheConfig to the control plane
 ```
 
 - `config` 拥有共享、只读的 `ModelConfig`；构造时统一校验 `architectures` 并提供
@@ -282,8 +293,14 @@ model name/path
   checkpoint parameter names。
 - checkpoint reader 一次只打开一个 safetensors shard；模型收到 tensor 后直接复制到
   parameter，不维护独立的全量 missing/unexpected/duplicate 状态机。
-- 当前 `load_model()` 已能返回加载后的 CPU/eval 模型，但 Worker 仍接收
-  `ModelConfig`、再次调用 registry 并重新构造模型；V1.4C 负责打通这一集成断点。
+- Worker 接收延迟 `ModelInitializer`，但只负责将其交给 ModelRunner；ModelRunner
+  调用 initializer、持有模型，并负责 device/dtype placement 和 eval mode。
+- ModelRunner 在最终 KV cache 分配前执行 warmup；CUDA 路径测量 peak activation，
+  按 GPU memory utilization 扣除 non-KV memory，再按模型 KV block bytes 推导容量。
+- `initialize_kv_cache()` 不接收外部分配的 cache 或最终 block 数；它分配并持有
+  physical KV tensor，返回实际 `CacheConfig` 给 control plane 建立同容量逻辑 block pool。
+- CPU reference path 无 GPU memory 可 profile，使用 `max_num_blocks` 作为确定性容量；
+  CUDA 路径只将其作为可选上限，实际容量仍来自 profile。
 
 ### 相对初始清单的设计调整
 

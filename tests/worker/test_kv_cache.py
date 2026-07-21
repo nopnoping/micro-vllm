@@ -1,4 +1,4 @@
-"""Tests for Worker-owned physical KV-cache storage."""
+"""Tests for ModelRunner-owned physical KV-cache storage."""
 
 import pytest
 import torch

@@ -1,27 +1,34 @@
-"""Tests for executing immutable scheduler plans through ModelRunner."""
+"""Tests for ModelRunner lifecycle and immutable plan execution."""
 
+from collections.abc import Callable
+
+import pytest
 import torch
 from torch.nn import functional as F
 
-from micro_vllm.config import CacheConfig
+from micro_vllm.config import ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
-from micro_vllm.config import ModelConfig
-from micro_vllm.worker.config import ModelExecutionConfig
+from micro_vllm.worker.config import (
+    KVCacheInitializationConfig,
+    ModelExecutionConfig,
+)
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 from micro_vllm.worker.model_runner import ModelRunner
 
 
-class FakeModel:
+class FakeModel(torch.nn.Module):
     """Expose flattened rows directly so sampling selection is observable."""
 
     def __init__(self) -> None:
+        super().__init__()
+        self.config = make_model_config()
         self.forward_inputs: list[tuple[torch.Tensor, torch.Tensor]] = []
         self.logit_inputs: list[torch.Tensor] = []
         self.layer_kv_caches: tuple[torch.Tensor, ...] = ()
         self.metadata: AttentionMetadata | None = None
 
-    def __call__(
+    def forward(
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
@@ -43,37 +50,179 @@ class FakeModel:
         ).to(torch.float32)
 
 
+def make_model_config() -> ModelConfig:
+    return ModelConfig(
+        {
+            "architectures": ["LlamaForCausalLM"],
+            "vocab_size": 64,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "max_position_embeddings": 32,
+        }
+    )
+
+
 def make_runner() -> tuple[ModelRunner, FakeModel, PhysicalKVCache]:
-    device = torch.device("cpu")
-    dtype = torch.float32
-    cache = PhysicalKVCache(
-        CacheConfig(block_size=2, num_blocks=8),
-        ModelConfig(
-            {
-                "architectures": ["LlamaForCausalLM"],
-                "vocab_size": 64,
-                "hidden_size": 8,
-                "intermediate_size": 16,
-                "num_hidden_layers": 2,
-                "num_attention_heads": 2,
-                "num_key_value_heads": 1,
-                "max_position_embeddings": 32,
-            }
+    model = FakeModel()
+    runner = ModelRunner(
+        lambda: model,
+        KVCacheInitializationConfig(block_size=2, max_num_blocks=8),
+        SchedulerConfig(
+            max_num_batched_tokens=8,
+            max_num_seqs=2,
+            max_model_len=32,
+        ),
+        ModelExecutionConfig(),
+    )
+    assert runner.initialize_model() is model.config
+    cache_config = runner.initialize_kv_cache()
+    assert cache_config.num_blocks == 8
+    cache = runner._physical_kv_cache
+    assert cache is not None
+    model.forward_inputs.clear()
+    model.logit_inputs.clear()
+    return runner, model, cache
+
+
+def make_uninitialized_runner(
+    model_initializer: Callable[[], torch.nn.Module],
+    *,
+    device: str = "cpu",
+    dtype: torch.dtype = torch.float32,
+    max_num_blocks: int | None = 8,
+) -> ModelRunner:
+    return ModelRunner(
+        model_initializer,
+        KVCacheInitializationConfig(
+            block_size=2,
+            max_num_blocks=max_num_blocks,
+        ),
+        SchedulerConfig(
+            max_num_batched_tokens=8,
+            max_num_seqs=2,
+            max_model_len=32,
         ),
         ModelExecutionConfig(device=device, dtype=dtype),
     )
+
+
+def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     model = FakeModel()
-    return (
-        ModelRunner(
-            model,
-            cache,
-            device=device,
-            dtype=dtype,
-            block_size=2,
-        ),
-        model,
-        cache,
+    model.train()
+    initialized: list[FakeModel] = []
+    runner = make_uninitialized_runner(
+        lambda: initialized.append(model) or model
     )
+
+    assert initialized == []
+    assert runner.initialize_model() is model.config
+    assert initialized == [model]
+    assert runner._model is model
+    assert model.training is False
+    with pytest.raises(RuntimeError, match="already initialized"):
+        runner.initialize_model()
+
+    cache_config = runner.initialize_kv_cache()
+    cache = runner._physical_kv_cache
+    assert cache_config.num_blocks == 8
+    assert cache is not None
+    assert len(model.forward_inputs) == 1
+    assert model.forward_inputs[0][0].numel() == 8
+    with pytest.raises(RuntimeError, match="already initialized"):
+        runner.initialize_kv_cache()
+
+    runner.shutdown()
+    assert len(cache) == 0
+    assert runner._model is None
+    assert runner._model_initializer is None
+    assert runner._physical_kv_cache is None
+
+
+def test_model_runner_derives_gpu_block_count_from_available_bytes() -> None:
+    model = FakeModel()
+    runner = make_uninitialized_runner(
+        lambda: model,
+        max_num_blocks=None,
+    )
+    runner.initialize_model()
+    bytes_per_block = 2 * 2 * 2 * 1 * 4 * 4
+
+    assert runner._determine_num_blocks(
+        model.config,
+        available_memory_bytes=bytes_per_block * 20,
+    ) == 20
+
+
+def test_cpu_kv_cache_initialization_requires_deterministic_capacity() -> None:
+    model = FakeModel()
+    runner = make_uninitialized_runner(
+        lambda: model,
+        max_num_blocks=None,
+    )
+    runner.initialize_model()
+
+    with pytest.raises(ValueError, match="CPU execution requires max_num_blocks"):
+        runner.initialize_kv_cache()
+
+
+def test_model_runner_rejects_model_without_config() -> None:
+    runner = make_uninitialized_runner(lambda: torch.nn.Linear(2, 2))
+
+    with pytest.raises(TypeError, match=r"model\.config must be a ModelConfig"):
+        runner.initialize_model()
+
+
+def test_model_runner_rejects_model_without_forward() -> None:
+    class MissingForwardModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.config = make_model_config()
+
+        def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+            return hidden_states
+
+    runner = make_uninitialized_runner(lambda: MissingForwardModel())
+
+    with pytest.raises(TypeError, match="model must implement forward"):
+        runner.initialize_model()
+
+
+def test_model_runner_rejects_model_without_compute_logits() -> None:
+    class MissingLogitsModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.config = make_model_config()
+
+        def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+            return input_ids
+
+    runner = make_uninitialized_runner(lambda: MissingLogitsModel())
+
+    with pytest.raises(TypeError, match="model must implement compute_logits"):
+        runner.initialize_model()
+
+
+def test_model_runner_does_not_fallback_when_placement_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = FakeModel()
+
+    def fail_placement(*, device: torch.device, dtype: torch.dtype) -> None:
+        raise RuntimeError(f"cannot move model to {device} with {dtype}")
+
+    monkeypatch.setattr(model, "to", fail_placement)
+    runner = make_uninitialized_runner(
+        lambda: model,
+        device="cuda",
+        dtype=torch.float16,
+    )
+
+    with pytest.raises(RuntimeError, match="cannot move model to cuda"):
+        runner.initialize_model()
+    assert runner._model is None
 
 
 def make_request(

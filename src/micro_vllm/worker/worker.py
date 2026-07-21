@@ -1,53 +1,44 @@
-"""Device resource, model, and physical KV-cache ownership."""
+"""Device-process orchestration for one ModelRunner."""
 
-from torch import nn
-
-from micro_vllm.config import CacheConfig
+from micro_vllm.config import CacheConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
-from micro_vllm.config import ModelConfig
-from micro_vllm.models.registry import get_model_class
-from micro_vllm.worker.config import ModelExecutionConfig
-from micro_vllm.worker.kv_cache import PhysicalKVCache
-from micro_vllm.worker.model_runner import ModelRunner
+from micro_vllm.worker.config import (
+    KVCacheInitializationConfig,
+    ModelExecutionConfig,
+)
+from micro_vllm.worker.model_runner import ModelInitializer, ModelRunner
 
 
 class Worker:
-    """Own one model, its physical KV cache, and the device-side runner."""
+    """Orchestrate one runner without owning model or KV-cache tensors."""
 
-    __slots__ = ("_model", "_model_runner", "_physical_kv_cache")
+    __slots__ = ("_cache_config", "_model_runner")
 
     def __init__(
         self,
-        model_config: ModelConfig,
-        cache_config: CacheConfig,
+        model_initializer: ModelInitializer,
+        cache_initialization_config: KVCacheInitializationConfig,
+        scheduler_config: SchedulerConfig,
         execution_config: ModelExecutionConfig,
     ) -> None:
-        model_class = get_model_class(
-            model_config,
-            source_label="worker model config",
-        )
-        model = model_class(model_config, ReferenceAttentionBackend()).to(
-            device=execution_config.device,
-            dtype=execution_config.dtype,
-        )
-        model.eval()
-        physical_kv_cache = PhysicalKVCache(
-            cache_config,
-            model_config,
+        model_runner = ModelRunner(
+            model_initializer,
+            cache_initialization_config,
+            scheduler_config,
             execution_config,
         )
+        model_runner.initialize_model()
+        cache_config = model_runner.initialize_kv_cache()
 
-        self._model: nn.Module | None = model
-        self._physical_kv_cache: PhysicalKVCache | None = physical_kv_cache
-        self._model_runner: ModelRunner | None = ModelRunner(
-            model,
-            physical_kv_cache,
-            device=execution_config.device,
-            dtype=execution_config.dtype,
-            block_size=cache_config.block_size,
-        )
+        self._cache_config = cache_config
+        self._model_runner: ModelRunner | None = model_runner
+
+    @property
+    def cache_config(self) -> CacheConfig:
+        """Actual logical cache capacity derived by the ModelRunner."""
+
+        return self._cache_config
 
     def execute(self, plan: SchedulerOutput, /) -> ModelRunnerOutput:
         """Delegate an immutable plan to the owned ModelRunner."""
@@ -60,11 +51,9 @@ class Worker:
     def shutdown(self) -> None:
         """Release owned references without touching global device allocator state."""
 
-        physical_kv_cache = self._physical_kv_cache
-        if physical_kv_cache is None:
+        model_runner = self._model_runner
+        if model_runner is None:
             return
 
         self._model_runner = None
-        physical_kv_cache.release()
-        self._physical_kv_cache = None
-        self._model = None
+        model_runner.shutdown()

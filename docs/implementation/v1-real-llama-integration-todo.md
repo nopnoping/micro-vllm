@@ -7,17 +7,18 @@ Engine greedy token 的完整路径正确：
 
 ```text
 local path or pinned HF repo
-    -> model_loader.load_model(...)
-    -> loaded LlamaModel
-    -> Worker
-    -> Physical KV Cache + ModelRunner
+    -> delayed model initializer
+    -> Worker process/device orchestration
+    -> ModelRunner -> model_loader.load_model(...) -> loaded LlamaModel
+    -> warmup/profile -> derived block capacity
+    -> ModelRunner-owned Physical KV Cache
     -> SingleProcessExecutor
     -> Engine
     -> greedy token IDs
 ```
 
 本阶段的重点不是继续扩展 Loader，而是验证真实 checkpoint 的参数、logits、token 和
-Paged KV 执行语义，并消除 Worker 当前重新构造随机模型的断点。
+Paged KV 执行语义，并消除 Worker 原先重新构造随机模型的断点。
 
 ## 2. 当前基础与验证状态
 
@@ -41,7 +42,7 @@ Paged KV 执行语义，并消除 Worker 当前重新构造随机模型的断点
 - [ ] 使用 Transformers 生成标准 HF 格式 tiny Llama checkpoint 并通过
       `load_model()` 加载。
 - [ ] 校验加载后的参数、hidden states 和 logits 与 Transformers 一致。
-- [ ] Worker 接收已构造且已加载的模型，不再根据 config 重新构造模型。
+- [ ] ModelRunner 调用延迟 initializer 构造或加载模型，并持有模型生命周期。
 - [ ] 使用 loaded model 打通 Worker、Executor 和 Engine。
 - [ ] 真实 checkpoint 的 full/chunked prefill、decode 和 greedy token 与
       Transformers 对拍。
@@ -56,38 +57,55 @@ Paged KV 执行语义，并消除 Worker 当前重新构造随机模型的断点
 - Qwen、Mistral 或其他模型。
 - packed QKV/gate-up 参数布局。
 - meta-device、分片初始化或生产级低内存加载。
-- 自动 GPU memory profiling 和 block 数推导。
 - Hub 登录流程、模型发布或 checkpoint 转换工具。
 - TP、PP、DP、量化或 optimized attention。
 
 ## 4. 核心设计决策
 
-### 4.1 Worker 接收模型实例
+### 4.1 ModelRunner 负责模型生命周期
 
-当前 Worker 接收 `ModelConfig`，再通过 Registry 构造一个随机模型；这会丢失
-`load_model()` 已经加载的参数。调整后的最小边界：
+Phase 3 调整前 Worker 接收 `ModelConfig`，再通过 Registry 构造一个随机模型；这会丢失
+`load_model()` 已经加载的参数。调整后的边界使用延迟 initializer，但只允许
+ModelRunner 调用它：
 
 ```python
-model = load_model(model_name_or_path, attention_backend, ...)
-worker = Worker(model, cache_config, execution_config)
+model_initializer = lambda: load_model(model_name_or_path, attention_backend, ...)
+worker = Worker(
+    model_initializer,
+    cache_initialization_config,
+    scheduler_config,
+    execution_config,
+)
+cache_config = worker.cache_config  # actual profiled capacity for control plane
 ```
 
 - [ ] Worker 不再调用 models registry。
 - [ ] Worker 不识别 Llama/Qwen architecture。
-- [ ] Worker 从 model 的只读 config 获取 physical KV shape。
-- [ ] Worker 将模型移动到 execution device/dtype，并取得其生命周期所有权。
-- [ ] Worker 仍创建和拥有 Physical KV Cache、ModelRunner。
-- [ ] shutdown 释放 model 和 KV cache 引用，不修改 checkpoint/cache 文件。
-- [ ] 不同时保留“config 构造”和“model 注入”两套 Worker 主路径。
+- [ ] Worker 只把 initializer 交给 ModelRunner，不直接调用或保留 model。
+- [ ] ModelRunner 调用 initializer，校验模型 contract，并持有 model。
+- [ ] ModelRunner 负责模型 device/dtype placement 和 eval mode。
+- [ ] ModelRunner 在最终 KV cache 分配前执行 warmup/profile。
+- [ ] ModelRunner 计算 available GPU KV bytes 和 bytes per block，推导实际 block 数。
+- [ ] `initialize_kv_cache()` 不接收外部分配的 cache 或最终 block 数。
+- [ ] ModelRunner 创建并拥有 Physical KV tensor storage。
+- [ ] Worker 向 control plane 暴露 runner 返回的实际 `CacheConfig`。
+- [ ] shutdown 释放 ModelRunner 的 model/cache tensor 引用，
+      不修改 checkpoint/cache 文件。
+- [ ] 不同时保留“config 构造”“model 实例注入”和“initializer”多套 Worker 主路径。
 
-如果静态类型需要公共模型契约，只定义 ModelRunner/Worker 实际消费的窄 protocol：
+如果静态类型需要公共模型契约，只定义 ModelRunner 实际消费的窄 protocol：
 `config`、model call 和 `compute_logits()`；不建立通用模型基类。
+
+warmup、GPU memory profiling、模型参数/激活内存计算以及由此产生的可用 KV 容量
+推导都属于 ModelRunner 生命周期。CUDA 路径按 `gpu_memory_utilization` 计算预算并扣除
+non-KV memory 和 peak activation；CPU reference path 因无 GPU profile，使用显式上限
+作为确定性容量。
 
 ### 4.2 Loader 与执行设备分离
 
 - [ ] `load_model()` 继续返回 CPU 默认 dtype、eval mode 模型。
 - [ ] checkpoint source 继续只产生 CPU tensor。
-- [ ] Worker 是模型 device/dtype placement 的唯一位置。
+- [ ] ModelRunner 是模型 device/dtype placement 的唯一位置。
 - [ ] Model Loader 不创建 KV cache，不读取 SchedulerConfig。
 - [ ] 本阶段记录 CPU model 和目标 device model 的峰值内存限制，但不引入 meta loading。
 
@@ -210,24 +228,45 @@ Tesla T4 FP16 容差为 `atol=rtol=3e-3`，与已有随机 tiny Llama 对拍一�
 GPU FP16 用例在 Tesla T4 上实际运行；完整默认测试为
 `412 passed, 1 skipped in 2.33s`。
 
-## 8. Phase 3：Worker 模型注入
+## 8. Phase 3：ModelRunner 模型生命周期
 
-- [ ] Worker 构造参数从 `ModelConfig` 改为已构造 model。
-- [ ] Worker 不再导入 `get_model_class`。
-- [ ] Worker 从 `model.config` 创建 Physical KV Cache。
-- [ ] model 缺少执行所需 contract 时在初始化阶段明确失败。
-- [ ] Worker 将 loaded CPU model 移动到配置 device/dtype。
-- [ ] ModelRunner 收到的 model 与 Worker 拥有的 model 是同一实例。
-- [ ] shutdown 行为保持幂等。
-- [ ] 更新现有 Worker、Executor 和 Engine fixtures，显式构造 model。
-- [ ] 随机 tiny model 测试继续保留，作为快速执行基线。
+- [x] Worker 构造参数从 `ModelConfig` 改为延迟 `ModelInitializer`。
+- [x] Worker 不再导入 `get_model_class`。
+- [x] Worker 不直接调用 initializer，也不持有 model 引用。
+- [x] ModelRunner 调用 initializer 并持有返回的 model。
+- [x] model 缺少执行所需 contract 时由 ModelRunner 在初始化阶段明确失败。
+- [x] ModelRunner 将 loaded CPU model 移动到配置 device/dtype 并设为 eval mode。
+- [x] ModelRunner 在 `initialize_kv_cache()` 内运行 warmup/profile。
+- [x] CUDA 路径根据 GPU memory utilization、non-KV memory 和 peak activation
+      计算 available KV bytes。
+- [x] ModelRunner 根据模型结构、block size 和 dtype 计算 bytes per block 和实际容量。
+- [x] ModelRunner 创建并拥有 physical KV tensor storage。
+- [x] Worker 暴露实际 `CacheConfig`，control plane 使用同一容量创建逻辑 block pool。
+- [x] shutdown 行为保持幂等，并由 ModelRunner 清除 model/cache/tensor 引用。
+- [x] 更新现有 Worker、Executor 和 Engine fixtures，显式提供延迟 initializer。
+- [x] 随机 tiny model 测试继续保留，作为快速执行基线。
+- [x] CPU reference path 使用 `max_num_blocks` 作为确定性容量；CUDA 只将其作为可选上限。
+
+Worker 只接受延迟 `ModelInitializer` 并立即转交 ModelRunner；只有 ModelRunner 会调用
+initializer，校验 `ModelConfig`、forward 和 `compute_logits()` contract，执行模型
+placement，并持有最终模型。placement 不设置备用 device/dtype，失败原样向上传播。
+ModelRunner 的无参数 `initialize_kv_cache()` 先使用临时 cache 跑 warmup，CUDA 路径测量
+peak activation 并读取 GPU free/total memory，再计算并分配最终 Physical KV Cache。
+Worker 不持有 physical tensor，只保存并暴露 runner 返回的实际 `CacheConfig`；Engine
+组装顺序调整为先构造 Worker，再用实际容量创建 `KVCacheManager`。Executor 的
+recording-worker 边界不构造模型，无需改变；真实 Engine fixture 通过 initializer 构造
+随机 tiny `LlamaModel`。
+
+2026-07-21 Phase 3 分层修正后远端验证：Worker、Executor 和随机模型 Engine
+定向测试为 `85 passed in 4.21s`，其中 CUDA 用例实际执行 warmup/profile 和容量推导；
+完整默认测试为 `428 passed, 1 skipped in 5.35s`。
 
 ## 9. Phase 4：Loaded Model Engine 集成
 
 ### 最小端到端
 
 - [ ] 从 HF-format tiny checkpoint 调用 `load_model()`。
-- [ ] 将 loaded model 注入 Worker 和 SingleProcessExecutor。
+- [ ] 由 ModelRunner initializer 调用 `load_model()`，并接入 SingleProcessExecutor。
 - [ ] Engine 从 tokenized request 生成至少一个 greedy token。
 - [ ] output token 通过 request ID 返回。
 - [ ] EOS、max tokens 和 max model length 行为不回归。
@@ -266,7 +305,7 @@ GPU FP16 用例在 Tesla T4 上实际运行；完整默认测试为
 - [ ] checkpoint parameter 名称不匹配时错误包含 parameter name。
 - [ ] tensor shape 不兼容时保留 PyTorch shape 错误和模型来源上下文。
 - [ ] Hub 网络或下载失败不伪装成模型数值错误。
-- [ ] Worker device/dtype placement 失败不回退到其他 device/dtype。
+- [x] ModelRunner device/dtype placement 失败不回退到其他 device/dtype。
 - [ ] Scheduler `max_model_len` 不得超过模型支持的最大 position；本阶段由组装代码
       显式校验或测试 fixture 明确保证，不在 Scheduler 中引入模型依赖。
 
@@ -283,8 +322,9 @@ GPU FP16 用例在 Tesla T4 上实际运行；完整默认测试为
 
 ### 更新
 
-- [ ] `tests/worker/test_worker.py`：model injection、placement 和 ownership。
-- [ ] `tests/integration/test_real_model_engine.py`：保留随机模型快速路径并适配新 Worker。
+- [x] `tests/worker/test_worker.py`：initializer 转交、实际 CacheConfig 和生命周期编排。
+- [x] `tests/worker/test_model_runner_execution.py`：模型初始化、warmup/profile、KV 分配和执行。
+- [x] `tests/integration/test_real_model_engine.py`：保留随机模型快速路径并适配新 Worker。
 - [x] `pyproject.toml`：注册外部模型测试 marker。
 - [x] 必要时更新 `tests/conftest.py`，集中 tiny HF checkpoint fixture。
 
@@ -302,13 +342,13 @@ GPU FP16 用例在 Tesla T4 上实际运行；完整默认测试为
 
 1. `test: create Hugging Face tiny Llama checkpoints`
 2. `test: verify loaded Llama parameters and logits`
-3. `refactor: inject loaded models into workers`
+3. `refactor: move model lifecycle into model runner`
 4. `test: run loaded Llama through engine`
 5. `test: verify pinned Hub Llama checkpoint`
 6. `docs: complete real Llama integration milestone`
 
-Worker 构造变更与对应测试应在同一提交内保持完整测试可运行。公开模型测试不得与基础
-模型注入重构混在同一提交中。
+Worker/ModelRunner 构造变更与对应测试应在同一提交内保持完整测试可运行。公开模型测试
+不得与模型生命周期重构混在同一提交中。
 
 ## 14. 远端验证
 
@@ -351,7 +391,7 @@ ssh aliyun-ecs \
 - [ ] V1.4B Model Loader 现有测试先完成远端验证。
 - [ ] 标准 HF-format Llama checkpoint 能被完整加载。
 - [ ] loaded parameters、hidden states 和 logits 与 Transformers 对拍。
-- [ ] Worker 执行的是同一个 loaded model，不重新随机构造模型。
+- [ ] ModelRunner 执行 initializer 加载的 model，不重新随机构造模型。
 - [ ] loaded model 可通过 Engine 完成 chunked prefill 和多 token decode。
 - [ ] greedy token IDs 与 Transformers 逐 token 一致。
 - [ ] loaded model 的 prefix cache、preemption 和 block reuse 语义正确。
