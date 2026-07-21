@@ -114,7 +114,8 @@ V6 首版不从 cross-attention 架构开始，以免同时引入 encoder KV cac
 
 - [ ] Model Loader 支持至少一个 LLaVA 风格模型。
 - [ ] config adapter 能找到 text config、vision config 和 projector config。
-- [ ] safetensors loader 支持 vision、projector 和 language model 参数前缀映射。
+- [ ] 多模态模型的 `load_weights()` 负责 vision、projector 和 language model 参数
+      前缀映射；safetensors reader 只提供 tensor stream。
 - [ ] 支持独立或组合 checkpoint 的明确一种形式。
 - [ ] text-only 模式可以跳过 Vision Encoder 初始化，或记录为何不能跳过。
 - [ ] 缺失 vision/projector 权重时给出准确诊断。

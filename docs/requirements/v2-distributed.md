@@ -68,8 +68,9 @@
 
 ### Weight Loading
 
-- [ ] WeightLoader 根据 TP rank 只加载或切分本 rank 所需 shard。
-- [ ] row/column/vocab shard 规则由 parameter loader 声明。
+- [ ] Model Loader 的 checkpoint 边界继续提供 tensor stream，不解释 TP parameter layout。
+- [ ] 模型或并行 layer 的 `load_weights()` 根据 TP rank 只复制/切分本 rank 所需 tensor。
+- [ ] row/column/vocab shard 规则由拥有 parameter layout 的模型/layer 声明。
 - [ ] shape 校验使用 global shape 和 local shape 两套信息。
 - [ ] tied embedding 在 vocab parallel 下保持一致。
 

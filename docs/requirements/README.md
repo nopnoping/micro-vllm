@@ -16,14 +16,16 @@ micro-vLLM 是一个用于学习和实验 LLM 推理系统的精简实现。项�
 - **统一 token 模型**：Scheduler 不区分 prefill 队列和 decode 队列，只关心请求的已知 token、已计算 token以及本轮计划计算的 token 数。
 - **控制面与执行面分离**：Scheduler 产生不可变的 `SchedulerOutput`，Executor 和 ModelRunner 只执行计划，不自行改变调度状态。
 - **逻辑缓存与物理缓存分离**：Engine 侧管理 block ID、引用计数和 block table，Worker 侧持有实际 KV tensor。
-- **规格与机制分离**：`AttentionSpec` 描述可见范围和缓存需求，Attention Backend 负责具体计算。
+- **规格与机制分离**：当前 Attention Backend 负责计算；V1.5 再引入 `AttentionSpec` 描述多 attention 类型的可见范围和缓存需求。
+- **模型来源与模型语义分离**：`model_loader` 解析本地目录或 Hub、读取 config 和 checkpoint；`models` 解释架构字段、组装模型并将 tensor stream 加载到参数。
 - **单一权威状态**：请求进度以 `num_computed_tokens` 为唯一权威，不维护容易不一致的 prefill/decode phase 状态。
 - **最小代表性实现**：每类能力优先实现一个 reference backend 和一个有实际意义的 optimized backend，不建设 backend zoo。
 - **可观察性内建**：每一版本都必须能够解释一次调度为何选择某些请求、分配哪些 block、发生哪些通信。
 
 ## 3. 稳定核心契约
 
-以下契约应在 V1 冻结，并在后续版本中以扩展字段或新实现的方式演进，避免改变基本职责。
+以下内容记录当前实现已经形成的最小契约。后续版本优先增加新实现或在边界上增加可选
+能力，不把尚未实现的生产级接口提前写入 V1 contract。
 
 ### 3.1 Request
 
@@ -32,10 +34,11 @@ micro-vLLM 是一个用于学习和实验 LLM 推理系统的精简实现。项�
 class Request:
     request_id: str
     prompt_token_ids: list[int]
+    sampling_params: SamplingParams
     output_token_ids: list[int]
     num_computed_tokens: int
     status: RequestStatus
-    sampling_params: SamplingParams
+    finish_reason: FinishReason | None
 ```
 
 核心不变量：
@@ -48,35 +51,66 @@ num_pending_tokens = num_known_tokens - num_computed_tokens
 
 ### 3.2 SchedulerOutput
 
-Scheduler 与 Executor 之间的执行计划，至少表达：
+V1 的 Scheduler 与 Executor 之间只传递执行所需的不可变快照：
 
-- 本轮请求集合；
-- 每个请求计划计算的 token 数；
-- 新请求、恢复请求和缓存命中信息；
-- 每个 KV cache group 的 block table 或 block table delta；
-- 本轮需要释放、分配或回滚的逻辑缓存信息。
+```python
+@dataclass(frozen=True)
+class ScheduledRequest:
+    request_id: str
+    input_token_ids: tuple[int, ...]
+    num_computed_tokens: int
+    num_scheduled_tokens: int
+    requires_sampling: bool
+    block_table: tuple[int | None, ...]
+
+@dataclass(frozen=True)
+class SchedulerOutput:
+    scheduled_requests: tuple[ScheduledRequest, ...]
+    preempted_request_ids: tuple[str, ...]
+```
+
+逻辑 block 分配、释放、prefix commit 和 Request 状态仍由 Scheduler/KVCacheManager
+拥有，不作为设备执行命令重复编码。多 KV cache group 在 V1.5 通过扩展执行快照表达。
 
 ### 3.3 ModelRunnerOutput
 
-ModelRunner 向 Engine 返回的最小结果，至少表达：
+V1 的 ModelRunner 只返回按 request ID 关联的 sampled token：
 
-- 每个可采样请求产生的 token；
-- 可选的 logits/logprobs；
-- 后续版本需要的 speculative acceptance 等执行结果；
-- 执行错误和设备状态。
+```python
+@dataclass(frozen=True)
+class SampledToken:
+    request_id: str
+    token_id: int
+
+@dataclass(frozen=True)
+class ModelRunnerOutput:
+    sampled_tokens: tuple[SampledToken, ...]
+```
+
+logprobs、speculative acceptance 或设备诊断只有在对应版本出现真实消费者时再扩展。
 
 ### 3.4 Executor
 
 ```python
 class Executor(Protocol):
-    def initialize(self, config) -> None: ...
-    def determine_available_memory(self) -> list[int]: ...
-    def initialize_kv_cache(self, config) -> None: ...
     def execute(self, plan: SchedulerOutput) -> ModelRunnerOutput: ...
-    def shutdown(self) -> None: ...
 ```
 
-V1 使用单进程实现；V2 增加多进程实现，但 Engine 不感知具体进程模型。
+Engine 只依赖 `execute()`。V1 的 `SingleProcessExecutor` 额外提供显式 `shutdown()`，
+但生命周期方法不进入 Engine 所需的最小 protocol。V2 可以增加多进程实现和初始化
+协议，而不改变 Engine 的执行调用。
+
+### 3.5 ModelConfig 与 Model Loader
+
+- `config.ModelConfig` 是通用、只读的 Hugging Face metadata mapping；构造时统一校验
+  `architectures`，并提供通用字段读取方法，但不定义所有模型字段的并集。
+- `model_loader.load_model()` 负责模型位置解析、config IO、Hub commit 固定、checkpoint
+  发现和加载编排。
+- `models.registry` 是 architecture name 到 model class 的静态 mapping，不提供运行时
+  Registry object 或动态注册 API。
+- 具体模型从 `ModelConfig` 读取自身字段，并通过 `load_weights(tensor_iterable)` 解释
+  checkpoint parameter name 和参数布局。
+- `model_loader` 不导入具体模型，也不解释 Llama/Qwen 的字段或参数名称。
 
 ## 4. 版本路线
 

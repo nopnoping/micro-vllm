@@ -11,7 +11,7 @@ V1 必须回答以下问题：
 - KV cache 如何按 block 分配、共享、释放和抢占；
 - Scheduler 如何生成与设备执行解耦的执行计划；
 - ModelRunner 如何把计划转换为设备输入并访问 physical KV cache；
-- 模型如何声明 attention/KV 需求并加载 Hugging Face 权重。
+- 通用模型配置、架构实现和 Model Loader 如何分工并加载 Hugging Face 权重。
 
 ## 2. 当前实现顺序
 
@@ -19,8 +19,8 @@ V1 必须回答以下问题：
 |---|---|---|
 | V1.1 | Request、统一 Scheduler、Engine control loop、Executor contract | 已完成 |
 | V1.2 | 单类型 full-attention 逻辑 Paged KV Cache、prefix cache、preemption/recompute | 主体已完成 |
-| V1.3 | Physical KV Cache、reference full attention、Tiny Llama、ModelRunner、Worker、SingleProcessExecutor | 已完成 |
-| V1.4 | safetensors 权重加载、真实 Llama/Qwen checkpoint、完整 sampling 和离线 API | 当前阶段 |
+| V1.3 | Physical KV Cache、reference full attention、Tiny Llama execution、ModelRunner、Worker、SingleProcessExecutor | 已完成 |
+| V1.4 | Model Loader、真实 Llama/Qwen checkpoint、完整 sampling 和离线 API | 当前阶段 |
 | V1.5 | sliding window、chunked-local、多 KV cache group、Mistral/hybrid model | 延后实现 |
 | V1.6 | optimized attention、CUDA Graph/compile、benchmark 和性能收尾 | 待实现 |
 
@@ -174,8 +174,8 @@ V1 必须回答以下问题：
 - [x] victim 回到 WAITING 并从零 recompute。
 - [x] victim resume 时可以重新命中 prefix cache。
 - [x] 抢占过程不 double free，abort 被抢占 request 不泄漏 block。
-- [x] 使用真实模型验证 prefix cache on/off 输出一致。
-- [x] 使用真实模型验证 preempt/recompute 与无抢占输出一致。
+- [x] 使用随机初始化 tiny Llama 执行链路验证 prefix cache on/off 输出一致。
+- [x] 使用随机初始化 tiny Llama 执行链路验证 preempt/recompute 与无抢占输出一致。
 
 ## 6. V1.3：Full-Attention Model Execution（已完成）
 
@@ -212,7 +212,8 @@ V1 必须回答以下问题：
 
 ### Tiny Llama
 
-- [x] 定义最小 Llama architecture config，不建立万能 model config。
+- [x] 使用通用只读 `ModelConfig` 保存 HF metadata，由 Llama 读取自身所需字段。
+- [x] `ModelConfig` 不定义所有模型专属字段的并集。
 - [x] 实现 RMSNorm。
 - [x] 实现标准 Llama RoPE。
 - [x] 实现单卡 dense Linear、Embedding 和 LM head。
@@ -250,18 +251,65 @@ V1 必须回答以下问题：
 
 | 子阶段 | 内容 | 状态 | 技术清单 |
 |---|---|---|---|
-| V1.4A | Safetensors Checkpoint Source | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
-| V1.4B | Model Loader 与 HF checkpoint | 当前阶段 | [清单](../implementation/v1-model-loader-todo.md) |
-| V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 待实现 | 待生成 |
+| V1.4A | Safetensors Checkpoint Reader | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
+| V1.4B | Model Loader 与 HF checkpoint | 实现完成，待远端验证 | [清单](../implementation/v1-model-loader-todo.md) |
+| V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 当前阶段 | [清单](../implementation/v1-real-llama-integration-todo.md) |
 | V1.4D | Qwen dense model 与 checkpoint | 待实现 | 待生成 |
 | V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 待实现 | 待生成 |
 
+V1.4B 的代码与测试已经实现；2026-07-21 按当前约定暂不运行远端测试，因此不标记为
+“已完成”。V1.4C 可以继续开发，但其完成验收包含补跑 V1.4B 的远端测试。
+
+### 当前模型加载架构
+
+```text
+model name/path
+    -> model_loader.load_model()
+        -> local directory or pinned Hugging Face commit
+        -> config.json -> read-only ModelConfig
+        -> models.registry -> model class
+        -> SafetensorsCheckpoint.iter_tensors()
+        -> model.load_weights(tensor iterable)
+```
+
+- `config` 拥有共享、只读的 `ModelConfig`；构造时统一校验 `architectures` 并提供
+  通用字段读取方法，不解释 Llama/Qwen 专属语义。
+- `model_loader` 拥有路径/Hub 解析、config IO、commit 固定、checkpoint 下载与遍历，
+  但不导入具体模型或解释参数布局。
+- `models.registry` 是不可变的 architecture → model class mapping，不建立 Registry
+  object、动态 `register()` 或 plugin discovery。
+- 具体模型负责从 `ModelConfig` 读取字段、组装网络，并在 `load_weights()` 中解释
+  checkpoint parameter names。
+- checkpoint reader 一次只打开一个 safetensors shard；模型收到 tensor 后直接复制到
+  parameter，不维护独立的全量 missing/unexpected/duplicate 状态机。
+- 当前 `load_model()` 已能返回加载后的 CPU/eval 模型，但 Worker 仍接收
+  `ModelConfig`、再次调用 registry 并重新构造模型；V1.4C 负责打通这一集成断点。
+
+### 相对初始清单的设计调整
+
+| 初始设想 | 当前实现 | 调整原因 |
+|---|---|---|
+| 每个模型先转换为专属 config dataclass | 通用只读 `ModelConfig` 保存原始 metadata，具体模型读取自身字段 | 避免建立跨模型字段并集和重复 config adapter |
+| Registry object + resolved model factory | 静态不可变 architecture → model class mapping | 当前只有静态内置模型，不提前建设动态注册框架 |
+| `weights` package 和独立 parameter loader | `model_loader` 负责来源/IO/编排，具体模型实现 `load_weights()` | 参数名称和布局属于模型/layer 语义 |
+| Loader 汇总 missing/unexpected/duplicate/shape 状态 | checkpoint 结构由 reader 校验；模型按名称直接查找并用 `copy_` 复制 | 首版保留 Python/PyTorch 原生错误，减少重复状态机 |
+| V1 Loader 接收 size=1 `ParallelContext` | V1 不引入 parallel context | shard/placement 语义推迟到 V2 的真实 TP/PP 边界 |
+| checkpoint source 只面向本地目录 | 顶层 Model Loader 同时支持本地目录和 commit-pinned Hub repo | source reader 仍保持本地；Hub 只负责把远端文件解析到本地 cache |
+
+这些调整不改变 Scheduler、Paged KV Cache、ModelRunner 或 Attention 的 V1 核心控制流。
+后续分布式、量化和多模态继续沿用“Loader 提供 tensor stream，模型/layer 解释布局”的
+方向扩展。
+
 ### Model Loader 和模型接口
 
+- [x] 通用 `ModelConfig` 保留只读 HF metadata，不定义模型专属字段全集。
 - [x] `models` registry 根据 Hugging Face `architectures` 选择实现。
+- [x] registry 使用静态不可变 mapping，不提供动态注册机制。
 - [x] 模型类负责架构差异，不把模型判断放入 Scheduler/ModelRunner。
 - [x] 模型 `forward()` 与 `compute_logits()` 职责分离。
 - [x] 模型计算与 checkpoint IO 职责分离。
+- [x] 模型通过 `load_weights(tensor iterable)` 拥有参数名称和布局语义。
+- [x] Model Loader 支持本地目录、HF repo id 和可选静态 alias mapping；当前没有内置 alias。
 - [x] 公共 RMSNorm、RoPE、MLP、Embedding、Linear 和 Attention layer 可复用。
 - [x] 不实现难以理解的万能声明式 Transformer builder。
 
@@ -362,16 +410,16 @@ V1 必须回答以下问题：
 - [x] prefix hit 后 admission 和 block-aligned prompt 重算测试。
 - [x] preemption victim selection、recompute、prefix resume 和 abort 测试。
 - [x] finish/abort/pending-plan 的 block release 测试。
-- [x] mixed batch 与逐 request 真实模型执行结果一致。
-- [x] prefix cache on/off 真实模型输出一致。
-- [x] preempt/recompute 与无抢占真实模型输出一致。
+- [x] mixed batch 与逐 request 的随机 tiny Llama 执行结果一致。
+- [x] prefix cache on/off 的随机 tiny Llama 输出一致。
+- [x] preempt/recompute 与无抢占的随机 tiny Llama 输出一致。
 - [x] full attention 与 dense causal reference 对拍。
 - [x] tiny Llama hidden state、logits 和 GPU FP16 与 Transformers 对拍。
 
 ### 待补测试
 
 - [ ] sliding/chunked-local attention 与 dense reference 对拍。
-- [ ] Llama、Qwen 和 Mistral 最小权重端到端加载测试。
+- [ ] Llama、Qwen 和 Mistral 外部 checkpoint 端到端加载测试。
 - [ ] greedy 输出与 Transformers 逐 token 对拍。
 
 ### Trace 和指标
@@ -403,10 +451,10 @@ V1 必须回答以下问题：
 ## 12. V1 发布验收
 
 - [ ] 单 GPU 可加载至少两个真实的小型 dense 模型族并生成文本。
-- [x] decode 与 chunked prefill 在同一个真实模型 batch 中正确执行。
+- [x] decode 与 chunked prefill 在同一个随机 tiny Llama batch 中正确执行。
 - [x] 任意 Scheduler step 严格遵守 token 和 sequence budget。
-- [x] KV 空间不足时能抢占并最终正确完成真实模型请求，无 OOM 或 block 泄漏。
-- [x] prefix cache on/off 真实模型输出一致。
+- [x] KV 空间不足时能抢占并最终正确完成随机 tiny Llama 请求，无 block 泄漏。
+- [x] prefix cache on/off 的随机 tiny Llama 输出一致。
 - [x] full attention 有独立 reference correctness test。
 - [ ] sliding window 和 chunked-local 有独立 reference correctness test。
 - [ ] reference 与 optimized attention 通过数值对拍。

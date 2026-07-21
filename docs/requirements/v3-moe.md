@@ -59,7 +59,8 @@ class RoutingPlan:
 - [ ] 推荐首个模型选择 Mixtral 或结构清晰的 Qwen MoE。
 - [ ] 支持 routed expert 和 shared expert 权重命名映射。
 - [ ] 支持 packed expert 参数加载。
-- [ ] WeightLoader 根据 ExpertPlacement 只加载本 rank 的 expert。
+- [ ] MoE 模型/layer 的 `load_weights()` 根据 ExpertPlacement 只复制本 rank 的
+      expert，Model Loader 不解释 expert layout。
 - [ ] PP partition 后只有包含该 MoE layer 的 stage 加载对应 expert。
 - [ ] checkpoint expert 数与 config 不一致时明确报错。
 

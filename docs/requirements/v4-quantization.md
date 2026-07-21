@@ -29,9 +29,13 @@
 ```python
 class QuantMethod(Protocol):
     def create_weights(self, module, config, parallel_context) -> None: ...
-    def load_weights(self, module, source, parallel_context) -> None: ...
+    def load_weight(self, module, name, tensor, parallel_context) -> None: ...
     def apply(self, module, x: Tensor) -> Tensor: ...
 ```
+
+Model Loader 与模型之间仍传递 `(checkpoint_name, tensor)` stream。具体模型先解析
+parameter name，再把量化参数交给对应 layer/QuantMethod；QuantMethod 不读取路径、
+Hub 或 checkpoint source。
 
 ## 3. Reference Weight Quantization
 

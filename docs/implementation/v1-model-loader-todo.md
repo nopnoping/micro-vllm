@@ -2,8 +2,8 @@
 
 ## 1. 目标
 
-从用户提供的本地目录、Hugging Face repo id 或显式短名称构造并
-加载模型：
+从用户提供的本地目录、Hugging Face repo id 或可选静态短名称映射构造并
+加载模型。当前 alias mapping 为空，因此实际可用入口是本地目录和 repo id：
 
 ```text
 model name/path
@@ -17,23 +17,26 @@ model name/path
     -> model.load_weights(...)
 ```
 
-`model_loader` 只知道配置和权重在哪里；`models` 提供通用 config、
-architecture registry、具体模型结构和参数加载语义。
+`config` 提供通用只读 `ModelConfig`；`model_loader` 只知道配置和权重在哪里；
+`models` 提供 architecture registry、具体模型结构和参数加载语义。
 
 ## 2. 边界
 
 ### `model_loader` 负责
 
-- [x] 解析本地目录、HF repo id 和显式 alias。
+- [x] 解析本地目录和 HF repo id，并保留经过测试的静态 alias mapping 机制。
 - [x] 固定 Hub revision 对应的 commit。
 - [x] 读取 HF `config.json` 并构造通用 `ModelConfig`。
 - [x] 调用 models registry 获取模型类，不直接识别具体模型。
 - [x] 构造模型并传入 checkpoint tensor iterator。
 - [x] 发现和流式读取 safetensors checkpoint。
 
-### `models` 负责
+### `config` 负责
 
 - [x] 通用、只读的 `ModelConfig` 及必要字段读取方法。
+
+### `models` 负责
+
 - [x] architecture 名称到模型类的静态 registry。
 - [x] 具体模型直接读取自身所需的 config 字段和默认值。
 - [x] 模型结构、forward 和 logits 计算。
@@ -107,6 +110,7 @@ models/
 - [x] 本地和 HF 分支直接收敛到同一条模型构造与参数加载流程。
 - [x] 不为两个简单分支引入 `ModelSource` 协议或 source class。
 - [x] alias mapping 与 models registry 相互独立。
+- [x] 当前 alias mapping 为空，不宣称存在可用的内置短名称。
 - [x] 空模型名明确失败。
 
 ## 8. Phase 4：Hugging Face Hub

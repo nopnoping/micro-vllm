@@ -1,4 +1,4 @@
-# V1.4A Safetensors Checkpoint Source 实现清单
+# V1.4A Safetensors Checkpoint Reader 实现清单
 
 ## 1. 目标
 
@@ -11,7 +11,8 @@ local model directory
     -> single-file or sharded manifest
     -> one shard opened at a time
     -> Iterator[(weight_name, CPU tensor)]
-    -> parameter loader（下一阶段）
+    -> model_loader orchestration
+    -> model.load_weights(tensor iterable)
 ```
 
 本阶段完成后，调用方应能用同一个接口遍历单文件和多 shard checkpoint，
@@ -34,7 +35,7 @@ local model directory
 - Hugging Face Hub 下载、缓存、revision 或鉴权。
 - PyTorch `.bin`、GGUF 或其他 checkpoint 格式。
 - `config.json` 解析和 architecture 选择。
-- checkpoint 名称到模型参数名称的映射。
+- checkpoint 名称到模型参数名称的映射；该语义由具体模型的 `load_weights()` 拥有。
 - 参数复制、dtype/device 转换或模型初始化。
 - tied embedding、packed QKV、packed gate/up 的加载语义。
 - TP/PP shard、量化权重或远端 tensor source。
@@ -242,7 +243,7 @@ safetensors 文件内容不一致。
 6. `docs: complete checkpoint source milestone`
 
 提交不是强制按文件拆分；紧密耦合且无法独立验证的 discovery 与 iteration 改动可以
-合并，但不在同一提交中加入 Model Loader 或 parameter loader。
+合并，但不在同一提交中加入 Model Loader 编排或模型专属 `load_weights()`。
 
 ## 11. 远端验证
 
