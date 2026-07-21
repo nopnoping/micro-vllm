@@ -182,23 +182,33 @@ Worker 测试对旧 config 属性的引用，定向测试为 `8 passed in 1.10s`
 
 ### 参数
 
-- [ ] `load_model()` 加载单文件 tiny checkpoint。
-- [ ] `load_model()` 加载多 shard tiny checkpoint。
-- [ ] micro-vLLM 与 Transformers 的参数名称映射集合一致。
-- [ ] 每个 untied parameter 数值一致。
-- [ ] tied embedding 保持对象 identity 和数值一致。
-- [ ] 加载后 model 为 eval mode、CPU 默认 dtype。
-- [ ] 两次加载返回互不共享参数的模型实例。
+- [x] `load_model()` 加载单文件 tiny checkpoint。
+- [x] `load_model()` 加载多 shard tiny checkpoint。
+- [x] micro-vLLM 与 Transformers 的参数名称映射集合一致。
+- [x] 每个 untied parameter 数值一致。
+- [x] tied embedding 保持对象 identity 和数值一致。
+- [x] 加载后 model 为 eval mode、CPU 默认 dtype。
+- [x] 两次加载返回互不共享参数的模型实例。
 
 ### Forward 和 logits
 
-- [ ] 使用相同 token IDs 和 positions。
-- [ ] 为 micro-vLLM 创建等价 physical KV cache 和 metadata。
-- [ ] final hidden states 与 Transformers 对拍。
-- [ ] logits 与 Transformers 对拍。
-- [ ] CPU FP32 使用明确的 `atol`/`rtol`。
-- [ ] GPU FP16 使用单独、较宽且有依据的容差。
-- [ ] 失败报告包含 checkpoint、dtype、shape 和最大误差。
+- [x] 使用相同 token IDs 和 positions。
+- [x] 为 micro-vLLM 创建等价 physical KV cache 和 metadata。
+- [x] final hidden states 与 Transformers 对拍。
+- [x] logits 与 Transformers 对拍。
+- [x] CPU FP32 使用明确的 `atol`/`rtol`。
+- [x] GPU FP16 使用单独、较宽且有依据的容差。
+- [x] 失败报告包含 checkpoint、dtype、shape 和最大误差。
+
+`tests/integration/test_loaded_llama.py` 对单文件和分片 checkpoint 的完整
+state dict 做集合和逐 tensor 精确比较，并增加 tied checkpoint fixture 验证
+embedding/LM head identity。数值对拍使用同一组 `[1, 3, 5, 7]` token IDs、
+positions 和非连续 physical block table。CPU FP32 容差为 `atol=rtol=1e-5`；
+Tesla T4 FP16 容差为 `atol=rtol=3e-3`，与已有随机 tiny Llama 对拍一致。
+
+2026-07-21 Phase 2 远端验证：定向测试为 `9 passed in 1.31s`，其中
+GPU FP16 用例在 Tesla T4 上实际运行；完整默认测试为
+`412 passed, 1 skipped in 2.33s`。
 
 ## 8. Phase 3：Worker 模型注入
 
@@ -267,7 +277,7 @@ Worker 测试对旧 config 属性的引用，定向测试为 `8 passed in 1.10s`
 
 ### 新增
 
-- [ ] `tests/integration/test_loaded_llama.py`：本地 HF-format checkpoint 数值对拍。
+- [x] `tests/integration/test_loaded_llama.py`：本地 HF-format checkpoint 数值对拍。
 - [ ] `tests/integration/test_loaded_llama_engine.py`：loaded model Engine 语义。
 - [ ] `tests/integration/test_hub_llama.py`：显式公开模型测试。
 

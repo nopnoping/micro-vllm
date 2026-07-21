@@ -33,6 +33,17 @@ def sharded_tiny_hf_llama_checkpoint(
     )
 
 
+@pytest.fixture
+def tied_tiny_hf_llama_checkpoint(
+    tmp_path: Path,
+) -> tuple[LlamaForCausalLM, Path]:
+    """Create one deterministic HF Llama checkpoint with tied embeddings."""
+    return _save_tiny_hf_llama_checkpoint(
+        tmp_path / "tied-tiny-llama",
+        tie_word_embeddings=True,
+    )
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Keep external model access opt-in for every pytest invocation."""
     if os.environ.get(_MODEL_TEST_ENV) == "1":
@@ -50,6 +61,7 @@ def _save_tiny_hf_llama_checkpoint(
     checkpoint_path: Path,
     *,
     max_shard_size: str | None = None,
+    tie_word_embeddings: bool = False,
 ) -> tuple[LlamaForCausalLM, Path]:
     config = LlamaConfig(
         architectures=["LlamaForCausalLM"],
@@ -63,7 +75,7 @@ def _save_tiny_hf_llama_checkpoint(
         rms_norm_eps=1e-5,
         rope_theta=10_000.0,
         hidden_act="silu",
-        tie_word_embeddings=False,
+        tie_word_embeddings=tie_word_embeddings,
         attention_bias=False,
         attention_dropout=0.0,
         mlp_bias=False,
