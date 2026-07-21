@@ -142,13 +142,13 @@ output text、output token IDs 和 `FinishReason`。它是 frozen snapshot，不
 
 ## 7. Phase 3：Tokenizer Adapter
 
-- [ ] Transformers 成为 tokenizer-backed API 的 runtime dependency。
-- [ ] tokenizer source 与 model source 默认共享 path/repo/revision/cache/offline 参数。
-- [ ] 定义 LLM 实际消费的窄 tokenizer protocol，测试可注入 deterministic fake。
-- [ ] encode 返回自有 token ID tuple，decode 只处理 output IDs。
-- [ ] tokenizer EOS 在高层注入，Engine 的 `None` 语义不改变。
-- [ ] public checkpoint 支持 `local_files_only=True` 完全离线 tokenizer reload。
-- [ ] 不使用 `trust_remote_code`。
+- [x] Transformers 成为 tokenizer-backed API 的 runtime dependency。
+- [x] tokenizer source 接受与 model source 相同的 path/repo/revision/cache/offline 参数。
+- [x] 定义 LLM 实际消费的窄 tokenizer protocol，测试可注入 deterministic fake。
+- [x] encode 返回自有 token ID tuple，decode 只处理 output IDs。
+- [x] tokenizer EOS 通过高层 helper 注入，Engine 的 `None` 语义不改变。
+- [x] public checkpoint 支持 `local_files_only=True` 完全离线 tokenizer reload。
+- [x] 不使用 `trust_remote_code`。
 
 ## 8. Phase 4：LLM.generate Offline API
 
@@ -207,11 +207,18 @@ ssh aliyun-ecs \
 
 ## 12. 实现状态
 
-2026-07-21 已完成 Phase 0–2。`SamplingParams` 新增 temperature、top-k、top-p、
+2026-07-21 已完成 Phase 0–3。`SamplingParams` 新增 temperature、top-k、top-p、
 seed 和明确的 `is_greedy` 判定，同时保持现有 `max_tokens`/EOS 调用兼容。
 `ScheduledRequest` 在 sampling boundary 携带 frozen params/sample index；ModelRunner
 使用通用 Sampler 完成 greedy、temperature、top-k 和 top-p，warmup 不伪造用户参数。
 Phase 2 进一步验证 seeded request 在 independent/mixed、不同 token budget、chunked
 prefill 和 preemption 下序列一致；unseeded request 在 admission 时固化 effective seed，
 pending retry 不换 token，Sampler 不保存 request state。定向回归为 `95 passed`，完整
-默认回归为 `522 passed, 4 skipped`。Phase 3 tokenizer adapter 尚未实现。
+默认回归为 `522 passed, 4 skipped`。
+
+Phase 3 将 Transformers 4.51+ 提升为 runtime dependency，增加窄 `Tokenizer` protocol、
+tuple-owning adapter、HF source 参数转发和高层 EOS helper。固定 Qwen3 revision 首次
+tokenizer 加载为 10.463s，cache 重载约 0.5–0.7s，`HF_HUB_OFFLINE=1` 验收通过；
+固定 prompt tokens 为 `[9707, 11, 281, 3279, 6529, 0]`。tokenizer 定向回归为
+`4 passed, 1 skipped`，完整默认回归为 `526 passed, 5 skipped`。Phase 4
+`LLM.generate()` 尚未实现。

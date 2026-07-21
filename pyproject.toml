@@ -10,6 +10,8 @@ requires-python = ">=3.10"
 dependencies = [
     "huggingface-hub>=0.26,<2",
     "safetensors>=0.4,<1",
+    # Tokenizer-backed offline API and validated Qwen3 model metadata.
+    "transformers>=4.51,<5",
     # Validated on the remote Tesla T4 baseline with PyTorch 2.8.x.
     "torch>=2.4,<2.9",
 ]
@@ -17,8 +19,6 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=8.0",
-    # Used only to construct reference Llama/Qwen models for parity tests.
-    "transformers>=4.51,<5",
 ]
 
 [tool.setuptools.packages.find]

@@ -260,7 +260,7 @@ V1 必须回答以下问题：
 | V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
 | V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 | [清单](../implementation/v1-real-llama-integration-todo.md) |
 | V1.4D | Qwen dense model 与 checkpoint | 已完成 | [清单](../implementation/v1-qwen-integration-todo.md) |
-| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 进行中（Phase 2 已完成） | [清单](../implementation/v1-sampling-offline-api-todo.md) |
+| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 进行中（Phase 3 已完成） | [清单](../implementation/v1-sampling-offline-api-todo.md) |
 
 V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
 验证。V1.4C 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
@@ -271,7 +271,8 @@ CPU/GPU、ModelRunner、Engine、在线/离线 cache 对拍。
 V1.4E 已冻结 sampling snapshot、request-local seed、tokenizer ownership 和同步批量
 `LLM.generate()` 的实现边界，并完成 SamplingParams、执行计划 snapshot、sample index
 以及 temperature/top-k/top-p Sampler，并验证跨 batching/chunking/preemption 的
-request-local 随机语义；tokenizer adapter 和高层 API 尚未实现。
+request-local 随机语义，并完成可离线重载的 Transformers tokenizer adapter；高层
+`LLM.generate()` 尚未实现。
 
 ### 当前模型加载架构
 
@@ -371,10 +372,10 @@ model name/path
 ### Sampling 和离线 API
 
 - [x] greedy decoding。
-- [ ] temperature sampling。
-- [ ] top-k sampling。
-- [ ] top-p sampling。
-- [ ] per-request random generator/seed。
+- [x] temperature sampling。
+- [x] top-k sampling。
+- [x] top-p sampling。
+- [x] per-request deterministic seed/sample index。
 - [x] EOS、ignore EOS 和 max tokens 控制流。
 - [x] max model length admission 和终止原因。
 - [ ] tokenizer-backed `LLM.generate()`。
