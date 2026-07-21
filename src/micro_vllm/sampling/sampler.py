@@ -11,6 +11,8 @@ from micro_vllm.sampling.params import SamplingParams
 class Sampler:
     """Apply one immutable token-selection policy per logits row."""
 
+    __slots__ = ()
+
     def __call__(
         self,
         logits: torch.Tensor,

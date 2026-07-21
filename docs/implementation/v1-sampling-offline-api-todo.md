@@ -68,8 +68,9 @@ Scheduler 仍拥有 Request 和 lifecycle；只有当 request 在当前 step 需
 `sample_index` 使 pending plan 重试产生同一 token，并避免在 ModelRunner 中维护无法随
 finish/abort 清理的 request RNG 字典。
 
-未指定 seed 时允许非确定性 sampling，但一次 execute 内每行仍使用独立 generator。
-测试只对显式 seed 宣称跨 batching/preemption 可重复。
+未指定 seed 时，Request admission 一次性生成并保存 effective request seed；因此不同
+request 默认仍具有非确定性，但同一 pending plan retry 保持稳定。测试只对用户显式
+seed 宣称跨独立运行、batching 和 preemption 可重复。
 
 ### 3.3 Tokenizer 与 LLM 所有权
 
@@ -131,13 +132,13 @@ output text、output token IDs 和 `FinishReason`。它是 frozen snapshot，不
 
 ## 6. Phase 2：Engine 随机语义
 
-- [ ] 同一 seeded request 在独立、mixed 和不同 token budget 下输出一致。
-- [ ] seeded request 不受同 batch 其他 request 加入/结束影响。
-- [ ] chunked prefill 不提前消费 RNG。
-- [ ] preemption/recompute 不重复或跳过 sample index。
-- [ ] pending plan retry 返回同一 sampled token。
-- [ ] EOS、ignore EOS、max tokens 和 model length 对 stochastic sampling 仍正确。
-- [ ] finished/aborted request 无 sampler state 泄漏。
+- [x] 同一 seeded request 在独立、mixed 和不同 token budget 下输出一致。
+- [x] seeded request 不受同 batch 其他 request 加入/结束影响。
+- [x] chunked prefill 不提前消费 RNG。
+- [x] preemption/recompute 不重复或跳过 sample index。
+- [x] pending plan retry 返回同一 sampled token。
+- [x] EOS、ignore EOS、max tokens 和 model length 对 stochastic sampling 仍正确。
+- [x] finished/aborted request 无 sampler state 泄漏。
 
 ## 7. Phase 3：Tokenizer Adapter
 
@@ -206,9 +207,11 @@ ssh aliyun-ecs \
 
 ## 12. 实现状态
 
-2026-07-21 已完成 Phase 0–1。`SamplingParams` 新增 temperature、top-k、top-p、
+2026-07-21 已完成 Phase 0–2。`SamplingParams` 新增 temperature、top-k、top-p、
 seed 和明确的 `is_greedy` 判定，同时保持现有 `max_tokens`/EOS 调用兼容。
 `ScheduledRequest` 在 sampling boundary 携带 frozen params/sample index；ModelRunner
 使用通用 Sampler 完成 greedy、temperature、top-k 和 top-p，warmup 不伪造用户参数。
-Phase 1 完整默认回归为 `513 passed, 4 skipped`。Phase 2 的跨 Engine batching、
-preemption 和 pending-plan retry 随机语义尚未完成。
+Phase 2 进一步验证 seeded request 在 independent/mixed、不同 token budget、chunked
+prefill 和 preemption 下序列一致；unseeded request 在 admission 时固化 effective seed，
+pending retry 不换 token，Sampler 不保存 request state。定向回归为 `95 passed`，完整
+默认回归为 `522 passed, 4 skipped`。Phase 3 tokenizer adapter 尚未实现。

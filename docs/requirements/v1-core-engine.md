@@ -260,7 +260,7 @@ V1 必须回答以下问题：
 | V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
 | V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 | [清单](../implementation/v1-real-llama-integration-todo.md) |
 | V1.4D | Qwen dense model 与 checkpoint | 已完成 | [清单](../implementation/v1-qwen-integration-todo.md) |
-| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 进行中（Phase 1 已完成） | [清单](../implementation/v1-sampling-offline-api-todo.md) |
+| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 进行中（Phase 2 已完成） | [清单](../implementation/v1-sampling-offline-api-todo.md) |
 
 V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
 验证。V1.4C 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
@@ -270,7 +270,8 @@ V1.4D 已实现 Qwen3 的显式 head dimension、Q/K RMSNorm、tied weights 和�
 CPU/GPU、ModelRunner、Engine、在线/离线 cache 对拍。
 V1.4E 已冻结 sampling snapshot、request-local seed、tokenizer ownership 和同步批量
 `LLM.generate()` 的实现边界，并完成 SamplingParams、执行计划 snapshot、sample index
-以及 temperature/top-k/top-p Sampler；Engine 随机语义和高层 API 尚未实现。
+以及 temperature/top-k/top-p Sampler，并验证跨 batching/chunking/preemption 的
+request-local 随机语义；tokenizer adapter 和高层 API 尚未实现。
 
 ### 当前模型加载架构
 

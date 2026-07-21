@@ -67,6 +67,29 @@ def test_all_token_ids_is_an_immutable_snapshot() -> None:
     assert request.all_token_ids == (1, 2, 3, 4, 5)
 
 
+def test_stochastic_request_assigns_one_effective_seed() -> None:
+    params = SamplingParams(max_tokens=4, temperature=1.0)
+
+    request = Request("request", [1], params)
+
+    assert params.seed is None
+    assert request.sampling_params is not params
+    assert request.sampling_params.seed is not None
+    assert 0 <= request.sampling_params.seed < 2**63
+
+
+def test_explicit_seed_and_greedy_params_are_preserved() -> None:
+    seeded = SamplingParams(max_tokens=4, temperature=1.0, seed=7)
+    greedy = SamplingParams(max_tokens=4)
+
+    seeded_request = Request("seeded", [1], seeded)
+    greedy_request = Request("greedy", [1], greedy)
+
+    assert seeded_request.sampling_params is seeded
+    assert greedy_request.sampling_params is greedy
+    assert greedy_request.sampling_params.seed is None
+
+
 def test_append_sampled_token_updates_known_and_pending_tokens() -> None:
     request = make_request()
     request.transition_to(RequestStatus.RUNNING)

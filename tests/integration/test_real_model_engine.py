@@ -387,3 +387,222 @@ def test_abort_releases_blocks_and_removes_request_from_future_plans() -> None:
         request.request_id
         for request in harness.executor.plans[-1].scheduled_requests
     ] == ["survivor"]
+
+
+def test_seeded_sampling_matches_across_full_chunked_and_mixed_batches() -> None:
+    params = SamplingParams(
+        max_tokens=4,
+        temperature=0.8,
+        top_k=16,
+        top_p=0.9,
+        seed=17,
+    )
+    prompt = [1, 3, 5, 7, 9]
+    full = make_real_engine(token_budget=8, sequence_budget=1)
+    chunked = make_real_engine(token_budget=2, sequence_budget=1)
+    for harness in (full, chunked):
+        harness.engine.add_request("target", prompt, params)
+        run_to_completion(harness)
+
+    mixed = make_real_engine(token_budget=8, sequence_budget=2)
+    mixed.engine.add_request("other", [2, 4], SamplingParams(max_tokens=2))
+    mixed.engine.add_request("target", prompt, params)
+    run_to_completion(mixed)
+
+    assert request_output_tokens(full, "target") == request_output_tokens(
+        chunked,
+        "target",
+    )
+    assert request_output_tokens(full, "target") == request_output_tokens(
+        mixed,
+        "target",
+    )
+    assert [
+        plan.scheduled_requests[0].requires_sampling
+        for plan in chunked.executor.plans[:3]
+    ] == [False, False, True]
+    assert [
+        plan.scheduled_requests[0].sample_index
+        for plan in chunked.executor.plans[:3]
+    ] == [None, None, 0]
+
+
+def test_two_seeded_requests_match_independent_execution_when_interleaved() -> None:
+    first_params = SamplingParams(
+        max_tokens=3,
+        temperature=1.0,
+        top_p=0.8,
+        seed=11,
+    )
+    second_params = SamplingParams(
+        max_tokens=3,
+        temperature=0.7,
+        top_k=8,
+        seed=29,
+    )
+    mixed = make_real_engine(token_budget=4, sequence_budget=2)
+    mixed.engine.add_request("first", [1], first_params)
+    mixed.engine.step()
+    mixed.engine.add_request("second", [3, 4, 5], second_params)
+    run_to_completion(mixed)
+
+    first_only = make_real_engine(token_budget=2, sequence_budget=1)
+    first_only.engine.add_request("first", [1], first_params)
+    run_to_completion(first_only)
+    second_only = make_real_engine(token_budget=8, sequence_budget=1)
+    second_only.engine.add_request("second", [3, 4, 5], second_params)
+    run_to_completion(second_only)
+
+    assert request_output_tokens(mixed, "first") == request_output_tokens(
+        first_only,
+        "first",
+    )
+    assert request_output_tokens(mixed, "second") == request_output_tokens(
+        second_only,
+        "second",
+    )
+
+
+def test_seeded_sampling_survives_preemption_without_skipping_index() -> None:
+    params = SamplingParams(
+        max_tokens=2,
+        temperature=1.0,
+        top_k=12,
+        seed=23,
+    )
+    preempted = make_real_engine(
+        token_budget=4,
+        sequence_budget=2,
+        block_size=2,
+        num_blocks=2,
+    )
+    baseline = make_real_engine(
+        token_budget=4,
+        sequence_budget=2,
+        block_size=2,
+        num_blocks=4,
+    )
+    for harness in (preempted, baseline):
+        harness.engine.add_request("first", [1, 2], params)
+        harness.engine.add_request("second", [3, 4], params)
+        run_to_completion(harness)
+
+    assert preempted.executor.plans[1].preempted_request_ids == ("second",)
+    resumed = preempted.executor.plans[2].scheduled_requests[0]
+    assert resumed.request_id == "second"
+    assert resumed.sample_index == 1
+    for request_id in ("first", "second"):
+        assert request_output_tokens(
+            preempted,
+            request_id,
+        ) == request_output_tokens(baseline, request_id)
+
+
+def test_pending_sampling_plan_retry_returns_identical_token() -> None:
+    harness = make_real_engine(token_budget=4, sequence_budget=1)
+    params = SamplingParams(
+        max_tokens=2,
+        temperature=1.0,
+        top_p=0.9,
+        seed=31,
+    )
+    harness.engine.add_request("request", [1, 2], params)
+
+    plan = harness.scheduler.schedule()
+    first_result = harness.executor.execute(plan)
+    second_result = harness.executor.execute(plan)
+
+    assert harness.scheduler.schedule() is plan
+    assert plan.scheduled_requests[0].sample_index == 0
+    assert first_result == second_result
+    harness.scheduler.update(plan, second_result)
+    next_plan = harness.scheduler.schedule()
+    assert next_plan.scheduled_requests[0].sample_index == 1
+
+
+def test_unseeded_request_retry_uses_admission_seed() -> None:
+    harness = make_real_engine(token_budget=4, sequence_budget=1)
+    harness.engine.add_request(
+        "request",
+        [1, 2],
+        SamplingParams(max_tokens=2, temperature=1.0),
+    )
+    request = harness.scheduler.get_request("request")
+    assert request is not None
+    assert request.sampling_params.seed is not None
+
+    plan = harness.scheduler.schedule()
+    first_result = harness.executor.execute(plan)
+    second_result = harness.executor.execute(plan)
+
+    assert plan.scheduled_requests[0].sampling_params is request.sampling_params
+    assert first_result == second_result
+
+
+def test_stochastic_eos_ignore_eos_and_model_length_termination() -> None:
+    params = SamplingParams(max_tokens=1, temperature=1.0, seed=41)
+    source = make_real_engine()
+    source.engine.add_request("source", [5], params)
+    first_token = run_to_completion(source)["source"].output_token_ids[0]
+
+    eos = make_real_engine()
+    eos.engine.add_request(
+        "eos",
+        [5],
+        SamplingParams(
+            max_tokens=4,
+            eos_token_id=first_token,
+            temperature=1.0,
+            seed=41,
+        ),
+    )
+    eos_output = run_to_completion(eos)["eos"]
+
+    ignored = make_real_engine()
+    ignored.engine.add_request(
+        "ignored",
+        [5],
+        SamplingParams(
+            max_tokens=2,
+            eos_token_id=first_token,
+            ignore_eos=True,
+            temperature=1.0,
+            seed=41,
+        ),
+    )
+    ignored_output = run_to_completion(ignored)["ignored"]
+
+    model_length = make_real_engine(max_model_len=2)
+    model_length.engine.add_request(
+        "model-length",
+        [5],
+        SamplingParams(max_tokens=4, temperature=1.0, seed=41),
+    )
+    model_length_output = run_to_completion(model_length)["model-length"]
+
+    assert eos_output.output_token_ids == (first_token,)
+    assert eos_output.finish_reason is FinishReason.EOS
+    assert ignored_output.finish_reason is FinishReason.LENGTH
+    assert len(ignored_output.output_token_ids) == 2
+    assert model_length_output.finish_reason is FinishReason.MODEL_LENGTH
+
+
+def test_aborted_stochastic_request_leaves_no_sampler_state() -> None:
+    harness = make_real_engine(
+        token_budget=2,
+        sequence_budget=1,
+        block_size=2,
+        num_blocks=2,
+    )
+    harness.engine.add_request(
+        "aborted",
+        [1, 2, 3],
+        SamplingParams(max_tokens=2, temperature=1.0, seed=47),
+    )
+    assert harness.engine.step() == ()
+    assert harness.engine.abort_request("aborted") is True
+
+    model_runner = harness.worker._model_runner
+    assert model_runner is not None
+    assert not hasattr(model_runner._sampler, "__dict__")
+    assert harness.cache_manager.num_free_blocks == 2

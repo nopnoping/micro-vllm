@@ -1,7 +1,8 @@
 """Request state and lifecycle domain objects."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, auto
+import secrets
 
 from micro_vllm.sampling.params import SamplingParams
 
@@ -64,6 +65,14 @@ class Request:
         # lifecycle operations.
         self.prompt_token_ids = list(self.prompt_token_ids)
         self.output_token_ids = list(self.output_token_ids)
+        if (
+            not self.sampling_params.is_greedy
+            and self.sampling_params.seed is None
+        ):
+            self.sampling_params = replace(
+                self.sampling_params,
+                seed=secrets.randbits(63),
+            )
 
         if not 0 <= self.num_computed_tokens <= self.num_known_tokens:
             raise ValueError(
