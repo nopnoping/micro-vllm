@@ -112,7 +112,11 @@ def test_cpu_worker_executes_reference_model() -> None:
 
     assert len(output.sampled_tokens) == 1
     assert output.sampled_tokens[0].request_id == "request-1"
-    assert 0 <= output.sampled_tokens[0].token_id < make_model_config().vocab_size
+    assert (
+        0
+        <= output.sampled_tokens[0].token_id
+        < make_model_config().require_positive_int("vocab_size")
+    )
 
 
 @pytest.mark.gpu
@@ -124,4 +128,8 @@ def test_gpu_worker_executes_reference_model() -> None:
 
     assert len(output.sampled_tokens) == 1
     assert output.sampled_tokens[0].request_id == "request-1"
-    assert 0 <= output.sampled_tokens[0].token_id < make_model_config().vocab_size
+    assert (
+        0
+        <= output.sampled_tokens[0].token_id
+        < make_model_config().require_positive_int("vocab_size")
+    )

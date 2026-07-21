@@ -86,12 +86,12 @@ class LlamaModel(nn.Module):
     ) -> None:
         super().__init__()
         values = config.values
-        vocab_size = values["vocab_size"]
-        hidden_size = values["hidden_size"]
-        intermediate_size = values["intermediate_size"]
-        num_hidden_layers = values["num_hidden_layers"]
-        num_attention_heads = values["num_attention_heads"]
-        num_key_value_heads = values.get(
+        vocab_size = config.require_positive_int("vocab_size")
+        hidden_size = config.require_positive_int("hidden_size")
+        intermediate_size = config.require_positive_int("intermediate_size")
+        num_hidden_layers = config.require_positive_int("num_hidden_layers")
+        num_attention_heads = config.require_positive_int("num_attention_heads")
+        num_key_value_heads = config.positive_int(
             "num_key_value_heads",
             num_attention_heads,
         )
