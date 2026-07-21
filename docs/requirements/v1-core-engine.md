@@ -257,13 +257,14 @@ V1 必须回答以下问题：
 | 子阶段 | 内容 | 状态 | 技术清单 |
 |---|---|---|---|
 | V1.4A | Safetensors Checkpoint Reader | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
-| V1.4B | Model Loader 与 HF checkpoint | 实现完成，待远端验证 | [清单](../implementation/v1-model-loader-todo.md) |
+| V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
 | V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 当前阶段 | [清单](../implementation/v1-real-llama-integration-todo.md) |
 | V1.4D | Qwen dense model 与 checkpoint | 待实现 | 待生成 |
 | V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 待实现 | 待生成 |
 
-V1.4B 的代码与测试已经实现；2026-07-21 按当前约定暂不运行远端测试，因此不标记为
-“已完成”。V1.4C 可以继续开发，但其完成验收包含补跑 V1.4B 的远端测试。
+V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
+验证。V1.4C Phase 4 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
+SingleProcessExecutor 和 Engine；公开固定 commit checkpoint 验收留在 Phase 5。
 
 ### 当前模型加载架构
 
@@ -347,6 +348,12 @@ model name/path
 - [ ] 加载真实 Qwen2/Qwen3 dense checkpoint。
 - [ ] Llama 和 Qwen greedy 输出与 Transformers 逐 token 对拍。
 - [ ] 至少两个真实小型模型族完成端到端生成。
+- [x] 本地标准 HF-format GQA Llama checkpoint 经 ModelRunner initializer 加载并完成
+      CPU/GPU Engine generation。
+- [x] loaded Llama 的 full/chunked prefill 和多 token greedy decode 与 Transformers
+      逐 token 一致。
+- [x] loaded Llama 的 mixed batch、prefix cache、preemption/recompute、block reuse 和
+      finish/abort KV 生命周期通过端到端测试。
 
 ### Sampling 和离线 API
 
@@ -436,8 +443,8 @@ model name/path
 ### 待补测试
 
 - [ ] sliding/chunked-local attention 与 dense reference 对拍。
-- [ ] Llama、Qwen 和 Mistral 外部 checkpoint 端到端加载测试。
-- [ ] greedy 输出与 Transformers 逐 token 对拍。
+- [ ] 固定 commit 的公开 Llama checkpoint 端到端 GPU 验收。
+- [ ] Qwen 和 Mistral 外部 checkpoint 端到端加载测试。
 
 ### Trace 和指标
 

@@ -32,22 +32,22 @@ Paged KV 执行语义，并消除 Worker 原先重新构造随机模型的断点
 - tiny Llama 与 Transformers 的 forward/logits 数值对拍；
 - 随机初始化 Llama 的 Engine、chunked prefill、prefix cache 和 preemption 测试。
 
-2026-07-21 按用户决定暂不运行远端测试，因此 V1.4B 当前为“实现完成、待远端
-验证”。本清单不把未运行的测试视为已通过。
+2026-07-21 已在 `aliyun-ecs` 补完 V1.4B 的 Model Loader、CPU/GPU 数值对拍和完整
+回归；本清单只按实际远端证据勾选完成项。
 
 ## 3. 范围
 
 ### 本阶段实现
 
-- [ ] 使用 Transformers 生成标准 HF 格式 tiny Llama checkpoint 并通过
+- [x] 使用 Transformers 生成标准 HF 格式 tiny Llama checkpoint 并通过
       `load_model()` 加载。
-- [ ] 校验加载后的参数、hidden states 和 logits 与 Transformers 一致。
-- [ ] ModelRunner 调用延迟 initializer 构造或加载模型，并持有模型生命周期。
-- [ ] 使用 loaded model 打通 Worker、Executor 和 Engine。
+- [x] 校验加载后的参数、hidden states 和 logits 与 Transformers 一致。
+- [x] ModelRunner 调用延迟 initializer 构造或加载模型，并持有模型生命周期。
+- [x] 使用 loaded model 打通 Worker、Executor 和 Engine。
 - [ ] 真实 checkpoint 的 full/chunked prefill、decode 和 greedy token 与
       Transformers 对拍。
 - [ ] 使用一个公开、固定 commit 的小型 Llama-family checkpoint 完成远端 smoke test。
-- [ ] 在 loaded model 上验证 prefix cache、preemption/recompute 和 block reuse。
+- [x] 在 loaded model 上验证 prefix cache、preemption/recompute 和 block reuse。
 
 ### 本阶段不实现
 
@@ -79,19 +79,19 @@ worker = Worker(
 cache_config = worker.cache_config  # actual profiled capacity for control plane
 ```
 
-- [ ] Worker 不再调用 models registry。
-- [ ] Worker 不识别 Llama/Qwen architecture。
-- [ ] Worker 只把 initializer 交给 ModelRunner，不直接调用或保留 model。
-- [ ] ModelRunner 调用 initializer，校验模型 contract，并持有 model。
-- [ ] ModelRunner 负责模型 device/dtype placement 和 eval mode。
-- [ ] ModelRunner 在最终 KV cache 分配前执行 warmup/profile。
-- [ ] ModelRunner 计算 available GPU KV bytes 和 bytes per block，推导实际 block 数。
-- [ ] `initialize_kv_cache()` 不接收外部分配的 cache 或最终 block 数。
-- [ ] ModelRunner 创建并拥有 Physical KV tensor storage。
-- [ ] Worker 向 control plane 暴露 runner 返回的实际 `CacheConfig`。
-- [ ] shutdown 释放 ModelRunner 的 model/cache tensor 引用，
+- [x] Worker 不再调用 models registry。
+- [x] Worker 不识别 Llama/Qwen architecture。
+- [x] Worker 只把 initializer 交给 ModelRunner，不直接调用或保留 model。
+- [x] ModelRunner 调用 initializer，校验模型 contract，并持有 model。
+- [x] ModelRunner 负责模型 device/dtype placement 和 eval mode。
+- [x] ModelRunner 在最终 KV cache 分配前执行 warmup/profile。
+- [x] ModelRunner 计算 available GPU KV bytes 和 bytes per block，推导实际 block 数。
+- [x] `initialize_kv_cache()` 不接收外部分配的 cache 或最终 block 数。
+- [x] ModelRunner 创建并拥有 Physical KV tensor storage。
+- [x] Worker 向 control plane 暴露 runner 返回的实际 `CacheConfig`。
+- [x] shutdown 释放 ModelRunner 的 model/cache tensor 引用，
       不修改 checkpoint/cache 文件。
-- [ ] 不同时保留“config 构造”“model 实例注入”和“initializer”多套 Worker 主路径。
+- [x] 不同时保留“config 构造”“model 实例注入”和“initializer”多套 Worker 主路径。
 
 如果静态类型需要公共模型契约，只定义 ModelRunner 实际消费的窄 protocol：
 `config`、model call 和 `compute_logits()`；不建立通用模型基类。
@@ -103,11 +103,12 @@ non-KV memory 和 peak activation；CPU reference path 因无 GPU profile，使�
 
 ### 4.2 Loader 与执行设备分离
 
-- [ ] `load_model()` 继续返回 CPU 默认 dtype、eval mode 模型。
-- [ ] checkpoint source 继续只产生 CPU tensor。
-- [ ] ModelRunner 是模型 device/dtype placement 的唯一位置。
-- [ ] Model Loader 不创建 KV cache，不读取 SchedulerConfig。
-- [ ] 本阶段记录 CPU model 和目标 device model 的峰值内存限制，但不引入 meta loading。
+- [x] `load_model()` 继续返回 CPU 默认 dtype、eval mode 模型。
+- [x] checkpoint source 继续只产生 CPU tensor。
+- [x] ModelRunner 是模型 device/dtype placement 的唯一位置。
+- [x] Model Loader 不创建 KV cache，不读取 SchedulerConfig。
+- [x] 通过 ModelRunner warmup/profile 记录目标 device 峰值激活和可用 KV memory；
+      不引入 meta loading。
 
 ### 4.3 两级 checkpoint 验证
 
@@ -265,27 +266,38 @@ recording-worker 边界不构造模型，无需改变；真实 Engine fixture �
 
 ### 最小端到端
 
-- [ ] 从 HF-format tiny checkpoint 调用 `load_model()`。
-- [ ] 由 ModelRunner initializer 调用 `load_model()`，并接入 SingleProcessExecutor。
-- [ ] Engine 从 tokenized request 生成至少一个 greedy token。
-- [ ] output token 通过 request ID 返回。
-- [ ] EOS、max tokens 和 max model length 行为不回归。
+- [x] 从 HF-format tiny checkpoint 调用 `load_model()`。
+- [x] 由 ModelRunner initializer 调用 `load_model()`，并接入 SingleProcessExecutor。
+- [x] Engine 从 tokenized request 生成至少一个 greedy token。
+- [x] output token 通过 request ID 返回。
+- [x] EOS、max tokens 和 max model length 行为不回归。
 
 ### Chunked prefill 和 decode
 
-- [ ] 一次 full prefill 与多步 chunked prefill 产生相同首 token。
-- [ ] 多 token greedy decode 与 Transformers 逐 token 一致。
-- [ ] mixed decode/prefill batch 与逐 request 独立执行一致。
-- [ ] 测试至少包含 GQA 配置。
-- [ ] 不通过文本“看起来合理”判断正确性。
+- [x] 一次 full prefill 与多步 chunked prefill 产生相同首 token。
+- [x] 多 token greedy decode 与 Transformers 逐 token 一致。
+- [x] mixed decode/prefill batch 与逐 request 独立执行一致。
+- [x] 测试至少包含 GQA 配置。
+- [x] 不通过文本“看起来合理”判断正确性。
 
 ### KV 生命周期
 
-- [ ] prefix cache on/off 的完整 output token IDs 一致。
-- [ ] prefix hit 确实复用相同 physical block IDs。
-- [ ] preemption/recompute 与无抢占 output token IDs 一致。
-- [ ] physical block 释放复用后无 stale KV 污染。
-- [ ] 请求结束和 abort 后没有 logical block reference 泄漏。
+- [x] prefix cache on/off 的完整 output token IDs 一致。
+- [x] prefix hit 确实复用相同 physical block IDs。
+- [x] preemption/recompute 与无抢占 output token IDs 一致。
+- [x] physical block 释放复用后无 stale KV 污染。
+- [x] 请求结束和 abort 后没有 logical block reference 泄漏。
+
+`tests/integration/test_loaded_llama_engine.py` 使用标准 GQA tiny checkpoint，且
+`load_model()` 只在 ModelRunner initializer 内调用。CPU 用例逐 token 与 Transformers
+full-sequence greedy reference 对拍，并覆盖 full/chunked prefill、mixed batch、prefix
+hit、preemption/recompute、physical block reuse、EOS/length/model length 和 abort。
+GPU FP16 用例在 Tesla T4 上同时覆盖 checkpoint placement、warmup/profile、KV cache
+allocation 和两步 greedy decode。
+
+2026-07-21 Phase 4 远端验证：新增 loaded-engine 测试为 `10 passed in 3.53s`；
+Model Loader、Models、Worker、Executor、loaded logits 和 loaded Engine 定向回归为
+`170 passed in 5.14s`；完整默认测试为 `438 passed, 1 skipped in 7.82s`。
 
 ## 10. Phase 5：公开 Llama Checkpoint 验收
 
@@ -306,8 +318,8 @@ recording-worker 边界不构造模型，无需改变；真实 Engine fixture �
 - [ ] tensor shape 不兼容时保留 PyTorch shape 错误和模型来源上下文。
 - [ ] Hub 网络或下载失败不伪装成模型数值错误。
 - [x] ModelRunner device/dtype placement 失败不回退到其他 device/dtype。
-- [ ] Scheduler `max_model_len` 不得超过模型支持的最大 position；本阶段由组装代码
-      显式校验或测试 fixture 明确保证，不在 Scheduler 中引入模型依赖。
+- [x] Scheduler `max_model_len` 不得超过模型支持的最大 position；本阶段 loaded-engine
+      fixture 明确保证不超过 checkpoint 的 32-token limit，不在 Scheduler 中引入模型依赖。
 
 本阶段不新增一套完整 missing/unexpected/duplicate 状态机；只有真实 checkpoint 暴露
 无法定位的问题时，才以最小改动补充 Loader/Model 的错误上下文。
@@ -317,7 +329,7 @@ recording-worker 边界不构造模型，无需改变；真实 Engine fixture �
 ### 新增
 
 - [x] `tests/integration/test_loaded_llama.py`：本地 HF-format checkpoint 数值对拍。
-- [ ] `tests/integration/test_loaded_llama_engine.py`：loaded model Engine 语义。
+- [x] `tests/integration/test_loaded_llama_engine.py`：loaded model Engine 语义。
 - [ ] `tests/integration/test_hub_llama.py`：显式公开模型测试。
 
 ### 更新
@@ -330,13 +342,13 @@ recording-worker 边界不构造模型，无需改变；真实 Engine fixture �
 
 ### 回归要求
 
-- [ ] Model Loader 定向测试通过。
-- [ ] Models 定向测试通过。
-- [ ] Worker/Executor 定向测试通过。
-- [ ] CPU 非网络测试通过。
-- [ ] GPU 非网络测试通过。
+- [x] Model Loader 定向测试通过。
+- [x] Models 定向测试通过。
+- [x] Worker/Executor 定向测试通过。
+- [x] CPU 非网络测试通过。
+- [x] GPU 非网络测试通过。
 - [ ] 显式公开模型测试通过。
-- [ ] 完整默认测试通过，外部模型测试按约定 skip。
+- [x] 完整默认测试通过，外部模型测试按约定 skip。
 
 ## 13. 建议提交顺序
 
@@ -380,24 +392,24 @@ ssh aliyun-ecs \
 
 - [ ] 记录 Python、PyTorch、Transformers、safetensors 和 huggingface-hub 版本。
 - [ ] 记录公开模型 repo、commit、dtype 和硬件。
-- [ ] 本地 HF-format checkpoint tests 通过。
-- [ ] Worker/Engine integration tests 通过。
-- [ ] CPU/GPU 默认测试通过。
+- [x] 本地 HF-format checkpoint tests 通过。
+- [x] Worker/Engine integration tests 通过。
+- [x] CPU/GPU 默认测试通过。
 - [ ] 公开 checkpoint 显式测试通过。
-- [ ] 完整默认测试通过。
+- [x] 完整默认测试通过。
 
 ## 15. 完成标准
 
-- [ ] V1.4B Model Loader 现有测试先完成远端验证。
-- [ ] 标准 HF-format Llama checkpoint 能被完整加载。
-- [ ] loaded parameters、hidden states 和 logits 与 Transformers 对拍。
-- [ ] ModelRunner 执行 initializer 加载的 model，不重新随机构造模型。
-- [ ] loaded model 可通过 Engine 完成 chunked prefill 和多 token decode。
-- [ ] greedy token IDs 与 Transformers 逐 token 一致。
-- [ ] loaded model 的 prefix cache、preemption 和 block reuse 语义正确。
+- [x] V1.4B Model Loader 现有测试先完成远端验证。
+- [x] 标准 HF-format Llama checkpoint 能被完整加载。
+- [x] loaded parameters、hidden states 和 logits 与 Transformers 对拍。
+- [x] ModelRunner 执行 initializer 加载的 model，不重新随机构造模型。
+- [x] loaded model 可通过 Engine 完成 chunked prefill 和多 token decode。
+- [x] greedy token IDs 与 Transformers 逐 token 一致。
+- [x] loaded model 的 prefix cache、preemption 和 block reuse 语义正确。
 - [ ] 至少一个固定 commit 的公开 Llama-family checkpoint 通过 GPU smoke test。
-- [ ] 快速测试不依赖网络，公开模型测试可显式启用。
-- [ ] `docs/requirements/v1-core-engine.md` 按实际证据更新。
+- [x] 快速测试不依赖网络，公开模型测试可显式启用。
+- [x] `docs/requirements/v1-core-engine.md` 按实际证据更新。
 
 完成后进入 V1.4D：Qwen dense model、模型专属 config/parameter 语义和真实
 checkpoint 对拍。
