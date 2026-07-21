@@ -252,7 +252,7 @@ V1 必须回答以下问题：
 - [x] CPU FP32 reference tests 通过。
 - [x] 单 GPU eager tests 通过。
 
-## 7. V1.4：权重加载、模型覆盖与完整 Sampling（V1.4E 规划完成）
+## 7. V1.4：权重加载、模型覆盖与完整 Sampling（V1.4E 进行中）
 
 | 子阶段 | 内容 | 状态 | 技术清单 |
 |---|---|---|---|
@@ -260,7 +260,7 @@ V1 必须回答以下问题：
 | V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
 | V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 | [清单](../implementation/v1-real-llama-integration-todo.md) |
 | V1.4D | Qwen dense model 与 checkpoint | 已完成 | [清单](../implementation/v1-qwen-integration-todo.md) |
-| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 下一阶段 | [清单](../implementation/v1-sampling-offline-api-todo.md) |
+| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 进行中（Phase 0 已完成） | [清单](../implementation/v1-sampling-offline-api-todo.md) |
 
 V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
 验证。V1.4C 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
@@ -269,7 +269,8 @@ V1.4D 已实现 Qwen3 的显式 head dimension、Q/K RMSNorm、tied weights 和�
 参数加载，并完成本地 tiny checkpoint 与固定公开 `Qwen/Qwen3-0.6B` commit 的
 CPU/GPU、ModelRunner、Engine、在线/离线 cache 对拍。
 V1.4E 已冻结 sampling snapshot、request-local seed、tokenizer ownership 和同步批量
-`LLM.generate()` 的实现边界；尚未开始勾选实现项。
+`LLM.generate()` 的实现边界，并完成 SamplingParams 参数契约；执行计划传播和实际
+stochastic sampling 尚未实现。
 
 ### 当前模型加载架构
 

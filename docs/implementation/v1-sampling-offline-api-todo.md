@@ -109,12 +109,12 @@ output text、output token IDs 和 `FinishReason`。它是 frozen snapshot，不
 
 ## 4. Phase 0：Sampling 参数契约
 
-- [ ] 增加 temperature、top-k、top-p 和 seed 字段及简单默认值。
-- [ ] 拒绝 bool、NaN/inf、负 temperature、非法 top-k/top-p/seed。
-- [ ] 明确 greedy 与 stochastic mode 判定。
-- [ ] 保持现有只传 `max_tokens` 的调用完全兼容。
-- [ ] 参数对象 frozen，不能在 request admission 后被外部修改。
-- [ ] 单元测试覆盖边界值和非法组合。
+- [x] 增加 temperature、top-k、top-p 和 seed 字段及简单默认值。
+- [x] 拒绝 bool、NaN/inf、负 temperature、非法 top-k/top-p/seed。
+- [x] 明确 greedy 与 stochastic mode 判定。
+- [x] 保持现有只传 `max_tokens` 的调用完全兼容。
+- [x] 参数对象 frozen，不能在 request admission 后被外部修改。
+- [x] 单元测试覆盖边界值和非法组合。
 
 ## 5. Phase 1：Sampling 快照与算法
 
@@ -203,3 +203,11 @@ ssh aliyun-ecs \
 - [ ] ModelRunner 继续独占模型初始化、warmup/profile 和 KV cache 生命周期。
 - [ ] 普通回归无网络，公开 tokenizer/model 验收显式启用并可完全离线。
 - [ ] `docs/requirements/v1-core-engine.md` 按实际证据更新。
+
+## 12. 实现状态
+
+2026-07-21 已开始实现并完成 Phase 0。`SamplingParams` 新增 temperature、top-k、
+top-p、seed 和明确的 `is_greedy` 判定，同时保持现有 `max_tokens`/EOS 调用兼容。
+远端 sampling 定向回归为 `45 passed`，完整默认回归为
+`494 passed, 4 skipped`。Phase 1 的 immutable sampling snapshot 与实际 sampling
+算法尚未实现。
