@@ -17,6 +17,7 @@ from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import Executor, ModelRunnerOutput, SampledToken
+from micro_vllm.llm import GenerationOutput, LLM
 from micro_vllm.model_loader import load_model
 from micro_vllm.config import ModelConfig
 from micro_vllm.sampling.params import SamplingParams
@@ -29,6 +30,8 @@ def test_top_level_exports_engine_entry_points() -> None:
     assert micro_vllm.__all__ == (
         "CacheConfig",
         "Engine",
+        "GenerationOutput",
+        "LLM",
         "ModelConfig",
         "RequestOutput",
         "SamplingParams",
@@ -36,6 +39,8 @@ def test_top_level_exports_engine_entry_points() -> None:
     )
     assert micro_vllm.CacheConfig is CacheConfig
     assert micro_vllm.Engine is Engine
+    assert micro_vllm.GenerationOutput is GenerationOutput
+    assert micro_vllm.LLM is LLM
     assert micro_vllm.ModelConfig is ModelConfig
     assert micro_vllm.RequestOutput is RequestOutput
     assert micro_vllm.SamplingParams is SamplingParams
@@ -94,5 +99,12 @@ def test_fake_executor_is_not_public() -> None:
 
 
 def test_primary_public_contracts_have_documentation() -> None:
-    for public_contract in (Request, SchedulerOutput, Executor, Engine):
+    for public_contract in (
+        Request,
+        SchedulerOutput,
+        Executor,
+        Engine,
+        LLM,
+        GenerationOutput,
+    ):
         assert getdoc(public_contract)

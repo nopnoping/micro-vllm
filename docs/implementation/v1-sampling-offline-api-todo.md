@@ -25,11 +25,11 @@ scheduler/executor 并驱动 Engine 的高层离线 facade，不把字符串、t
 
 ### 本阶段实现
 
-- [ ] greedy、temperature、top-k、top-p sampling。
-- [ ] 每请求 seed 和与 batch interleaving 无关的确定性随机流。
-- [ ] sampling params 的不可变执行计划快照。
-- [ ] tokenizer-backed 同步批量 `LLM.generate()`。
-- [ ] 文本、prompt/output token IDs、finish reason 的最终输出。
+- [x] greedy、temperature、top-k、top-p sampling。
+- [x] 每请求 seed 和与 batch interleaving 无关的确定性随机流。
+- [x] sampling params 的不可变执行计划快照。
+- [x] tokenizer-backed 同步批量 `LLM.generate()`。
+- [x] 文本、prompt/output token IDs、finish reason 的最终输出。
 - [ ] 本地 tokenizer fixture 与固定公开 Llama/Qwen checkpoint 的离线 API 验收。
 
 ### 本阶段不实现
@@ -152,15 +152,15 @@ output text、output token IDs 和 `FinishReason`。它是 frozen snapshot，不
 
 ## 8. Phase 4：LLM.generate Offline API
 
-- [ ] `LLM` 构造并拥有 tokenizer、Worker、Scheduler、Executor 和 Engine。
-- [ ] 模型仍通过延迟 initializer 只由 ModelRunner 构造与持有。
-- [ ] 单 prompt 和 batch prompt 保持输入顺序。
-- [ ] 单个 sampling params 广播和 per-prompt params 均受支持。
-- [ ] 同一 LLM 实例支持多次 sequential `generate()`。
-- [ ] 每次 batch request ID 唯一且不与历史 Scheduler request 冲突。
-- [ ] `GenerationOutput` 文本/token/final reason 完整且不可变。
-- [ ] `shutdown()` 幂等，并释放 Worker/ModelRunner 引用。
-- [ ] context-length admission、空输入和 tokenizer 错误具有清晰上下文。
+- [x] `LLM` 构造并拥有 tokenizer、Worker、Scheduler、Executor 和 Engine。
+- [x] 模型仍通过延迟 initializer 只由 ModelRunner 构造与持有。
+- [x] 单 prompt 和 batch prompt 保持输入顺序。
+- [x] 单个 sampling params 广播和 per-prompt params 均受支持。
+- [x] 同一 LLM 实例支持多次 sequential `generate()`。
+- [x] 每次 batch request ID 唯一且不与历史 Scheduler request 冲突。
+- [x] `GenerationOutput` 文本/token/final reason 完整且不可变。
+- [x] `shutdown()` 幂等，并释放 Worker/ModelRunner 引用。
+- [x] context-length admission、空输入和 tokenizer 错误具有清晰上下文。
 
 ## 9. Phase 5：真实模型验收与文档
 
@@ -207,7 +207,7 @@ ssh aliyun-ecs \
 
 ## 12. 实现状态
 
-2026-07-21 已完成 Phase 0–3。`SamplingParams` 新增 temperature、top-k、top-p、
+2026-07-21 已完成 Phase 0–4。`SamplingParams` 新增 temperature、top-k、top-p、
 seed 和明确的 `is_greedy` 判定，同时保持现有 `max_tokens`/EOS 调用兼容。
 `ScheduledRequest` 在 sampling boundary 携带 frozen params/sample index；ModelRunner
 使用通用 Sampler 完成 greedy、temperature、top-k 和 top-p，warmup 不伪造用户参数。
@@ -219,6 +219,9 @@ pending retry 不换 token，Sampler 不保存 request state。定向回归为 `
 Phase 3 将 Transformers 4.51+ 提升为 runtime dependency，增加窄 `Tokenizer` protocol、
 tuple-owning adapter、HF source 参数转发和高层 EOS helper。固定 Qwen3 revision 首次
 tokenizer 加载为 10.463s，cache 重载约 0.5–0.7s，`HF_HUB_OFFLINE=1` 验收通过；
-固定 prompt tokens 为 `[9707, 11, 281, 3279, 6529, 0]`。tokenizer 定向回归为
-`4 passed, 1 skipped`，完整默认回归为 `526 passed, 5 skipped`。Phase 4
-`LLM.generate()` 尚未实现。
+固定 prompt tokens 为 `[9707, 11, 281, 3279, 6529, 0]`。Phase 4 增加同步
+`LLM.generate()` facade：整批 encode/admission 预校验后再入队，支持 params 广播和
+per-prompt params，以内部递增 request ID 恢复输入顺序，并返回 frozen
+`GenerationOutput`。模型 initializer、warmup/profile 和 KV cache 仍完全由
+ModelRunner 执行和持有。Phase 4 定向回归为 `12 passed`，完整默认回归为
+`531 passed, 5 skipped`。Phase 5 真实公开模型 API 验收尚未开始。
