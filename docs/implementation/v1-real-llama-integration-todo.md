@@ -112,22 +112,47 @@ worker = Worker(model, cache_config, execution_config)
 
 ### 公开模型选择标准
 
-- [ ] `architectures` 包含 `LlamaForCausalLM`。
-- [ ] 权重为标准单文件或 sharded safetensors。
-- [ ] 不要求 `trust_remote_code`。
-- [ ] 不要求鉴权或接受额外许可证流程。
-- [ ] config 不依赖当前未实现的 RoPE scaling、sliding window 或 bias 结构。
-- [ ] 参数规模适合 Tesla T4 和远端可用磁盘/内存。
-- [ ] 记录 repo id、commit SHA、checkpoint dtype、参数量和下载大小。
-- [ ] 固定一组合法 prompt token IDs，不依赖 tokenizer。
+- [x] `architectures` 包含 `LlamaForCausalLM`。
+- [x] 权重为标准单文件或 sharded safetensors。
+- [x] 不要求 `trust_remote_code`。
+- [x] 不要求鉴权或接受额外许可证流程。
+- [x] config 不依赖当前未实现的 RoPE scaling、sliding window 或 bias 结构。
+- [x] 参数规模适合 Tesla T4 和远端可用磁盘/内存。
+- [x] 记录 repo id、commit SHA、checkpoint dtype、参数量和下载大小。
+- [x] 固定一组合法 prompt token IDs，不依赖 tokenizer。
+
+选定 `TinyLlama/TinyLlama-1.1B-Chat-v1.0`，revision 固定为
+`d9128824c0c80111be21424e68086f52413fb413`。该 revision 为 Apache-2.0 公开、
+无 gating 的标准 `LlamaForCausalLM`；单文件 `model.safetensors` 为 BF16，
+包含 1,100,048,384 个参数，文件大小 2,200,119,864 bytes。config 为
+22 层、2048 hidden size、32 attention heads 和 4 KV heads，没有 RoPE scaling、
+sliding window、attention bias 或 remote-code 配置。checkpoint 保持 BF16 记录；
+Tesla T4 执行使用 FP16。固定 prompt token IDs 为
+`[1, 450, 7483, 310, 3444]`。
 
 ### 测试分类
 
-- [ ] 增加 `model` 或等价 pytest marker，表示需要外部 checkpoint/cache。
-- [ ] 普通 unit/integration 测试不访问网络。
-- [ ] 公开模型测试在未显式提供开关时 skip，而不是自动下载。
-- [ ] 显式模型测试命令记录 repo、revision、device 和 dtype。
-- [ ] Hub cache 位于远端标准缓存目录，不写入仓库。
+- [x] 增加 `model` 或等价 pytest marker，表示需要外部 checkpoint/cache。
+- [x] 普通 unit/integration 测试不访问网络。
+- [x] 公开模型测试在未显式提供开关时 skip，而不是自动下载。
+- [x] 显式模型测试命令记录 repo、revision、device 和 dtype。
+- [x] Hub cache 位于远端标准缓存目录，不写入仓库。
+
+`tests/integration/test_hub_llama.py` 的外部元数据校验使用 `model` marker。
+除非 `MICRO_VLLM_TEST_MODEL=1`，否则该类测试由 collection hook 统一
+skip。测试不传 `cache_dir`，因此 Hugging Face 文件位于执行用户的标准
+Hub cache，不会写入仓库。显式命令为：
+
+```bash
+MICRO_VLLM_TEST_MODEL=1 .venv/bin/python -m pytest -q -m model \
+  tests/integration/test_hub_llama.py
+```
+
+该命令使用测试文件固定的 repo/revision；Phase 5 执行配置固定为
+`device=cuda` 和 `dtype=float16`。
+
+2026-07-21 Phase 0 本地实现完成。按本轮约定未同步云端、未运行
+Python 或 pytest；marker 默认 skip 和外部元数据校验仍待远端验证。
 
 ## 6. Phase 1：HF-format Tiny Checkpoint Fixture
 
@@ -237,7 +262,7 @@ worker = Worker(model, cache_config, execution_config)
 
 - [ ] `tests/worker/test_worker.py`：model injection、placement 和 ownership。
 - [ ] `tests/integration/test_real_model_engine.py`：保留随机模型快速路径并适配新 Worker。
-- [ ] `pyproject.toml`：注册外部模型测试 marker。
+- [x] `pyproject.toml`：注册外部模型测试 marker。
 - [ ] 必要时更新 `tests/conftest.py`，集中 tiny HF checkpoint fixture。
 
 ### 回归要求
