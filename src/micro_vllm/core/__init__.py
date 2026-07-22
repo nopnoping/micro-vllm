@@ -4,7 +4,6 @@ from micro_vllm.core.kv_cache_spec import (
     KVCacheGroupSpec,
     KVCacheLayout,
     KVCacheTopology,
-    LayerCacheBinding,
     build_kv_cache_topology,
 )
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
@@ -16,7 +15,6 @@ __all__ = (
     "KVCacheGroupSpec",
     "KVCacheLayout",
     "KVCacheTopology",
-    "LayerCacheBinding",
     "Request",
     "RequestStatus",
     "ScheduledRequest",

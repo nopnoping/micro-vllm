@@ -11,7 +11,6 @@ from micro_vllm.attention.spec import (
 )
 from micro_vllm.core.kv_cache_spec import (
     KVCacheLayout,
-    LayerCacheBinding,
     build_kv_cache_topology,
 )
 
@@ -25,10 +24,6 @@ def test_full_only_topology_uses_one_group() -> None:
     assert topology.groups[0].group_id == 0
     assert topology.groups[0].attention_spec == FullAttentionSpec()
     assert topology.groups[0].layer_indices == (0, 1)
-    assert topology.layer_bindings == (
-        LayerCacheBinding(group_id=0, group_layer_index=0),
-        LayerCacheBinding(group_id=0, group_layer_index=1),
-    )
     assert topology.page_layer_count == 2
     assert topology.num_layers == 2
 
@@ -51,13 +46,6 @@ def test_hybrid_topology_has_stable_groups_and_local_layer_indices() -> None:
     assert tuple(group.layer_indices for group in topology.groups) == (
         (0, 3),
         (1, 2, 4),
-    )
-    assert topology.layer_bindings == (
-        LayerCacheBinding(0, 0),
-        LayerCacheBinding(1, 0),
-        LayerCacheBinding(1, 1),
-        LayerCacheBinding(0, 1),
-        LayerCacheBinding(1, 2),
     )
     assert topology.page_layer_count == 3
 
@@ -93,7 +81,6 @@ def test_layout_composes_frozen_topology_and_capacity() -> None:
     )
 
     assert layout.groups == topology.groups
-    assert layout.layer_bindings == topology.layer_bindings
     assert layout.page_layer_count == 1
     assert layout.num_layers == 2
 
@@ -104,4 +91,4 @@ def test_layout_composes_frozen_topology_and_capacity() -> None:
         topology.page_layer_count = 2
 
     with pytest.raises(FrozenInstanceError):
-        topology.layer_bindings[0].group_id = 1
+        topology.groups[0].group_id = 1

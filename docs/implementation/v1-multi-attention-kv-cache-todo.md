@@ -11,7 +11,7 @@ attention 和 chunked-local attention 使用各自的逻辑 cache 规则，同�
 
 ```text
 model per-layer Attention
-    -> ModelRunner derives stable cache groups and layer bindings
+    -> ModelRunner derives stable cache groups and ordered layer indices
     -> PhysicalKVCache allocates max_group_layers shared buffers
     -> KVCacheManager coordinates one group manager per cache group
     -> all groups allocate distinct block IDs from one BlockPool
@@ -94,12 +94,6 @@ model layer 顺序中第一次出现的顺序，从 `0` 连续编号。
 
 ```python
 @dataclass(frozen=True, slots=True)
-class LayerCacheBinding:
-    group_id: int
-    group_layer_index: int
-
-
-@dataclass(frozen=True, slots=True)
 class KVCacheGroupSpec:
     group_id: int
     attention_spec: AttentionSpec
@@ -109,11 +103,12 @@ class KVCacheGroupSpec:
 @dataclass(frozen=True, slots=True)
 class KVCacheTopology:
     groups: tuple[KVCacheGroupSpec, ...]
-    layer_bindings: tuple[LayerCacheBinding, ...]
     page_layer_count: int
 ```
 
-`group_layer_index` 是 layer 在所属 group 内的稳定序号。`page_layer_count` 为：
+`layer_indices` 是唯一的 layer/group 映射来源。layer 在所属 group 的
+`layer_indices` tuple 中的位置就是 `group_layer_index`，不重复保存反向 binding。
+`page_layer_count` 为：
 
 ```text
 max(len(group.layer_indices) for group in groups)
@@ -288,11 +283,13 @@ ModelRunner 对一个 batch：
 1. 构造共享 input IDs、positions、query row ordering 和 sampling rows。
 2. 每个 group 分别构造 block table tensor 和 slot mapping。
 3. 根据 group spec 构造一个 AttentionMetadata。
-4. 根据 `LayerCacheBinding` 展开为 model layer 顺序：
+4. 枚举每个 group 的有序 `layer_indices`，展开为 model layer 顺序：
 
-```text
-layer_cache[layer] = physical_buffers[binding.group_layer_index]
-layer_metadata[layer] = group_metadata[binding.group_id]
+```python
+for group in topology.groups:
+    for group_layer_index, layer_index in enumerate(group.layer_indices):
+        layer_cache[layer_index] = physical_buffers[group_layer_index]
+        layer_metadata[layer_index] = group_metadata[group.group_id]
 ```
 
 Model forward 只按 layer 顺序消费 cache 和 metadata，不查询全局 cache registry。
@@ -300,7 +297,7 @@ Model forward 只按 layer 顺序消费 cache 和 metadata，不查询全局 cac
 ## 4. Phase 0：冻结 model/cache topology contract
 
 - [x] Model 统一暴露 `layer_attentions`，不再声明 cache group。
-- [x] 新增 frozen `LayerCacheBinding`。
+- [x] `KVCacheGroupSpec.layer_indices` 作为唯一 layer/group 映射来源。
 - [x] 新增 frozen `KVCacheTopology`。
 - [x] `KVCacheLayout` 显式组合 topology 和初始化后的 block capacity。
 - [x] 实现从 per-layer AttentionSpec 派生 topology 的纯函数。
@@ -371,7 +368,7 @@ execute 数据流。
 - [ ] 每 group 构造独立 slot mapping。
 - [ ] 每 group/spec 构造独立 AttentionMetadata。
 - [ ] common positions/query row ordering 只构造一次。
-- [ ] 按 LayerCacheBinding 展开 physical buffer 和 metadata 到 layer 顺序。
+- [ ] 按 group 的有序 layer indices 展开 physical buffer 和 metadata。
 - [ ] sampling row、request ID 和 logits selection 不受 group 数量影响。
 - [ ] SchedulerOutput 不含 tensor、Request、model object 或 mutable container。
 - [ ] full-only 模型也走一元 group tuple 的统一路径。
@@ -486,5 +483,6 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 ## 17. 实现状态
 
 2026-07-22：完成第二轮技术方案 review、实现清单重写和 Phase 0。ModelRunner
-现在从 `layer_attentions` 派生稳定 topology；本阶段没有修改 BlockPool、物理 cache
-或 execute 数据流。按当前要求只完成本地静态检查，未执行 SSH 远端测试。
+现在从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是唯一的
+layer/group 映射来源；本阶段没有修改 BlockPool、物理 cache 或 execute 数据流。
+按当前要求只完成本地静态检查，未执行 SSH 远端测试。
