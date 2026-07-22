@@ -10,6 +10,7 @@ from micro_vllm import (
     CacheConfig,
     LLM,
     LLMConfig,
+    ModelConfig,
     SamplingParams,
     SchedulerConfig,
 )
@@ -21,9 +22,11 @@ MODEL_ID = "Qwen/Qwen3-0.6B"
 def main() -> None:
     llm = LLM(
         LLMConfig(
-            model=MODEL_ID,
-            device="cuda",
-            dtype=torch.float16,
+            model_config=ModelConfig(
+                model=MODEL_ID,
+                device="cuda",
+                dtype=torch.float16,
+            ),
             scheduler_config=SchedulerConfig(
                 max_model_len=256,
                 max_num_batched_tokens=64,

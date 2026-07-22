@@ -10,7 +10,8 @@ from micro_vllm.config import ModelConfig
 
 def make_config(*, tie_word_embeddings: bool) -> ModelConfig:
     return ModelConfig(
-        {
+        model="unused",
+        metadata={
             "architectures": ["LlamaForCausalLM"],
             "vocab_size": 16,
             "hidden_size": 8,
@@ -20,7 +21,7 @@ def make_config(*, tie_word_embeddings: bool) -> ModelConfig:
             "num_key_value_heads": 1,
             "max_position_embeddings": 32,
             "tie_word_embeddings": tie_word_embeddings,
-        }
+        },
     )
 
 

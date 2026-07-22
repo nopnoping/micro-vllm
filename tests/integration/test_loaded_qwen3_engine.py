@@ -9,7 +9,7 @@ import pytest
 import torch
 from transformers import Qwen3ForCausalLM
 
-from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason
 from micro_vllm.core.scheduler import Scheduler
@@ -62,7 +62,11 @@ def make_loaded_engine(
     dtype: torch.dtype = torch.float32,
 ) -> LoadedQwen3Harness:
     config = LLMConfig(
-        model=checkpoint_path,
+        model_config=ModelConfig(
+            model=checkpoint_path,
+            device=device,
+            dtype=dtype,
+        ),
         scheduler_config=SchedulerConfig(
             max_num_batched_tokens=token_budget,
             max_num_seqs=sequence_budget,
@@ -73,8 +77,6 @@ def make_loaded_engine(
             num_blocks=num_blocks,
             enable_prefix_cache=enable_prefix_cache,
         ),
-        device=device,
-        dtype=dtype,
     )
     load_calls: list[Path] = []
 

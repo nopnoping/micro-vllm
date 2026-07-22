@@ -11,6 +11,7 @@ from micro_vllm import (
     GenerationOutput,
     LLM,
     LLMConfig,
+    ModelConfig,
     SamplingParams,
     SchedulerConfig,
 )
@@ -51,8 +52,12 @@ def make_llm(
 ) -> LLM:
     return LLM(
         LLMConfig(
-            model=checkpoint_path,
-            tokenizer=tokenizer,
+            model_config=ModelConfig(
+                model=checkpoint_path,
+                tokenizer=tokenizer,
+                device="cpu",
+                dtype=torch.float32,
+            ),
             scheduler_config=SchedulerConfig(
                 max_model_len=max_model_len,
                 max_num_batched_tokens=8,
@@ -62,8 +67,6 @@ def make_llm(
                 block_size=2,
                 num_blocks=16,
             ),
-            device="cpu",
-            dtype=torch.float32,
         ),
     )
 

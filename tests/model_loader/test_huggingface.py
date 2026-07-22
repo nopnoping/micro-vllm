@@ -77,8 +77,8 @@ def test_load_model_delegates_snapshot_resolution_to_hugging_face(
         lambda config, *, source_label: FakeModel,
     )
 
-    model = load_model(
-        LLMConfig(
+    config = LLMConfig(
+        model_config=ModelConfig(
             model="org/model",
             revision="branch",
             cache_dir=tmp_path / "cache",
@@ -86,8 +86,10 @@ def test_load_model_delegates_snapshot_resolution_to_hugging_face(
             local_files_only=True,
         )
     )
+    model = load_model(config)
 
     assert isinstance(model, FakeModel)
+    assert config.model_config.architectures == ("FakeModel",)
     assert model.weights[0][0] == "model.weight"
     assert events == [
         "snapshot",

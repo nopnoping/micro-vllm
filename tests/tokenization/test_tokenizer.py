@@ -10,7 +10,7 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast
 
-from micro_vllm.config import LLMConfig
+from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.tokenizer import (
     Tokenizer,
@@ -92,12 +92,14 @@ def test_load_tokenizer_forwards_hf_source_options(monkeypatch: pytest.MonkeyPat
 
     loaded = load_tokenizer(
         LLMConfig(
-            model="org/model",
-            tokenizer_name_or_path=Path("/tmp/model"),
-            revision="commit",
-            cache_dir=Path("/tmp/cache"),
-            token="token",
-            local_files_only=True,
+            model_config=ModelConfig(
+                model="org/model",
+                tokenizer_name_or_path=Path("/tmp/model"),
+                revision="commit",
+                cache_dir=Path("/tmp/cache"),
+                token="token",
+                local_files_only=True,
+            )
         )
     )
 
@@ -134,7 +136,12 @@ def test_loads_standard_local_fast_tokenizer(tmp_path: Path) -> None:
     reference.save_pretrained(tokenizer_path)
 
     loaded = load_tokenizer(
-        LLMConfig(model=tokenizer_path, local_files_only=True)
+        LLMConfig(
+            model_config=ModelConfig(
+                model=tokenizer_path,
+                local_files_only=True,
+            )
+        )
     )
 
     assert loaded.eos_token_id == 1

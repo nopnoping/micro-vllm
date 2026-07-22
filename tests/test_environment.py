@@ -2,7 +2,7 @@ import pytest
 import torch
 import transformers
 
-from micro_vllm.config import LLMConfig
+from micro_vllm.config import LLMConfig, ModelConfig
 
 
 def test_model_execution_dependencies_are_importable() -> None:
@@ -14,20 +14,22 @@ def test_model_execution_dependencies_are_importable() -> None:
 def test_cuda_executes_tensor_operations() -> None:
     assert torch.cuda.is_available(), "gpu tests require a visible CUDA device"
     config = LLMConfig(
-        model="unused",
-        device="cuda",
-        dtype=torch.float16,
+        model_config=ModelConfig(
+            model="unused",
+            device="cuda",
+            dtype=torch.float16,
+        )
     )
 
     left = torch.tensor(
         [[1.0, 2.0]],
-        device=config.device,
-        dtype=config.dtype,
+        device=config.model_config.device,
+        dtype=config.model_config.dtype,
     )
     right = torch.tensor(
         [[3.0], [4.0]],
-        device=config.device,
-        dtype=config.dtype,
+        device=config.model_config.device,
+        dtype=config.model_config.dtype,
     )
 
     assert (left @ right).cpu().item() == 11.0

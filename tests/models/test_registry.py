@@ -10,20 +10,27 @@ from micro_vllm.models.registry import get_model_class
 
 def test_registry_uses_first_supported_requested_architecture() -> None:
     config = ModelConfig(
-        {"architectures": ["UnknownModel", "LlamaForCausalLM"]}
+        model="unused",
+        metadata={"architectures": ["UnknownModel", "LlamaForCausalLM"]},
     )
 
     assert get_model_class(config, source_label="test-model") is LlamaModel
 
 
 def test_registry_resolves_qwen3_architecture() -> None:
-    config = ModelConfig({"architectures": ["Qwen3ForCausalLM"]})
+    config = ModelConfig(
+        model="unused",
+        metadata={"architectures": ["Qwen3ForCausalLM"]},
+    )
 
     assert get_model_class(config, source_label="test-model") is Qwen3Model
 
 
 def test_registry_reports_requested_supported_and_source() -> None:
-    config = ModelConfig({"architectures": ["Unknown", "Other"]})
+    config = ModelConfig(
+        model="unused",
+        metadata={"architectures": ["Unknown", "Other"]},
+    )
 
     with pytest.raises(ValueError) as error_info:
         get_model_class(config, source_label="test-model")

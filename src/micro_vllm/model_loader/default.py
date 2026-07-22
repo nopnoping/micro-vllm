@@ -24,18 +24,19 @@ class DefaultModelLoader(ModelLoader):
     """Load local or Hugging Face models stored as safetensors."""
 
     def download_weights(self, config: LLMConfig) -> Path:
-        local_path = _resolve_local_model_path(config.model)
+        model_config = config.model_config
+        local_path = _resolve_local_model_path(model_config.model)
         if local_path is not None:
             return local_path
 
-        assert isinstance(config.model, str)
+        assert isinstance(model_config.model, str)
         return Path(
             snapshot_download(
-                repo_id=config.model,
-                revision=config.revision,
-                cache_dir=config.cache_dir,
-                token=config.token,
-                local_files_only=config.local_files_only,
+                repo_id=model_config.model,
+                revision=model_config.revision,
+                cache_dir=model_config.cache_dir,
+                token=model_config.token,
+                local_files_only=model_config.local_files_only,
                 allow_patterns=list(_CHECKPOINT_PATTERNS),
             )
         )

@@ -51,7 +51,7 @@ class LLM:
     )
 
     def __init__(self, config: LLMConfig) -> None:
-        tokenizer = config.tokenizer
+        tokenizer = config.model_config.tokenizer
         if tokenizer is None:
             tokenizer = load_tokenizer(config)
 

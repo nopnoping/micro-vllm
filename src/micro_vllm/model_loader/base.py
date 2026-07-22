@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 import json
 from pathlib import Path
 
 import torch
 from torch import nn
 
-from micro_vllm.config import LLMConfig, ModelConfig
+from micro_vllm.config import LLMConfig
 from micro_vllm.layers.attention_backend_registry import (
     create_attention_backend,
 )
@@ -22,12 +23,19 @@ class ModelLoader(ABC):
     def load_model(self, config: LLMConfig) -> nn.Module:
         """Download, construct, initialize, and finalize one model."""
         model_path = self.download_weights(config)
-        source_label = str(config.model)
-        model_config = _read_model_config(model_path / "config.json")
+        model_config = config.model_config
+        source_label = str(model_config.model)
+        config_path = model_path / "config.json"
+        try:
+            model_config.set_metadata(_read_model_metadata(config_path))
+        except ValueError as error:
+            raise ValueError(
+                f"invalid model config {config_path}: {error}"
+            ) from error
         model_class = get_model_class(model_config, source_label=source_label)
 
         with torch.device("cpu"):
-            backend = create_attention_backend(config.attention_backend)
+            backend = create_attention_backend(model_config.attention_backend)
             try:
                 model = model_class(model_config, backend)
             except ValueError as error:
@@ -53,7 +61,7 @@ class ModelLoader(ABC):
         """Initialize one constructed model from its local weight files."""
 
 
-def _read_model_config(config_path: Path) -> ModelConfig:
+def _read_model_metadata(config_path: Path) -> Mapping[str, object]:
     try:
         with config_path.open(encoding="utf-8") as config_file:
             raw_config = json.load(config_file)
@@ -64,9 +72,4 @@ def _read_model_config(config_path: Path) -> ModelConfig:
         raise ValueError(
             f"model config must be a JSON object: {config_path}"
         )
-    try:
-        return ModelConfig(raw_config)
-    except ValueError as error:
-        raise ValueError(
-            f"invalid model config {config_path}: {error}"
-        ) from error
+    return raw_config

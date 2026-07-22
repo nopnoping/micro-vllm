@@ -58,10 +58,11 @@ class TransformersTokenizer:
 def load_tokenizer(config: LLMConfig) -> TransformersTokenizer:
     """Load a standard HF tokenizer without executing remote code."""
 
+    model_config = config.model_config
     model_name_or_path = (
-        config.model
-        if config.tokenizer_name_or_path is None
-        else config.tokenizer_name_or_path
+        model_config.model
+        if model_config.tokenizer_name_or_path is None
+        else model_config.tokenizer_name_or_path
     )
     source = (
         str(model_name_or_path)
@@ -70,10 +71,10 @@ def load_tokenizer(config: LLMConfig) -> TransformersTokenizer:
     )
     tokenizer = AutoTokenizer.from_pretrained(
         source,
-        revision=config.revision,
-        cache_dir=config.cache_dir,
-        token=config.token,
-        local_files_only=config.local_files_only,
+        revision=model_config.revision,
+        cache_dir=model_config.cache_dir,
+        token=model_config.token,
+        local_files_only=model_config.local_files_only,
         trust_remote_code=False,
         use_fast=True,
     )

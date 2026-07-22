@@ -10,7 +10,8 @@ from micro_vllm.models.qwen import Qwen3Model
 
 def make_model(*, tied: bool = True) -> Qwen3Model:
     config = ModelConfig(
-        {
+        model="unused",
+        metadata={
             "architectures": ["Qwen3ForCausalLM"],
             "vocab_size": 32,
             "hidden_size": 16,
@@ -22,7 +23,7 @@ def make_model(*, tied: bool = True) -> Qwen3Model:
             "max_position_embeddings": 32,
             "tie_word_embeddings": tied,
             "attention_bias": False,
-        }
+        },
     )
     return Qwen3Model(config, ReferenceAttentionBackend())
 

@@ -10,7 +10,8 @@ from micro_vllm.models.llama import LlamaModel
 
 def make_model(*, tied: bool = False) -> LlamaModel:
     config = ModelConfig(
-        {
+        model="unused",
+        metadata={
             "architectures": ["LlamaForCausalLM"],
             "vocab_size": 32,
             "hidden_size": 16,
@@ -20,7 +21,7 @@ def make_model(*, tied: bool = False) -> LlamaModel:
             "num_key_value_heads": 2,
             "max_position_embeddings": 32,
             "tie_word_embeddings": tied,
-        }
+        },
     )
     return LlamaModel(config, ReferenceAttentionBackend())
 

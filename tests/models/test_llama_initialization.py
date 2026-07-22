@@ -17,7 +17,10 @@ def make_model(**overrides: object) -> LlamaModel:
         "num_attention_heads": 4,
     }
     values.update(overrides)
-    return LlamaModel(ModelConfig(values), ReferenceAttentionBackend())
+    return LlamaModel(
+        ModelConfig(model="unused", metadata=values),
+        ReferenceAttentionBackend(),
+    )
 
 
 def test_llama_initializes_from_generic_config() -> None:

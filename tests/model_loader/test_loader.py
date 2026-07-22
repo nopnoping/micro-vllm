@@ -34,7 +34,7 @@ def write_local_model(
         json.dumps(raw_config),
         encoding="utf-8",
     )
-    config = ModelConfig(raw_config)
+    config = ModelConfig(model="unused", metadata=raw_config)
     reference = LlamaModel(config, ReferenceAttentionBackend())
     tensors = {
         (
@@ -90,7 +90,7 @@ def test_model_loader_template_controls_loading_order(
     class RecordingLoader(ModelLoader):
         def download_weights(self, config: LLMConfig) -> Path:
             events.append("download")
-            assert config.model == "org/model"
+            assert config.model_config.model == "org/model"
             return tmp_path
 
         def load_weights(self, model: torch.nn.Module, model_path: Path) -> None:
@@ -110,7 +110,12 @@ def test_model_loader_template_controls_loading_order(
     )
 
     model = RecordingLoader().load_model(
-        LLMConfig(model="org/model", attention_backend="recording")
+        LLMConfig(
+            model_config=ModelConfig(
+                model="org/model",
+                attention_backend="recording",
+            )
+        )
     )
 
     assert isinstance(model, FakeModel)
@@ -126,11 +131,13 @@ def test_model_loader_template_controls_loading_order(
 def test_load_model_resolves_constructs_and_populates_local_llama(
     tmp_path: Path,
 ) -> None:
-    config = write_local_model(tmp_path)
-    model = load_model(LLMConfig(model=tmp_path))
+    model_config = write_local_model(tmp_path)
+    config = LLMConfig(model_config=ModelConfig(model=tmp_path))
+    model = load_model(config)
 
     assert isinstance(model, LlamaModel)
-    assert model.config == config
+    assert config.model_config.values == model_config.values
+    assert model.config is config.model_config
     assert model.training is False
     assert isinstance(
         model.layers[0].self_attn.backend,
@@ -142,7 +149,7 @@ def test_load_model_resolves_constructs_and_populates_local_llama(
 def test_load_model_returns_independent_instances(tmp_path: Path) -> None:
     write_local_model(tmp_path)
 
-    config = LLMConfig(model=tmp_path)
+    config = LLMConfig(model_config=ModelConfig(model=tmp_path))
     first = load_model(config)
     second = load_model(config)
 
@@ -166,7 +173,7 @@ def test_load_model_adds_source_context_to_model_config_error(
     )
 
     with pytest.raises(ValueError) as error_info:
-        load_model(LLMConfig(model=tmp_path))
+        load_model(LLMConfig(model_config=ModelConfig(model=tmp_path)))
 
     message = str(error_info.value)
     assert "missing required model config field 'hidden_size'" in message
@@ -179,7 +186,7 @@ def test_load_model_preserves_shape_error_and_adds_source_context(
     write_local_model(tmp_path, invalid_embedding_shape=True)
 
     with pytest.raises(RuntimeError) as error_info:
-        load_model(LLMConfig(model=tmp_path))
+        load_model(LLMConfig(model_config=ModelConfig(model=tmp_path)))
 
     message = str(error_info.value)
     assert "size of tensor" in message

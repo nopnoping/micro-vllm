@@ -19,7 +19,10 @@ def make_model(**overrides: object) -> Qwen3Model:
         "head_dim": 24,
     }
     values.update(overrides)
-    return Qwen3Model(ModelConfig(values), ReferenceAttentionBackend())
+    return Qwen3Model(
+        ModelConfig(model="unused", metadata=values),
+        ReferenceAttentionBackend(),
+    )
 
 
 def test_qwen3_initializes_explicit_head_dimension_and_qk_norm() -> None:

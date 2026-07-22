@@ -6,6 +6,7 @@ import torch
 from micro_vllm.config import (
     CacheConfig,
     LLMConfig,
+    ModelConfig,
     SchedulerConfig,
 )
 
@@ -94,45 +95,53 @@ def test_scheduler_config_rejects_non_positive_limits(
 
 
 def test_llm_config_groups_user_configuration() -> None:
-    config = LLMConfig(model="org/model", device="cpu")
+    config = LLMConfig(
+        model_config=ModelConfig(model="org/model", device="cpu")
+    )
 
-    assert config.model == "org/model"
-    assert config.device == "cpu"
-    assert config.attention_backend == "reference"
+    assert config.model_config.model == "org/model"
+    assert config.model_config.metadata is None
+    assert config.model_config.device == "cpu"
+    assert config.model_config.attention_backend == "reference"
     assert config.scheduler_config.max_model_len == 2048
     assert config.scheduler_config.max_num_seqs == 8
     assert config.cache_config.block_size == 16
 
 
 def test_llm_config_can_be_updated_during_runtime() -> None:
-    config = LLMConfig(model="org/model")
+    config = LLMConfig(model_config=ModelConfig(model="org/model"))
 
-    config.attention_backend = "custom"
+    config.model_config.attention_backend = "custom"
     config.scheduler_config.max_num_seqs = 4
 
-    assert config.attention_backend == "custom"
+    assert config.model_config.attention_backend == "custom"
     assert config.scheduler_config.max_num_seqs == 4
 
 
 def test_llm_config_owns_scheduler_and_cache_configs() -> None:
+    model_config = ModelConfig(
+        model="org/model",
+        metadata={"architectures": ["LlamaForCausalLM"]},
+    )
     scheduler_config = SchedulerConfig(16, 4, 128)
     cache_config = CacheConfig(block_size=8, num_blocks=64)
 
     config = LLMConfig(
-        model="org/model",
+        model_config=model_config,
         scheduler_config=scheduler_config,
         cache_config=cache_config,
     )
 
+    assert config.model_config is model_config
     assert config.scheduler_config is scheduler_config
     assert config.cache_config is cache_config
 
 
-def test_llm_config_rejects_unsupported_device_type() -> None:
+def test_model_config_rejects_unsupported_device_type() -> None:
     with pytest.raises(ValueError, match="device must be 'cpu' or 'cuda'"):
-        LLMConfig(model="unused", device="mps")
+        ModelConfig(model="unused", device="mps")
 
 
-def test_llm_config_rejects_non_floating_dtype() -> None:
+def test_model_config_rejects_non_floating_dtype() -> None:
     with pytest.raises(ValueError, match="dtype must be"):
-        LLMConfig(model="unused", dtype=torch.int64)
+        ModelConfig(model="unused", dtype=torch.int64)

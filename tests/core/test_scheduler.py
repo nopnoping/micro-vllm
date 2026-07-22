@@ -2,7 +2,7 @@
 
 import pytest
 
-from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.prefix_cache import hash_block
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
@@ -51,7 +51,7 @@ def make_scheduler(
     cache_namespace: str = "default",
 ) -> Scheduler:
     config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(
             token_budget,
             sequence_budget,
@@ -72,12 +72,14 @@ def make_scheduler(
 
 def test_scheduler_requires_explicit_kv_cache_manager() -> None:
     with pytest.raises(TypeError):
-        Scheduler(LLMConfig(model="unused"))  # type: ignore[call-arg]
+        Scheduler(  # type: ignore[call-arg]
+            LLMConfig(model_config=ModelConfig(model="unused"))
+        )
 
 
 def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> None:
     config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(4, 1, 128),
         cache_config=CacheConfig(block_size=4, num_blocks=8),
     )
@@ -105,12 +107,12 @@ def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> No
 
 def test_each_scheduler_uses_an_independent_cache_manager() -> None:
     first_config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(4, 1, 128),
         cache_config=CacheConfig(block_size=4, num_blocks=8),
     )
     second_config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(4, 1, 128),
         cache_config=CacheConfig(block_size=4, num_blocks=8),
     )
@@ -508,7 +510,7 @@ def test_waiting_request_uses_prefix_hit_before_admission() -> None:
 
 def test_prefix_hit_larger_than_cache_fails_without_claiming_blocks() -> None:
     config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(1, 1, 128),
         cache_config=CacheConfig(
             block_size=2,
@@ -616,7 +618,7 @@ def test_preemption_selects_most_recent_unscheduled_victim() -> None:
 
 def test_preemption_stops_when_current_request_reaches_running_tail() -> None:
     config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(3, 2, 128),
         cache_config=CacheConfig(block_size=2, num_blocks=2),
     )
@@ -644,7 +646,7 @@ def test_preemption_stops_when_current_request_reaches_running_tail() -> None:
 
 def test_preempted_victim_reenters_from_cached_prefix() -> None:
     config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(4, 3, 128),
         cache_config=CacheConfig(
             block_size=2,

@@ -216,14 +216,14 @@ class ModelRunner:
         self._model: _RunnerModel | None = None
         self._physical_kv_cache: PhysicalKVCache | None = None
         self._config = config
-        self._device = torch.device(config.device)
-        self._dtype = config.dtype
+        self._device = torch.device(config.model_config.device)
+        self._dtype = config.model_config.dtype
         self._block_size = config.cache_config.block_size
         self._available_kv_cache_memory_bytes: int | None = None
         self._peak_activation_memory_bytes = 0
         self._sampler = Sampler()
 
-    def initialize_model(self) -> ModelConfig:
+    def initialize_model(self) -> None:
         """Construct, place, and retain the execution model exactly once."""
 
         model_initializer = self._model_initializer
@@ -233,12 +233,11 @@ class ModelRunner:
             raise RuntimeError("model is already initialized")
 
         model = model_initializer()
-        model_config = _validate_model_contract(model)
+        _validate_model_contract(model, self._config.model_config)
         model.to(device=self._device, dtype=self._dtype)
         model.eval()
         self._model = cast(_RunnerModel, model)
         self._model_initializer = None
-        return model_config
 
     def initialize_kv_cache(self) -> None:
         """Warm up the model, derive capacity, and allocate physical KV tensors."""
@@ -251,14 +250,10 @@ class ModelRunner:
 
         available_memory_bytes = self._profile_model_memory()
         num_blocks = self._determine_num_blocks(
-            model.config,
             available_memory_bytes=available_memory_bytes,
         )
         self._config.cache_config.num_blocks = num_blocks
-        physical_kv_cache = PhysicalKVCache(
-            self._config,
-            model.config,
-        )
+        physical_kv_cache = PhysicalKVCache(self._config)
         self._physical_kv_cache = physical_kv_cache
         self._available_kv_cache_memory_bytes = available_memory_bytes
 
@@ -267,7 +262,7 @@ class ModelRunner:
         if model is None:
             raise RuntimeError("model must be initialized before profiling")
 
-        profile_plan, num_profile_blocks = self._make_warmup_plan(model.config)
+        profile_plan, num_profile_blocks = self._make_warmup_plan()
         profile_config = replace(
             self._config,
             cache_config=replace(
@@ -275,7 +270,7 @@ class ModelRunner:
                 num_blocks=num_profile_blocks,
             ),
         )
-        profile_cache = PhysicalKVCache(profile_config, model.config)
+        profile_cache = PhysicalKVCache(profile_config)
         is_cuda = self._device.type == "cuda"
         baseline_allocated_bytes = 0
         if is_cuda:
@@ -328,10 +323,8 @@ class ModelRunner:
             )
         return available_memory_bytes
 
-    def _make_warmup_plan(
-        self,
-        model_config: ModelConfig,
-    ) -> tuple[SchedulerOutput, int]:
+    def _make_warmup_plan(self) -> tuple[SchedulerOutput, int]:
+        model_config = self._config.model_config
         scheduler_config = self._config.scheduler_config
         max_position_embeddings = model_config.positive_int(
             "max_position_embeddings",
@@ -413,7 +406,6 @@ class ModelRunner:
 
     def _determine_num_blocks(
         self,
-        model_config: ModelConfig,
         *,
         available_memory_bytes: int | None,
     ) -> int:
@@ -426,10 +418,7 @@ class ModelRunner:
                 )
             return requested_num_blocks
 
-        bytes_per_block = kv_cache_block_size_bytes(
-            self._config,
-            model_config,
-        )
+        bytes_per_block = kv_cache_block_size_bytes(self._config)
         num_blocks = available_memory_bytes // bytes_per_block
         if requested_num_blocks is not None:
             num_blocks = min(num_blocks, requested_num_blocks)
@@ -512,15 +501,20 @@ class ModelRunner:
         )
 
 
-def _validate_model_contract(model: nn.Module) -> ModelConfig:
+def _validate_model_contract(
+    model: nn.Module,
+    model_config: ModelConfig,
+) -> None:
     if not isinstance(model, nn.Module):
         raise TypeError("model initializer must return a torch.nn.Module")
 
-    model_config = getattr(model, "config", None)
-    if not isinstance(model_config, ModelConfig):
+    initialized_config = getattr(model, "config", None)
+    if not isinstance(initialized_config, ModelConfig):
         raise TypeError("model.config must be a ModelConfig")
+    if model_config.metadata is None:
+        model_config.set_metadata(initialized_config.values)
+    model.config = model_config
     if getattr(model.forward, "__func__", None) is nn.Module.forward:
         raise TypeError("model must implement forward")
     if not callable(getattr(model, "compute_logits", None)):
         raise TypeError("model must implement compute_logits")
-    return model_config

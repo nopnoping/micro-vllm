@@ -53,7 +53,8 @@ class RealEngineHarness:
 
 def make_model_config() -> ModelConfig:
     return ModelConfig(
-        {
+        model="unused",
+        metadata={
             "architectures": ["LlamaForCausalLM"],
             "vocab_size": 32,
             "hidden_size": 16,
@@ -62,7 +63,7 @@ def make_model_config() -> ModelConfig:
             "num_attention_heads": 4,
             "num_key_value_heads": 2,
             "max_position_embeddings": 32,
-        }
+        },
     )
 
 
@@ -77,7 +78,11 @@ def make_real_engine(
 ) -> RealEngineHarness:
     torch.manual_seed(0)
     config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(
+            model="unused",
+            device="cpu",
+            dtype=torch.float32,
+        ),
         scheduler_config=SchedulerConfig(
             max_num_batched_tokens=token_budget,
             max_num_seqs=sequence_budget,
@@ -88,8 +93,6 @@ def make_real_engine(
             num_blocks=num_blocks,
             enable_prefix_cache=enable_prefix_cache,
         ),
-        device="cpu",
-        dtype=torch.float32,
     )
     worker = Worker(
         lambda: LlamaModel(make_model_config(), ReferenceAttentionBackend()),

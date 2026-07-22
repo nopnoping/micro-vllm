@@ -1,7 +1,5 @@
 """ModelRunner-owned physical KV-cache tensor storage."""
 
-from typing import cast
-
 import torch
 
 from micro_vllm.config import LLMConfig, ModelConfig
@@ -9,10 +7,10 @@ from micro_vllm.config import LLMConfig, ModelConfig
 
 def kv_cache_block_size_bytes(
     llm_config: LLMConfig,
-    model_config: ModelConfig,
 ) -> int:
     """Return the physical bytes consumed by one block across all layers."""
 
+    model_config = llm_config.model_config
     num_layers = model_config.require_positive_int("num_hidden_layers")
     head_dim = _model_head_dim(model_config)
     num_attention_heads = model_config.require_positive_int(
@@ -22,7 +20,7 @@ def kv_cache_block_size_bytes(
         "num_key_value_heads",
         num_attention_heads,
     )
-    element_size = torch.empty((), dtype=llm_config.dtype).element_size()
+    element_size = torch.empty((), dtype=model_config.dtype).element_size()
     return (
         num_layers
         * 2
@@ -41,9 +39,9 @@ class PhysicalKVCache:
     def __init__(
         self,
         llm_config: LLMConfig,
-        model_config: ModelConfig,
     ) -> None:
         cache_config = llm_config.cache_config
+        model_config = llm_config.model_config
         num_layers = model_config.require_positive_int("num_hidden_layers")
         head_dim = _model_head_dim(model_config)
         num_attention_heads = model_config.require_positive_int(
@@ -65,8 +63,8 @@ class PhysicalKVCache:
         self._layer_caches = tuple(
             torch.empty(
                 shape,
-                dtype=llm_config.dtype,
-                device=llm_config.device,
+                dtype=model_config.dtype,
+                device=model_config.device,
             )
             for _ in range(num_layers)
         )

@@ -14,14 +14,36 @@ if TYPE_CHECKING:
     from micro_vllm.tokenizer import Tokenizer
 
 
-@dataclass(frozen=True, slots=True, init=False)
+_EMPTY_MODEL_METADATA: Mapping[str, object] = MappingProxyType({})
+
+
+@dataclass(slots=True)
 class ModelConfig:
-    """Read-only model metadata shared by every registered architecture."""
+    """Model source, construction options, and loaded metadata."""
 
-    _values: Mapping[str, object]
-    architectures: tuple[str, ...]
+    model: str | Path
+    tokenizer: Tokenizer | None = None
+    tokenizer_name_or_path: str | Path | None = None
+    revision: str | None = None
+    cache_dir: str | Path | None = None
+    token: str | bool | None = None
+    local_files_only: bool = False
+    attention_backend: str = "reference"
+    device: torch.device | str = "cuda"
+    dtype: torch.dtype = torch.float16
+    metadata: Mapping[str, object] | None = None
 
-    def __init__(self, values: Mapping[str, object]) -> None:
+    def __post_init__(self) -> None:
+        if torch.device(self.device).type not in {"cpu", "cuda"}:
+            raise ValueError("device must be 'cpu' or 'cuda'")
+        if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+            raise ValueError("dtype must be float32, float16, or bfloat16")
+        if self.metadata is not None:
+            self.set_metadata(self.metadata)
+
+    def set_metadata(self, values: Mapping[str, object]) -> None:
+        """Store validated model metadata as a read-only mapping."""
+
         copied_values = dict(values)
         architectures = copied_values.get("architectures")
         if not isinstance(architectures, list) or not architectures:
@@ -32,23 +54,26 @@ class ModelConfig:
                     f"architecture at index {index} must be a non-empty string"
                 )
 
-        object.__setattr__(self, "_values", MappingProxyType(copied_values))
-        object.__setattr__(self, "architectures", tuple(architectures))
+        self.metadata = MappingProxyType(copied_values)
+
+    @property
+    def architectures(self) -> tuple[str, ...]:
+        return tuple(self.values.get("architectures", ()))
 
     @property
     def values(self) -> Mapping[str, object]:
-        return self._values
+        return self.metadata or _EMPTY_MODEL_METADATA
 
     def require_positive_int(self, name: str) -> int:
-        if name not in self._values:
+        if name not in self.values:
             raise ValueError(f"missing required model config field {name!r}")
-        value = self._values[name]
+        value = self.values[name]
         if type(value) is not int or value <= 0:
             raise ValueError(f"{name} must be a positive integer")
         return value
 
     def positive_int(self, name: str, default: int) -> int:
-        value = self._values.get(name, default)
+        value = self.values.get(name, default)
         if type(value) is not int or value <= 0:
             raise ValueError(f"{name} must be a positive integer")
         return value
@@ -100,16 +125,9 @@ class SchedulerConfig:
 
 @dataclass(slots=True)
 class LLMConfig:
-    """User-provided configuration for one synchronous offline LLM."""
+    """Configuration shared by one synchronous offline LLM."""
 
-    model: str | Path
-    tokenizer: Tokenizer | None = None
-    tokenizer_name_or_path: str | Path | None = None
-    revision: str | None = None
-    cache_dir: str | Path | None = None
-    token: str | bool | None = None
-    local_files_only: bool = False
-    attention_backend: str = "reference"
+    model_config: ModelConfig
     scheduler_config: SchedulerConfig = field(
         default_factory=lambda: SchedulerConfig(
             max_num_batched_tokens=512,
@@ -118,13 +136,3 @@ class LLMConfig:
         )
     )
     cache_config: CacheConfig = field(default_factory=CacheConfig)
-    device: torch.device | str = "cuda"
-    dtype: torch.dtype = torch.float16
-
-    def __post_init__(self) -> None:
-        if torch.device(self.device).type not in {"cpu", "cuda"}:
-            raise ValueError("device must be 'cpu' or 'cuda'")
-        if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
-            raise ValueError(
-                "dtype must be float32, float16, or bfloat16"
-            )

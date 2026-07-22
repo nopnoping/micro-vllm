@@ -13,7 +13,8 @@ from micro_vllm.worker.kv_cache import (
 
 def make_model_config() -> ModelConfig:
     return ModelConfig(
-        {
+        model="unused",
+        metadata={
             "architectures": ["LlamaForCausalLM"],
             "vocab_size": 256,
             "hidden_size": 64,
@@ -22,7 +23,7 @@ def make_model_config() -> ModelConfig:
             "num_attention_heads": 4,
             "num_key_value_heads": 2,
             "max_position_embeddings": 128,
-        }
+        },
     )
 
 
@@ -33,12 +34,14 @@ def make_cache(
 ) -> PhysicalKVCache:
     return PhysicalKVCache(
         LLMConfig(
-            model="unused",
+            model_config=ModelConfig(
+                model="unused",
+                metadata=make_model_config().values,
+                device=device,
+                dtype=dtype,
+            ),
             cache_config=CacheConfig(block_size=4, num_blocks=8),
-            device=device,
-            dtype=dtype,
         ),
-        make_model_config(),
     )
 
 
@@ -58,32 +61,30 @@ def test_cpu_cache_uses_model_cache_and_execution_configuration() -> None:
 
 def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
     model_config = ModelConfig(
-        {
+        model="unused",
+        metadata={
             "architectures": ["Qwen3ForCausalLM"],
             "num_hidden_layers": 2,
             "hidden_size": 16,
             "num_attention_heads": 4,
             "num_key_value_heads": 2,
             "head_dim": 8,
-        }
+        },
     )
     config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(
+            model="unused",
+            metadata=model_config.values,
+            device="cpu",
+            dtype=torch.float32,
+        ),
         cache_config=CacheConfig(block_size=4, num_blocks=3),
-        device="cpu",
-        dtype=torch.float32,
     )
 
-    cache = PhysicalKVCache(
-        config,
-        model_config,
-    )
+    cache = PhysicalKVCache(config)
 
     assert cache[0].shape == torch.Size((2, 3, 4, 2, 8))
-    assert kv_cache_block_size_bytes(
-        config,
-        model_config,
-    ) == 2 * 2 * 4 * 2 * 8 * 4
+    assert kv_cache_block_size_bytes(config) == 2 * 2 * 4 * 2 * 8 * 4
 
 
 def test_physical_block_id_indexes_the_block_dimension() -> None:
@@ -107,10 +108,13 @@ def test_layers_do_not_share_storage() -> None:
 
 def test_logical_block_release_does_not_clear_physical_storage() -> None:
     config = LLMConfig(
-        model="unused",
+        model_config=ModelConfig(
+            model="unused",
+            metadata=make_model_config().values,
+            device="cpu",
+            dtype=torch.float32,
+        ),
         cache_config=CacheConfig(block_size=4, num_blocks=8),
-        device="cpu",
-        dtype=torch.float32,
     )
     manager = KVCacheManager(config)
     manager.register_request("request-1")
@@ -118,10 +122,7 @@ def test_logical_block_release_does_not_clear_physical_storage() -> None:
     assert allocation is not None
     physical_block_id = allocation.block_table[0]
     assert physical_block_id is not None
-    cache = PhysicalKVCache(
-        config,
-        make_model_config(),
-    )
+    cache = PhysicalKVCache(config)
     cache[0][:, physical_block_id].fill_(7)
 
     manager.free_request("request-1")

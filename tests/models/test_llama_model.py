@@ -43,7 +43,7 @@ def make_config(**overrides: object) -> ModelConfig:
         "max_position_embeddings": 32,
     }
     values.update(overrides)
-    return ModelConfig(values)
+    return ModelConfig(model="unused", metadata=values)
 
 
 def make_metadata(

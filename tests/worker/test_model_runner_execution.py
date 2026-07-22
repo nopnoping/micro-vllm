@@ -49,7 +49,8 @@ class FakeModel(torch.nn.Module):
 
 def make_model_config() -> ModelConfig:
     return ModelConfig(
-        {
+        model="unused",
+        metadata={
             "architectures": ["LlamaForCausalLM"],
             "vocab_size": 64,
             "hidden_size": 8,
@@ -58,7 +59,7 @@ def make_model_config() -> ModelConfig:
             "num_attention_heads": 2,
             "num_key_value_heads": 1,
             "max_position_embeddings": 32,
-        }
+        },
     )
 
 
@@ -68,18 +69,21 @@ def make_runner() -> tuple[ModelRunner, FakeModel, PhysicalKVCache]:
     runner = ModelRunner(
         lambda: model,
         LLMConfig(
-            model="unused",
+            model_config=ModelConfig(
+                model="unused",
+                device="cpu",
+                dtype=torch.float32,
+            ),
             cache_config=cache_config,
             scheduler_config=SchedulerConfig(
                 max_num_batched_tokens=8,
                 max_num_seqs=2,
                 max_model_len=32,
             ),
-            device="cpu",
-            dtype=torch.float32,
         ),
     )
-    assert runner.initialize_model() is model.config
+    runner.initialize_model()
+    assert runner._config.model_config is model.config
     runner.initialize_kv_cache()
     assert cache_config.num_blocks == 8
     cache = runner._physical_kv_cache
@@ -99,7 +103,11 @@ def make_uninitialized_runner(
     return ModelRunner(
         model_initializer,
         LLMConfig(
-            model="unused",
+            model_config=ModelConfig(
+                model="unused",
+                device=device,
+                dtype=dtype,
+            ),
             cache_config=CacheConfig(
                 block_size=2,
                 num_blocks=num_blocks,
@@ -109,8 +117,6 @@ def make_uninitialized_runner(
                 max_num_seqs=2,
                 max_model_len=32,
             ),
-            device=device,
-            dtype=dtype,
         ),
     )
 
@@ -125,14 +131,15 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     cache_config = runner._config.cache_config
 
     assert initialized == []
-    assert runner.initialize_model() is model.config
+    runner.initialize_model()
+    assert runner._config.model_config is model.config
     assert initialized == [model]
     assert runner._model is model
     assert model.training is False
     with pytest.raises(RuntimeError, match="already initialized"):
         runner.initialize_model()
 
-    warmup_plan, _ = runner._make_warmup_plan(model.config)
+    warmup_plan, _ = runner._make_warmup_plan()
     assert warmup_plan.scheduled_requests
     assert all(
         not request.requires_sampling
@@ -167,7 +174,6 @@ def test_model_runner_derives_gpu_block_count_from_available_bytes() -> None:
     bytes_per_block = 2 * 2 * 2 * 1 * 4 * 4
 
     assert runner._determine_num_blocks(
-        model.config,
         available_memory_bytes=bytes_per_block * 20,
     ) == 20
 

@@ -101,7 +101,9 @@ def test_load_model_restores_every_untied_parameter(
 ) -> None:
     reference_model, checkpoint_path = request.getfixturevalue(checkpoint_fixture)
 
-    loaded_model = load_model(LLMConfig(model=checkpoint_path))
+    loaded_model = load_model(
+        LLMConfig(model_config=ModelConfig(model=checkpoint_path))
+    )
 
     assert isinstance(loaded_model, LlamaModel)
     assert loaded_model.training is False
@@ -130,7 +132,9 @@ def test_load_model_preserves_tied_embedding_identity_and_value(
 ) -> None:
     reference_model, checkpoint_path = tied_tiny_hf_llama_checkpoint
 
-    loaded_model = load_model(LLMConfig(model=checkpoint_path))
+    loaded_model = load_model(
+        LLMConfig(model_config=ModelConfig(model=checkpoint_path))
+    )
 
     assert isinstance(loaded_model, LlamaModel)
     assert loaded_model.embed_tokens.weight is loaded_model.lm_head.weight
@@ -149,8 +153,8 @@ def test_load_model_returns_independent_loaded_instances(
 ) -> None:
     _, checkpoint_path = tiny_hf_llama_checkpoint
 
-    first = load_model(LLMConfig(model=checkpoint_path))
-    second = load_model(LLMConfig(model=checkpoint_path))
+    first = load_model(LLMConfig(model_config=ModelConfig(model=checkpoint_path)))
+    second = load_model(LLMConfig(model_config=ModelConfig(model=checkpoint_path)))
 
     assert isinstance(first, LlamaModel)
     assert isinstance(second, LlamaModel)
@@ -176,7 +180,9 @@ def test_loaded_checkpoint_hidden_states_and_logits_match_transformers_cpu(
     tiny_hf_llama_checkpoint: tuple[LlamaForCausalLM, Path],
 ) -> None:
     reference_model, checkpoint_path = tiny_hf_llama_checkpoint
-    loaded_model = load_model(LLMConfig(model=checkpoint_path))
+    loaded_model = load_model(
+        LLMConfig(model_config=ModelConfig(model=checkpoint_path))
+    )
     assert isinstance(loaded_model, LlamaModel)
 
     hidden_states, logits, reference_hidden_states, reference_logits = (
@@ -213,7 +219,9 @@ def test_loaded_checkpoint_hidden_states_and_logits_match_transformers_gpu_fp16(
     tiny_hf_llama_checkpoint: tuple[LlamaForCausalLM, Path],
 ) -> None:
     reference_model, checkpoint_path = tiny_hf_llama_checkpoint
-    loaded_model = load_model(LLMConfig(model=checkpoint_path))
+    loaded_model = load_model(
+        LLMConfig(model_config=ModelConfig(model=checkpoint_path))
+    )
     assert isinstance(loaded_model, LlamaModel)
 
     hidden_states, logits, reference_hidden_states, reference_logits = (

@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from micro_vllm.config import LLMConfig
+from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.tokenizer import load_tokenizer
 
 
@@ -19,7 +19,12 @@ EXPECTED_EOS_TOKEN_ID = 151_645
 def test_pinned_qwen3_tokenizer_online_and_offline_cache() -> None:
     online_started = time.perf_counter()
     online = load_tokenizer(
-        LLMConfig(model=MODEL_REPO_ID, revision=MODEL_REVISION)
+        LLMConfig(
+            model_config=ModelConfig(
+                model=MODEL_REPO_ID,
+                revision=MODEL_REVISION,
+            )
+        )
     )
     online_seconds = time.perf_counter() - online_started
     token_ids = online.encode(PROMPT)
@@ -27,9 +32,11 @@ def test_pinned_qwen3_tokenizer_online_and_offline_cache() -> None:
     cached_started = time.perf_counter()
     cached = load_tokenizer(
         LLMConfig(
-            model=MODEL_REPO_ID,
-            revision=MODEL_REVISION,
-            local_files_only=True,
+            model_config=ModelConfig(
+                model=MODEL_REPO_ID,
+                revision=MODEL_REVISION,
+                local_files_only=True,
+            )
         )
     )
     cached_seconds = time.perf_counter() - cached_started

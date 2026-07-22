@@ -14,7 +14,8 @@ from micro_vllm.worker.worker import Worker
 
 def make_model_config() -> ModelConfig:
     return ModelConfig(
-        {
+        model="unused",
+        metadata={
             "architectures": ["LlamaForCausalLM"],
             "vocab_size": 32,
             "hidden_size": 8,
@@ -23,7 +24,7 @@ def make_model_config() -> ModelConfig:
             "num_attention_heads": 2,
             "num_key_value_heads": 1,
             "max_position_embeddings": 32,
-        }
+        },
     )
 
 
@@ -38,15 +39,17 @@ def make_worker(
     return Worker(
         lambda: model,
         LLMConfig(
-            model="unused",
+            model_config=ModelConfig(
+                model="unused",
+                device=device,
+                dtype=dtype,
+            ),
             cache_config=CacheConfig(block_size=2, num_blocks=8),
             scheduler_config=SchedulerConfig(
                 max_num_batched_tokens=8,
                 max_num_seqs=2,
                 max_model_len=32,
             ),
-            device=device,
-            dtype=dtype,
         ),
     )
 
@@ -76,6 +79,7 @@ def test_worker_orchestrates_model_runner_lifecycle() -> None:
     assert not hasattr(worker, "_model")
     assert worker._model_runner is not None
     assert worker._model_runner._config is worker.config
+    assert worker.config.model_config is model.config
     assert worker._model_runner._model is model
     assert worker._model_runner._available_kv_cache_memory_bytes is None
     assert model.training is False

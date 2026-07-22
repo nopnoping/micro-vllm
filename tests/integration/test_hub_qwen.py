@@ -14,7 +14,7 @@ import torch
 from huggingface_hub import HfApi, hf_hub_download
 from transformers import Qwen3ForCausalLM
 
-from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.core.scheduler_output import SchedulerOutput
@@ -137,7 +137,12 @@ def test_pinned_hub_qwen3_gpu_acceptance() -> None:
     torch.cuda.reset_peak_memory_stats()
     online_load_started = time.perf_counter()
     online_model = load_model(
-        LLMConfig(model=MODEL_REPO_ID, revision=MODEL_REVISION)
+        LLMConfig(
+            model_config=ModelConfig(
+                model=MODEL_REPO_ID,
+                revision=MODEL_REVISION,
+            )
+        )
     )
     online_load_seconds = time.perf_counter() - online_load_started
     assert isinstance(online_model, Qwen3Model)
@@ -167,9 +172,13 @@ def test_pinned_hub_qwen3_gpu_acceptance() -> None:
     gc.collect()
 
     config = LLMConfig(
-        model=MODEL_REPO_ID,
-        revision=MODEL_REVISION,
-        local_files_only=True,
+        model_config=ModelConfig(
+            model=MODEL_REPO_ID,
+            revision=MODEL_REVISION,
+            local_files_only=True,
+            device="cuda",
+            dtype=torch.float16,
+        ),
         scheduler_config=SchedulerConfig(
             max_num_batched_tokens=8,
             max_num_seqs=1,
@@ -180,8 +189,6 @@ def test_pinned_hub_qwen3_gpu_acceptance() -> None:
             gpu_memory_utilization=0.9,
             num_blocks=64,
         ),
-        device="cuda",
-        dtype=torch.float16,
     )
     cached_load_seconds: list[float] = []
 
