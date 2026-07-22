@@ -87,6 +87,8 @@ class ModelRunner:
         "_sampler",
     )
 
+    # Model initialization
+
     def __init__(
         self,
         model_initializer: ModelInitializer,
@@ -127,6 +129,8 @@ class ModelRunner:
         )
         self._model = runner_model
         self._model_initializer = None
+
+    # KV cache initialization
 
     def initialize_kv_cache(self) -> None:
         """Warm up the model, derive capacity, and allocate physical KV tensors."""
@@ -172,6 +176,8 @@ class ModelRunner:
         """Initialized logical and physical cache layout."""
 
         return cast(KVCacheLayout, self._kv_cache_layout)
+
+    # Model execution
 
     def execute(self, plan: SchedulerOutput, /) -> ModelRunnerOutput:
         """Execute a flattened batch without retaining scheduler objects."""
@@ -221,6 +227,8 @@ class ModelRunner:
             sample_indices,
         )
 
+    # Resource release
+
     def shutdown(self) -> None:
         """Drop model and cache references owned by the runner."""
 
@@ -229,6 +237,8 @@ class ModelRunner:
         self._kv_cache_topology = None
         self._model = None
         self._model_initializer = None
+
+    # KV cache profiling and allocation
 
     def _profile_model_memory(self) -> int | None:
         model = self._model
@@ -401,23 +411,6 @@ class ModelRunner:
             )
         return num_blocks
 
-    def _bind_layer_kv_caches(
-        self,
-        kv_cache_buffers: tuple[torch.Tensor, ...],
-    ) -> tuple[torch.Tensor, ...]:
-        """Expand shared page buffers into model layer order."""
-
-        topology = cast(KVCacheTopology, self._kv_cache_topology)
-        layer_kv_caches = [kv_cache_buffers[0]] * topology.num_layers
-        for group in topology.groups:
-            for group_layer_index, layer_index in enumerate(
-                group.layer_indices
-            ):
-                layer_kv_caches[layer_index] = kv_cache_buffers[
-                    group_layer_index
-                ]
-        return tuple(layer_kv_caches)
-
     def _allocate_kv_cache(
         self,
         layout: KVCacheLayout,
@@ -472,6 +465,25 @@ class ModelRunner:
         return model_config.require_positive_int(
             "hidden_size"
         ) // model_config.require_positive_int("num_attention_heads")
+
+    # Model input construction
+
+    def _bind_layer_kv_caches(
+        self,
+        kv_cache_buffers: tuple[torch.Tensor, ...],
+    ) -> tuple[torch.Tensor, ...]:
+        """Expand shared page buffers into model layer order."""
+
+        topology = cast(KVCacheTopology, self._kv_cache_topology)
+        layer_kv_caches = [kv_cache_buffers[0]] * topology.num_layers
+        for group in topology.groups:
+            for group_layer_index, layer_index in enumerate(
+                group.layer_indices
+            ):
+                layer_kv_caches[layer_index] = kv_cache_buffers[
+                    group_layer_index
+                ]
+        return tuple(layer_kv_caches)
 
     def _build_model_input(
         self,
