@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from pathlib import Path
-from types import MappingProxyType
+
 import torch
 from huggingface_hub import snapshot_download
 from torch import nn
 
-from micro_vllm.layers.attention_backend import AttentionBackend
-from micro_vllm.model_loader.checkpoint import SafetensorsCheckpoint
 from micro_vllm.config import ModelConfig
+from micro_vllm.layers.attention_backend import AttentionBackend
+from micro_vllm.model_loader.checkpoint import iter_safetensors_tensors
 from micro_vllm.models.registry import get_model_class
 
 
@@ -22,7 +21,6 @@ _CHECKPOINT_PATTERNS = (
     "model.safetensors.index.json",
     "model-*.safetensors",
 )
-_MODEL_ALIASES: Mapping[str, str] = MappingProxyType({})
 
 
 def load_model(
@@ -42,7 +40,7 @@ def load_model(
         checkpoint_path = local_path
     else:
         assert isinstance(model_name_or_path, str)
-        repo_id = _resolve_hf_repo_id(model_name_or_path)
+        repo_id = model_name_or_path
         source_label = repo_id if revision is None else f"{repo_id}@{revision}"
         checkpoint_path = Path(
             snapshot_download(
@@ -67,7 +65,7 @@ def load_model(
         ) from error
 
     try:
-        model.load_weights(SafetensorsCheckpoint(checkpoint_path).iter_tensors())
+        model.load_weights(iter_safetensors_tensors(checkpoint_path))
     except RuntimeError as error:
         raise RuntimeError(
             f"failed to load model weights from {source_label}: {error}"
@@ -79,48 +77,39 @@ def load_model(
 def _resolve_local_model_path(
     model_name_or_path: str | Path,
 ) -> Path | None:
-    if isinstance(model_name_or_path, Path):
-        return _validate_local_model_path(model_name_or_path)
-    if not model_name_or_path.strip():
-        raise ValueError("model name or path must be non-empty")
+    if isinstance(model_name_or_path, str):
+        if not model_name_or_path.strip():
+            raise ValueError("model name or path must be non-empty")
+        model_path = Path(model_name_or_path).expanduser()
+        if not model_path.exists():
+            return None
+    else:
+        model_path = model_name_or_path.expanduser()
 
-    local_candidate = Path(model_name_or_path).expanduser()
-    if local_candidate.exists():
-        return _validate_local_model_path(local_candidate)
-    return None
-
-
-def _validate_local_model_path(model_path: Path) -> Path:
-    normalized_path = model_path.expanduser().resolve()
-    if not normalized_path.exists():
+    model_path = model_path.resolve()
+    if not model_path.exists():
         raise FileNotFoundError(
-            f"model directory does not exist: {normalized_path}"
+            f"model directory does not exist: {model_path}"
         )
-    if not normalized_path.is_dir():
-        raise ValueError(f"model path must be a directory: {normalized_path}")
-    return normalized_path
+    if not model_path.is_dir():
+        raise ValueError(f"model path must be a directory: {model_path}")
+    return model_path
 
 
-def _resolve_hf_repo_id(model_name: str) -> str:
-    return _MODEL_ALIASES.get(model_name.casefold(), model_name)
-
-
-def _read_model_config(config_path: str | Path) -> ModelConfig:
-    path = Path(config_path).expanduser().resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"model config does not exist: {path}")
-    if not path.is_file():
-        raise ValueError(f"model config path is not a file: {path}")
-
+def _read_model_config(config_path: Path) -> ModelConfig:
     try:
-        with path.open(encoding="utf-8") as config_file:
+        with config_path.open(encoding="utf-8") as config_file:
             raw_config = json.load(config_file)
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        raise ValueError(f"invalid model config JSON: {path}") from error
+        raise ValueError(f"invalid model config JSON: {config_path}") from error
 
     if not isinstance(raw_config, dict):
-        raise ValueError(f"model config must be a JSON object: {path}")
+        raise ValueError(
+            f"model config must be a JSON object: {config_path}"
+        )
     try:
         return ModelConfig(raw_config)
     except ValueError as error:
-        raise ValueError(f"invalid model config {path}: {error}") from error
+        raise ValueError(
+            f"invalid model config {config_path}: {error}"
+        ) from error

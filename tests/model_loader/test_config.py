@@ -41,21 +41,6 @@ def test_read_model_config_does_not_modify_file(tmp_path: Path) -> None:
     assert config_path.read_text(encoding="utf-8") == contents
 
 
-def test_read_model_config_rejects_missing_file(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.json"
-
-    with pytest.raises(FileNotFoundError, match=str(config_path)):
-        read_model_config(config_path)
-
-
-def test_read_model_config_rejects_non_file(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.mkdir()
-
-    with pytest.raises(ValueError, match="not a file"):
-        read_model_config(config_path)
-
-
 @pytest.mark.parametrize(
     "contents",
     [

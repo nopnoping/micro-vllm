@@ -8,9 +8,9 @@ import pytest
 import torch
 
 import micro_vllm.model_loader.loader as loader_module
+from micro_vllm.config import ModelConfig
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.model_loader import load_model
-from micro_vllm.config import ModelConfig
 
 
 def test_load_model_delegates_snapshot_resolution_to_hugging_face(
@@ -25,14 +25,13 @@ def test_load_model_delegates_snapshot_resolution_to_hugging_face(
     events: list[str] = []
     snapshot_call: dict[str, object] = {}
 
-    class FakeCheckpoint:
-        def __init__(self, model_path: str | Path) -> None:
-            events.append("checkpoint")
-            assert Path(model_path) == tmp_path
-
-        def iter_tensors(self) -> Iterator[tuple[str, torch.Tensor]]:
-            events.append("tensor")
-            yield "model.weight", torch.tensor([1.0])
+    def fake_iter_safetensors_tensors(
+        model_path: Path,
+    ) -> Iterator[tuple[str, torch.Tensor]]:
+        events.append("checkpoint")
+        assert model_path == tmp_path
+        events.append("tensor")
+        yield "model.weight", torch.tensor([1.0])
 
     class FakeModel:
         def __init__(
@@ -67,8 +66,8 @@ def test_load_model_delegates_snapshot_resolution_to_hugging_face(
     )
     monkeypatch.setattr(
         loader_module,
-        "SafetensorsCheckpoint",
-        FakeCheckpoint,
+        "iter_safetensors_tensors",
+        fake_iter_safetensors_tensors,
     )
     monkeypatch.setattr(
         loader_module,
