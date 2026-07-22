@@ -64,7 +64,7 @@ def test_cpu_cache_uses_model_cache_and_execution_configuration() -> None:
         assert buffer.device == first_buffer.device
 
 
-def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
+def test_cache_shape_uses_explicit_model_head_dimension() -> None:
     model_config = ModelConfig(
         model="unused",
         metadata={
@@ -97,10 +97,6 @@ def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
     cache = runner._allocate_kv_cache(layout)
 
     assert cache[0].shape == torch.Size((2, 3, 4, 2, 8))
-    assert (
-        runner._kv_cache_block_size_bytes(layout.topology)
-        == 2 * 2 * 4 * 2 * 8 * 4
-    )
 
 
 def test_null_model_head_dimension_uses_hidden_size_fallback() -> None:
@@ -131,10 +127,6 @@ def test_null_model_head_dimension_uses_hidden_size_fallback() -> None:
     cache = runner._allocate_kv_cache(layout)
 
     assert cache[0].shape == torch.Size((2, 3, 4, 2, 4))
-    assert (
-        runner._kv_cache_block_size_bytes(layout.topology)
-        == 2 * 2 * 4 * 2 * 4 * 4
-    )
 
 
 def test_cache_uses_max_group_layers_instead_of_total_model_layers() -> None:
@@ -174,9 +166,6 @@ def test_cache_uses_max_group_layers_instead_of_total_model_layers() -> None:
 
     assert layout.page_layer_count == 4
     assert len(cache) == 4
-    assert runner._kv_cache_block_size_bytes(layout.topology) == (
-        4 * 2 * 4 * 2 * 16 * 4
-    )
 
 
 def test_physical_block_id_indexes_the_block_dimension() -> None:

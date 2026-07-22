@@ -1,6 +1,7 @@
 """Execution-plan to model-input preparation and model invocation."""
 
 import gc
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
@@ -164,9 +165,9 @@ class ModelRunner:
                     num_blocks=layout.num_blocks,
                     block_size=layout.block_size,
                     dtype=str(self._dtype),
-                    total_bytes=(
-                        self._kv_cache_block_size_bytes(layout.topology)
-                        * layout.num_blocks
+                    total_bytes=sum(
+                        buffer.numel() * buffer.element_size()
+                        for buffer in kv_cache_buffers
                     ),
                 )
             )
@@ -241,19 +242,15 @@ class ModelRunner:
     # KV cache profiling and allocation
 
     def _profile_model_memory(self) -> int | None:
-        model = self._model
-        if model is None:
-            raise RuntimeError("model must be initialized before profiling")
-
         profile_plan, num_profile_blocks = self._make_warmup_plan()
-        profile_layout = KVCacheLayout(
-            block_size=self._block_size,
-            num_blocks=num_profile_blocks,
-            topology=cast(KVCacheTopology, self._kv_cache_topology),
+        profile_cache = self._allocate_kv_cache(
+            KVCacheLayout(
+                block_size=self._block_size,
+                num_blocks=num_profile_blocks,
+                topology=cast(KVCacheTopology, self._kv_cache_topology),
+            )
         )
-        profile_cache = self._allocate_kv_cache(profile_layout)
         is_cuda = self._device.type == "cuda"
-        baseline_allocated_bytes = 0
         if is_cuda:
             torch.cuda.synchronize(self._device)
             torch.cuda.empty_cache()
@@ -264,7 +261,7 @@ class ModelRunner:
             self._warmup_model(
                 profile_plan,
                 profile_cache,
-                profile_layout.num_blocks - 1,
+                num_profile_blocks - 1,
             )
             if is_cuda:
                 torch.cuda.synchronize(self._device)
@@ -323,6 +320,7 @@ class ModelRunner:
         )
         scheduled_requests: list[ScheduledRequest] = []
         next_block_id = 0
+        num_groups = len(topology.groups)
         for request_index in range(scheduler_config.max_num_seqs):
             if remaining_tokens == 0:
                 break
@@ -330,19 +328,18 @@ class ModelRunner:
             num_blocks = (
                 num_tokens + self._block_size - 1
             ) // self._block_size
-            block_tables: list[CacheGroupBlockTable] = []
-            for _ in topology.groups:
-                block_tables.append(
-                    CacheGroupBlockTable(
-                        tuple(
-                            range(
-                                next_block_id,
-                                next_block_id + num_blocks,
-                            )
+            block_tables = tuple(
+                CacheGroupBlockTable(
+                    tuple(
+                        range(
+                            next_block_id + group_index * num_blocks,
+                            next_block_id + (group_index + 1) * num_blocks,
                         )
                     )
                 )
-                next_block_id += num_blocks
+                for group_index in range(num_groups)
+            )
+            next_block_id += num_groups * num_blocks
             scheduled_requests.append(
                 ScheduledRequest(
                     request_id=f"__warmup__-{request_index}",
@@ -350,7 +347,7 @@ class ModelRunner:
                     num_computed_tokens=0,
                     num_scheduled_tokens=num_tokens,
                     requires_sampling=False,
-                    block_tables=tuple(block_tables),
+                    block_tables=block_tables,
                 )
             )
             remaining_tokens -= num_tokens
@@ -362,14 +359,8 @@ class ModelRunner:
         profile_cache: tuple[torch.Tensor, ...],
         null_block_id: int,
     ) -> None:
-        model = self._model
-        if model is None:
-            raise RuntimeError("model must be initialized before warmup")
-
-        model_input = self._build_model_input(
-            plan,
-            null_block_id,
-        )
+        model_input = self._build_model_input(plan, null_block_id)
+        model = cast(_RunnerModel, self._model)
         layer_kv_caches = self._bind_layer_kv_caches(profile_cache)
         with torch.inference_mode():
             hidden_states = model(
@@ -401,7 +392,11 @@ class ModelRunner:
             return requested_num_blocks
 
         topology = cast(KVCacheTopology, self._kv_cache_topology)
-        bytes_per_block = self._kv_cache_block_size_bytes(topology)
+        bytes_per_block = (
+            topology.page_layer_count
+            * math.prod(self._kv_cache_shape(1))
+            * torch.empty((), dtype=self._dtype).element_size()
+        )
         num_blocks = available_memory_bytes // bytes_per_block
         if requested_num_blocks is not None:
             num_blocks = min(num_blocks, requested_num_blocks)
@@ -415,56 +410,28 @@ class ModelRunner:
         self,
         layout: KVCacheLayout,
     ) -> tuple[torch.Tensor, ...]:
-        model_config = self._config.model_config
-        num_attention_heads = model_config.require_positive_int(
-            "num_attention_heads"
-        )
-        num_key_value_heads = model_config.positive_int(
-            "num_key_value_heads",
-            num_attention_heads,
-        )
-        shape = (
-            2,
-            layout.num_blocks,
-            layout.block_size,
-            num_key_value_heads,
-            self._model_head_dim(),
-        )
+        shape = self._kv_cache_shape(layout.num_blocks)
         return tuple(
             torch.empty(shape, dtype=self._dtype, device=self._device)
             for _ in range(layout.page_layer_count)
         )
 
-    def _kv_cache_block_size_bytes(
-        self,
-        topology: KVCacheTopology,
-    ) -> int:
-        model_config = self._config.model_config
-        num_attention_heads = model_config.require_positive_int(
-            "num_attention_heads"
+    def _kv_cache_shape(self, num_blocks: int) -> tuple[int, ...]:
+        values = self._config.model_config.values
+        num_attention_heads = cast(int, values["num_attention_heads"])
+        num_key_value_heads = cast(
+            int, values.get("num_key_value_heads", num_attention_heads)
         )
-        num_key_value_heads = model_config.positive_int(
-            "num_key_value_heads",
-            num_attention_heads,
-        )
-        element_size = torch.empty((), dtype=self._dtype).element_size()
+        head_dim = values.get("head_dim")
+        if head_dim is None:
+            head_dim = cast(int, values["hidden_size"]) // num_attention_heads
         return (
-            topology.page_layer_count
-            * 2
-            * self._block_size
-            * num_key_value_heads
-            * self._model_head_dim()
-            * element_size
+            2,
+            num_blocks,
+            self._block_size,
+            num_key_value_heads,
+            cast(int, head_dim),
         )
-
-    def _model_head_dim(self) -> int:
-        model_config = self._config.model_config
-        head_dim = model_config.values.get("head_dim")
-        if head_dim is not None:
-            return cast(int, head_dim)
-        return model_config.require_positive_int(
-            "hidden_size"
-        ) // model_config.require_positive_int("num_attention_heads")
 
     # Model input construction
 
