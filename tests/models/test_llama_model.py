@@ -157,7 +157,7 @@ def test_llama_model_uses_one_physical_cache_per_layer() -> None:
     config = make_config()
     operator = RecordingZeroOperator()
     model = LlamaModel(config)
-    model.attention_groups[0].operator = operator
+    model.layer_attentions[0].operator = operator
     input_ids = torch.tensor([1, 3, 5], dtype=torch.int64)
     positions = torch.arange(3, dtype=torch.int64)
     metadata = make_metadata(3, block_table=[0], block_size=4)
@@ -186,7 +186,7 @@ def test_forward_and_compute_logits_are_separate() -> None:
     torch.manual_seed(0)
     config = make_config(num_hidden_layers=1)
     model = LlamaModel(config)
-    model.attention_groups[0].operator = RecordingZeroOperator()
+    model.layer_attentions[0].operator = RecordingZeroOperator()
     input_ids = torch.tensor([2, 4, 6], dtype=torch.int64)
     positions = torch.arange(3, dtype=torch.int64)
     metadata = make_metadata(3, block_table=[0], block_size=4)

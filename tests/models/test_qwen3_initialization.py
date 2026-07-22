@@ -52,12 +52,16 @@ def test_qwen3_initializes_explicit_head_dimension_and_qk_norm() -> None:
     assert attention.q_norm.variance_epsilon == 1e-5
     assert attention.rotary_embedding.base == 500_000.0
     assert model.embed_tokens.weight is model.lm_head.weight
-    assert model.attention_groups == (attention,)
-    assert model.attention_groups[0].spec == FullAttentionSpec()
-    assert model.layer_attention_group_ids == (0, 0, 0)
+    runtime_attention = attention.attention
+    assert model.layer_attentions == (
+        runtime_attention,
+        runtime_attention,
+        runtime_attention,
+    )
+    assert model.layer_attentions[0].spec == FullAttentionSpec()
     assert all(
-        layer.self_attn.attention is model.attention_groups[0]
-        for layer in model.layers
+        layer.self_attn.attention is model.layer_attentions[layer_index]
+        for layer_index, layer in enumerate(model.layers)
     )
 
 

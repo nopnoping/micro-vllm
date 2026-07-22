@@ -15,6 +15,10 @@ from micro_vllm.attention.attention import (
     map_cache_slots,
 )
 from micro_vllm.config import LLMConfig, ModelConfig
+from micro_vllm.core.kv_cache_spec import (
+    KVCacheTopology,
+    build_kv_cache_topology,
+)
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.sampling.params import SamplingParams
@@ -28,8 +32,7 @@ from micro_vllm.worker.kv_cache import (
 class _RunnerModel(Protocol):
     """Minimal model declarations and operations required by ModelRunner."""
 
-    attention_groups: tuple[Attention, ...]
-    layer_attention_group_ids: tuple[int, ...]
+    layer_attentions: tuple[Attention, ...]
     config: ModelConfig
 
     def __call__(
@@ -214,6 +217,7 @@ class ModelRunner:
         "_dtype",
         "_model",
         "_model_initializer",
+        "_kv_cache_topology",
         "_peak_activation_memory_bytes",
         "_physical_kv_cache",
         "_sampler",
@@ -226,6 +230,7 @@ class ModelRunner:
     ) -> None:
         self._model_initializer: ModelInitializer | None = model_initializer
         self._model: _RunnerModel | None = None
+        self._kv_cache_topology: KVCacheTopology | None = None
         self._physical_kv_cache: PhysicalKVCache | None = None
         self._config = config
         self._device = torch.device(config.model_config.device)
@@ -251,7 +256,11 @@ class ModelRunner:
         model.config = model_config
         model.to(device=self._device, dtype=self._dtype)
         model.eval()
-        self._model = cast(_RunnerModel, model)
+        runner_model = cast(_RunnerModel, model)
+        self._kv_cache_topology = build_kv_cache_topology(
+            tuple(attention.spec for attention in runner_model.layer_attentions)
+        )
+        self._model = runner_model
         self._model_initializer = None
 
     def initialize_kv_cache(self) -> None:
@@ -395,7 +404,7 @@ class ModelRunner:
         )
         model_input = flatten_model_input(
             plan,
-            attention=model.attention_groups[0],
+            attention=model.layer_attentions[0],
             block_table=block_table,
             slot_mapping=slot_mapping,
             block_size=self._block_size,
@@ -449,6 +458,7 @@ class ModelRunner:
         if physical_kv_cache is not None:
             physical_kv_cache.release()
         self._physical_kv_cache = None
+        self._kv_cache_topology = None
         self._model = None
         self._model_initializer = None
 
@@ -512,7 +522,7 @@ class ModelRunner:
         )
         return flatten_model_input(
             plan,
-            attention=model.attention_groups[0],
+            attention=model.layer_attentions[0],
             block_table=block_table,
             slot_mapping=slot_mapping,
             block_size=self._block_size,

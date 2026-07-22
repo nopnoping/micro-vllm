@@ -11,7 +11,7 @@ from micro_vllm.attention.attention import (
     AttentionMetadata,
     PAD_BLOCK_ID,
 )
-from micro_vllm.attention.spec import FullAttentionSpec
+from micro_vllm.attention.spec import ChunkedLocalSpec, FullAttentionSpec
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.sampling.params import SamplingParams
@@ -25,8 +25,7 @@ class FakeModel(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         attention = Attention(FullAttentionSpec(), "reference")
-        self.attention_groups = (attention,)
-        self.layer_attention_group_ids = (0, 0)
+        self.layer_attentions = (attention, attention)
         self.config = make_model_config()
         self.forward_inputs: list[tuple[torch.Tensor, torch.Tensor]] = []
         self.logit_inputs: list[torch.Tensor] = []
@@ -144,6 +143,12 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     assert initialized == [model]
     assert runner._model is model
     assert model.training is False
+    topology = runner._kv_cache_topology
+    assert topology is not None
+    assert len(topology.groups) == 1
+    assert topology.groups[0].attention_spec == FullAttentionSpec()
+    assert topology.groups[0].layer_indices == (0, 1)
+    assert topology.page_layer_count == 2
     with pytest.raises(RuntimeError, match="already initialized"):
         runner.initialize_model()
 
@@ -169,7 +174,31 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     assert len(cache) == 0
     assert runner._model is None
     assert runner._model_initializer is None
+    assert runner._kv_cache_topology is None
     assert runner._physical_kv_cache is None
+
+
+def test_model_runner_derives_topology_from_layer_attentions() -> None:
+    model = FakeModel()
+    model.layer_attentions = (
+        Attention(FullAttentionSpec(), "reference"),
+        Attention(ChunkedLocalSpec(4), "reference"),
+    )
+    runner = make_uninitialized_runner(lambda: model)
+
+    runner.initialize_model()
+
+    topology = runner._kv_cache_topology
+    assert topology is not None
+    assert tuple(group.attention_spec for group in topology.groups) == (
+        FullAttentionSpec(),
+        ChunkedLocalSpec(4),
+    )
+    assert tuple(group.layer_indices for group in topology.groups) == (
+        (0,),
+        (1,),
+    )
+    assert topology.page_layer_count == 1
 
 
 def test_model_runner_derives_gpu_block_count_from_available_bytes() -> None:

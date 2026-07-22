@@ -191,8 +191,7 @@ class Qwen3Model(nn.Module):
 
         attention = Attention(FullAttentionSpec(), config.attention_operator)
         self.config = config
-        self.attention_groups = (attention,)
-        self.layer_attention_group_ids = (0,) * num_hidden_layers
+        self.layer_attentions = (attention,) * num_hidden_layers
         self.embed_tokens = TokenEmbedding(vocab_size, hidden_size)
         self.layers = nn.ModuleList(
             Qwen3DecoderLayer(

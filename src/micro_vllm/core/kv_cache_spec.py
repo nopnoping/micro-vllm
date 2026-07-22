@@ -1,4 +1,4 @@
-"""Immutable KV-cache layout shared by control and data planes."""
+"""Immutable KV-cache topology shared by control and data planes."""
 
 from __future__ import annotations
 
@@ -8,8 +8,16 @@ from micro_vllm.attention.spec import AttentionSpec
 
 
 @dataclass(frozen=True, slots=True)
+class LayerCacheBinding:
+    """Bind one model layer to its group-local physical buffer index."""
+
+    group_id: int
+    group_layer_index: int
+
+
+@dataclass(frozen=True, slots=True)
 class KVCacheGroupSpec:
-    """One group of layers sharing attention and block-cache semantics."""
+    """Layers sharing one attention and logical cache semantic."""
 
     group_id: int
     attention_spec: AttentionSpec
@@ -17,30 +25,78 @@ class KVCacheGroupSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class KVCacheLayout:
-    """Stable group ordering over one shared physical block namespace.
+class KVCacheTopology:
+    """Stable cache groups and per-layer bindings derived from a model."""
 
-    All groups allocate block IDs from the same ``[0, num_blocks)`` pool.
-    The union of ``layer_indices`` is exactly ``range(num_layers)`` where
-    ``num_layers`` is inferred from the immutable group declarations.
-    """
-
-    block_size: int
-    num_blocks: int
     groups: tuple[KVCacheGroupSpec, ...]
+    layer_bindings: tuple[LayerCacheBinding, ...]
+    page_layer_count: int
 
     @property
     def num_layers(self) -> int:
-        """Number of consecutively covered model layers."""
+        return len(self.layer_bindings)
 
-        return sum(len(group.layer_indices) for group in self.groups)
+
+@dataclass(frozen=True, slots=True)
+class KVCacheLayout:
+    """A model topology with its initialized physical block capacity."""
+
+    block_size: int
+    num_blocks: int
+    topology: KVCacheTopology
 
     @property
-    def layer_attention_group_ids(self) -> tuple[int, ...]:
-        """Return the group ID selected by every layer in model order."""
+    def groups(self) -> tuple[KVCacheGroupSpec, ...]:
+        return self.topology.groups
 
-        group_ids = [0] * self.num_layers
-        for group in self.groups:
-            for layer_index in group.layer_indices:
-                group_ids[layer_index] = group.group_id
-        return tuple(group_ids)
+    @property
+    def layer_bindings(self) -> tuple[LayerCacheBinding, ...]:
+        return self.topology.layer_bindings
+
+    @property
+    def page_layer_count(self) -> int:
+        return self.topology.page_layer_count
+
+    @property
+    def num_layers(self) -> int:
+        return self.topology.num_layers
+
+
+def build_kv_cache_topology(
+    layer_attention_specs: tuple[AttentionSpec, ...],
+) -> KVCacheTopology:
+    """Group equal per-layer specs in stable first-occurrence order."""
+
+    group_ids_by_spec: dict[AttentionSpec, int] = {}
+    group_layer_indices: list[list[int]] = []
+    layer_bindings: list[LayerCacheBinding] = []
+
+    for layer_index, attention_spec in enumerate(layer_attention_specs):
+        group_id = group_ids_by_spec.get(attention_spec)
+        if group_id is None:
+            group_id = len(group_ids_by_spec)
+            group_ids_by_spec[attention_spec] = group_id
+            group_layer_indices.append([])
+
+        group_layer_index = len(group_layer_indices[group_id])
+        group_layer_indices[group_id].append(layer_index)
+        layer_bindings.append(
+            LayerCacheBinding(
+                group_id=group_id,
+                group_layer_index=group_layer_index,
+            )
+        )
+
+    groups = tuple(
+        KVCacheGroupSpec(
+            group_id=group_id,
+            attention_spec=attention_spec,
+            layer_indices=tuple(group_layer_indices[group_id]),
+        )
+        for attention_spec, group_id in group_ids_by_spec.items()
+    )
+    return KVCacheTopology(
+        groups=groups,
+        layer_bindings=tuple(layer_bindings),
+        page_layer_count=max(len(group.layer_indices) for group in groups),
+    )

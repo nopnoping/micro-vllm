@@ -1,4 +1,4 @@
-"""Tests for immutable multi-group KV-cache layout contracts."""
+"""Tests for immutable multi-group KV-cache topology contracts."""
 
 from dataclasses import FrozenInstanceError
 
@@ -7,60 +7,101 @@ import pytest
 from micro_vllm.attention.spec import (
     ChunkedLocalSpec,
     FullAttentionSpec,
+    SlidingWindowSpec,
 )
-from micro_vllm.core.kv_cache_spec import KVCacheGroupSpec, KVCacheLayout
+from micro_vllm.core.kv_cache_spec import (
+    KVCacheLayout,
+    LayerCacheBinding,
+    build_kv_cache_topology,
+)
 
 
-def make_full_group(
-    group_id: int = 0,
-    layer_indices: tuple[int, ...] = (0, 1),
-) -> KVCacheGroupSpec:
-    return KVCacheGroupSpec(
-        group_id=group_id,
-        attention_spec=FullAttentionSpec(),
-        layer_indices=layer_indices,
+def test_full_only_topology_uses_one_group() -> None:
+    topology = build_kv_cache_topology(
+        (FullAttentionSpec(), FullAttentionSpec())
     )
 
+    assert len(topology.groups) == 1
+    assert topology.groups[0].group_id == 0
+    assert topology.groups[0].attention_spec == FullAttentionSpec()
+    assert topology.groups[0].layer_indices == (0, 1)
+    assert topology.layer_bindings == (
+        LayerCacheBinding(group_id=0, group_layer_index=0),
+        LayerCacheBinding(group_id=0, group_layer_index=1),
+    )
+    assert topology.page_layer_count == 2
+    assert topology.num_layers == 2
 
-def test_full_only_layout_uses_the_same_single_group_contract() -> None:
-    layout = KVCacheLayout(
-        block_size=16,
-        num_blocks=32,
-        groups=(make_full_group(),),
+
+def test_hybrid_topology_has_stable_groups_and_local_layer_indices() -> None:
+    topology = build_kv_cache_topology(
+        (
+            FullAttentionSpec(),
+            ChunkedLocalSpec(4),
+            ChunkedLocalSpec(4),
+            FullAttentionSpec(),
+            ChunkedLocalSpec(4),
+        )
     )
 
-    assert layout.num_layers == 2
-    assert layout.layer_attention_group_ids == (0, 0)
-    assert layout.groups[0].group_id == 0
+    assert tuple(group.attention_spec for group in topology.groups) == (
+        FullAttentionSpec(),
+        ChunkedLocalSpec(4),
+    )
+    assert tuple(group.layer_indices for group in topology.groups) == (
+        (0, 3),
+        (1, 2, 4),
+    )
+    assert topology.layer_bindings == (
+        LayerCacheBinding(0, 0),
+        LayerCacheBinding(1, 0),
+        LayerCacheBinding(1, 1),
+        LayerCacheBinding(0, 1),
+        LayerCacheBinding(1, 2),
+    )
+    assert topology.page_layer_count == 3
 
 
-def test_hybrid_layout_uses_stable_first_layer_group_order() -> None:
+def test_different_attention_parameters_create_different_groups() -> None:
+    topology = build_kv_cache_topology(
+        (
+            SlidingWindowSpec(128),
+            SlidingWindowSpec(256),
+            SlidingWindowSpec(128),
+        )
+    )
+
+    assert tuple(group.attention_spec for group in topology.groups) == (
+        SlidingWindowSpec(128),
+        SlidingWindowSpec(256),
+    )
+    assert tuple(group.layer_indices for group in topology.groups) == (
+        (0, 2),
+        (1,),
+    )
+    assert topology.page_layer_count == 2
+
+
+def test_layout_composes_frozen_topology_and_capacity() -> None:
+    topology = build_kv_cache_topology(
+        (FullAttentionSpec(), ChunkedLocalSpec(4))
+    )
     layout = KVCacheLayout(
         block_size=4,
         num_blocks=8,
-        groups=(
-            make_full_group(layer_indices=(0, 2)),
-            KVCacheGroupSpec(
-                group_id=1,
-                attention_spec=ChunkedLocalSpec(4),
-                layer_indices=(1, 3),
-            ),
-        ),
+        topology=topology,
     )
 
-    assert layout.layer_attention_group_ids == (0, 1, 0, 1)
-    assert layout.groups[0].attention_spec == FullAttentionSpec()
-    assert layout.groups[1].attention_spec == ChunkedLocalSpec(4)
-    assert tuple(range(layout.num_blocks)) == tuple(range(8))
-
-
-def test_layout_and_nested_groups_are_frozen() -> None:
-    layout = KVCacheLayout(4, 8, (make_full_group(),))
+    assert layout.groups == topology.groups
+    assert layout.layer_bindings == topology.layer_bindings
+    assert layout.page_layer_count == 1
+    assert layout.num_layers == 2
 
     with pytest.raises(FrozenInstanceError):
         layout.block_size = 8
 
     with pytest.raises(FrozenInstanceError):
-        layout.groups[0].group_id = 1
+        topology.page_layer_count = 2
 
-    assert layout.groups[0].layer_indices == (0, 1)
+    with pytest.raises(FrozenInstanceError):
+        topology.layer_bindings[0].group_id = 1
