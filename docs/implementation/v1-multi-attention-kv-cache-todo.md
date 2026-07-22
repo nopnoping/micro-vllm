@@ -165,13 +165,14 @@ V1.5 首版保持明确限制：
 
 ## 4. Phase 0：冻结 contract 和不变量
 
-- [ ] 新增 `attention/spec.py`，只保存 immutable semantic values 和 domain 校验。
-- [ ] 定义三种 spec 的精确可见区间，特别锁定 window 是否包含当前 token。
-- [ ] 新增 `KVCacheGroupSpec` 和 `KVCacheLayout`。
-- [ ] 定义 model 暴露 attention group 的最小 runner contract。
-- [ ] 定义稳定 group ID、layer 覆盖、block ID namespace 和 tuple ordering。
-- [ ] 拒绝空 group、重复/越界 layer、非连续 group ID 和非正 window/chunk size。
-- [ ] 记录 full-only 现有模型如何映射为单 group，不保留另一条运行路径。
+- [x] 新增 `attention/spec.py`，只保存 immutable semantic values 和 domain 校验。
+- [x] 定义三种 spec 的精确可见区间，特别锁定 window 是否包含当前 token。
+- [x] 新增 `KVCacheGroupSpec` 和 `KVCacheLayout`。
+- [x] 定义 model 暴露 attention group 的最小 runner contract。
+- [x] 定义稳定 group ID、layer 覆盖、block ID namespace 和 tuple ordering。
+- [x] 内部 group/layout 依赖类型与构造流程保证不变量，不做重复运行时校验；
+      仅拒绝来自模型配置的非正 window/chunk size。
+- [x] 记录 full-only 现有模型如何映射为单 group，不保留另一条运行路径。
 
 ## 5. Phase 1：Attention 语义和 reference correctness
 

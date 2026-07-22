@@ -26,9 +26,10 @@ from micro_vllm.worker.kv_cache import (
 
 
 class _RunnerModel(Protocol):
-    """Model operations required by ModelRunner."""
+    """Minimal model declarations and operations required by ModelRunner."""
 
-    attention: Attention
+    attention_groups: tuple[Attention, ...]
+    layer_attention_group_ids: tuple[int, ...]
     config: ModelConfig
 
     def __call__(
@@ -244,7 +245,10 @@ class ModelRunner:
             raise RuntimeError("model is already initialized")
 
         model = model_initializer()
-        _validate_model_contract(model, self._config.model_config)
+        model_config = self._config.model_config
+        if model_config.metadata is None:
+            model_config.set_metadata(model.config.values)
+        model.config = model_config
         model.to(device=self._device, dtype=self._dtype)
         model.eval()
         self._model = cast(_RunnerModel, model)
@@ -391,7 +395,7 @@ class ModelRunner:
         )
         model_input = flatten_model_input(
             plan,
-            attention=model.attention,
+            attention=model.attention_groups[0],
             block_table=block_table,
             slot_mapping=slot_mapping,
             block_size=self._block_size,
@@ -508,27 +512,8 @@ class ModelRunner:
         )
         return flatten_model_input(
             plan,
-            attention=model.attention,
+            attention=model.attention_groups[0],
             block_table=block_table,
             slot_mapping=slot_mapping,
             block_size=self._block_size,
         )
-
-
-def _validate_model_contract(
-    model: nn.Module,
-    model_config: ModelConfig,
-) -> None:
-    if not isinstance(model, nn.Module):
-        raise TypeError("model initializer must return a torch.nn.Module")
-
-    initialized_config = getattr(model, "config", None)
-    if not isinstance(initialized_config, ModelConfig):
-        raise TypeError("model.config must be a ModelConfig")
-    if model_config.metadata is None:
-        model_config.set_metadata(initialized_config.values)
-    model.config = model_config
-    if getattr(model.forward, "__func__", None) is nn.Module.forward:
-        raise TypeError("model must implement forward")
-    if not callable(getattr(model, "compute_logits", None)):
-        raise TypeError("model must implement compute_logits")

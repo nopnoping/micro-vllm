@@ -124,9 +124,11 @@ def test_load_model_resolves_constructs_and_populates_local_llama(
     assert config.model_config.values == model_config.values
     assert model.config is config.model_config
     assert model.training is False
-    assert isinstance(model.attention, Attention)
+    assert len(model.attention_groups) == 1
+    assert isinstance(model.attention_groups[0], Attention)
+    assert model.layer_attention_group_ids == (0, 0)
     assert isinstance(
-        model.attention.operator,
+        model.attention_groups[0].operator,
         ReferenceAttentionOperator,
     )
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())

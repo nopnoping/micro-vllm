@@ -23,7 +23,9 @@ class FakeModel(torch.nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
-        self.attention = Attention("reference")
+        attention = Attention("reference")
+        self.attention_groups = (attention,)
+        self.layer_attention_group_ids = (0, 0)
         self.config = make_model_config()
         self.forward_inputs: list[tuple[torch.Tensor, torch.Tensor]] = []
         self.logit_inputs: list[torch.Tensor] = []
@@ -193,43 +195,6 @@ def test_cpu_kv_cache_initialization_requires_deterministic_capacity() -> None:
 
     with pytest.raises(ValueError, match="CPU execution requires num_blocks"):
         runner.initialize_kv_cache()
-
-
-def test_model_runner_rejects_model_without_config() -> None:
-    runner = make_uninitialized_runner(lambda: torch.nn.Linear(2, 2))
-
-    with pytest.raises(TypeError, match=r"model\.config must be a ModelConfig"):
-        runner.initialize_model()
-
-
-def test_model_runner_rejects_model_without_forward() -> None:
-    class MissingForwardModel(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.config = make_model_config()
-
-        def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
-            return hidden_states
-
-    runner = make_uninitialized_runner(lambda: MissingForwardModel())
-
-    with pytest.raises(TypeError, match="model must implement forward"):
-        runner.initialize_model()
-
-
-def test_model_runner_rejects_model_without_compute_logits() -> None:
-    class MissingLogitsModel(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.config = make_model_config()
-
-        def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-            return input_ids
-
-    runner = make_uninitialized_runner(lambda: MissingLogitsModel())
-
-    with pytest.raises(TypeError, match="model must implement compute_logits"):
-        runner.initialize_model()
 
 
 def test_model_runner_does_not_fallback_when_placement_fails(

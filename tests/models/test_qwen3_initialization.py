@@ -51,6 +51,12 @@ def test_qwen3_initializes_explicit_head_dimension_and_qk_norm() -> None:
     assert attention.q_norm.variance_epsilon == 1e-5
     assert attention.rotary_embedding.base == 500_000.0
     assert model.embed_tokens.weight is model.lm_head.weight
+    assert model.attention_groups == (attention,)
+    assert model.layer_attention_group_ids == (0, 0, 0)
+    assert all(
+        layer.self_attn.attention is model.attention_groups[0]
+        for layer in model.layers
+    )
 
 
 def test_qwen3_uses_simple_defaults() -> None:

@@ -63,6 +63,10 @@ Enforce these boundaries:
 - Rely on type annotations and static checking for parameter types. Reserve
   runtime validation for domain values, state transitions, and invariants that
   static types cannot express.
+- Assume typed internal values and structures satisfy their contracts. Add
+  runtime validation only for user-provided inputs and externally sourced domain
+  values; do not repeat defensive checks while forwarding internal data between
+  components.
 - Keep validation proportional. Validate external inputs and critical domain
   invariants, but do not add guards for internal states already guaranteed by
   types, constructors, or lifecycle rules.

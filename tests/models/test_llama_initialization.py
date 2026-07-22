@@ -39,6 +39,12 @@ def test_llama_initializes_from_generic_config() -> None:
     assert model.layers[0].self_attn.rotary_embedding.base == 500_000.0
     assert model.norm.variance_epsilon == 1e-5
     assert model.embed_tokens.weight is model.lm_head.weight
+    assert model.attention_groups == (model.layers[0].self_attn.attention,)
+    assert model.layer_attention_group_ids == (0, 0, 0)
+    assert all(
+        layer.self_attn.attention is model.attention_groups[0]
+        for layer in model.layers
+    )
 
 
 def test_llama_uses_simple_defaults() -> None:
