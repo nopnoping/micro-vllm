@@ -3,10 +3,10 @@
 import pytest
 import torch
 
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.worker import Worker
@@ -35,7 +35,7 @@ def make_worker(
     dtype: torch.dtype = torch.float32,
 ) -> Worker:
     if model is None:
-        model = LlamaModel(make_model_config(), ReferenceAttentionBackend())
+        model = LlamaModel(make_model_config(), create_attention("reference"))
     return Worker(
         lambda: model,
         LLMConfig(
@@ -72,7 +72,7 @@ def make_plan() -> SchedulerOutput:
 
 
 def test_worker_orchestrates_model_runner_lifecycle() -> None:
-    model = LlamaModel(make_model_config(), ReferenceAttentionBackend())
+    model = LlamaModel(make_model_config(), create_attention("reference"))
     model.train()
     worker = make_worker(model=model)
 
@@ -152,7 +152,7 @@ def test_cpu_worker_executes_reference_model() -> None:
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
 def test_gpu_worker_executes_reference_model() -> None:
-    model = LlamaModel(make_model_config(), ReferenceAttentionBackend())
+    model = LlamaModel(make_model_config(), create_attention("reference"))
     worker = make_worker(model=model, device="cuda", dtype=torch.float16)
 
     output = worker.execute(make_plan())

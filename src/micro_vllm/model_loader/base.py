@@ -10,10 +10,8 @@ from pathlib import Path
 import torch
 from torch import nn
 
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import LLMConfig
-from micro_vllm.layers.attention_backend_registry import (
-    create_attention_backend,
-)
 from micro_vllm.models.registry import get_model_class
 
 
@@ -35,9 +33,9 @@ class ModelLoader(ABC):
         model_class = get_model_class(model_config, source_label=source_label)
 
         with torch.device("cpu"):
-            backend = create_attention_backend(model_config.attention_backend)
+            attention = create_attention(model_config.attention_operator)
             try:
-                model = model_class(model_config, backend)
+                model = model_class(model_config, attention)
             except ValueError as error:
                 raise ValueError(
                     f"invalid model config from {source_label}: {error}"

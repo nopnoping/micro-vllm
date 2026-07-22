@@ -1,54 +1,54 @@
-"""Tests for the attention backend contract and cache helpers."""
+"""Tests for the reference full-attention operator and cache helpers."""
 
 import math
 
 import pytest
 import torch
 
-from micro_vllm.layers.attention_backend import (
-    AttentionBackend,
-    AttentionMetadata,
-    PAD_BLOCK_ID,
-    ReferenceAttentionBackend,
+from micro_vllm.attention.base import PAD_BLOCK_ID
+from micro_vllm.attention.full.metadata import FullAttentionMetadata
+from micro_vllm.attention.full.operator import FullAttentionOperator
+from micro_vllm.attention.full.reference import (
+    ReferenceFullAttentionOperator,
     gather_kv_cache,
     write_kv_cache,
 )
 
 
-class RecordingBackend:
+class RecordingOperator(FullAttentionOperator):
     def __init__(self) -> None:
         self.arguments: tuple[object, ...] | None = None
 
-    def __call__(
+    def forward(
         self,
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
         layer_kv_cache: torch.Tensor,
-        metadata: AttentionMetadata,
+        metadata: FullAttentionMetadata,
         /,
     ) -> torch.Tensor:
         self.arguments = (query, key, value, layer_kv_cache, metadata)
         return torch.empty_like(query)
 
 
-def invoke_backend(
-    backend: AttentionBackend,
+def invoke_operator(
+    operator: FullAttentionOperator,
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
     layer_kv_cache: torch.Tensor,
-    metadata: AttentionMetadata,
+    metadata: FullAttentionMetadata,
 ) -> torch.Tensor:
-    return backend(query, key, value, layer_kv_cache, metadata)
+    return operator(query, key, value, layer_kv_cache, metadata)
 
 
-def test_attention_backend_receives_only_tensor_data_and_metadata() -> None:
+def test_full_attention_operator_receives_tensor_data_and_metadata() -> None:
     query = torch.empty((2, 4, 16))
     key = torch.empty((2, 2, 16))
     value = torch.empty((2, 2, 16))
     layer_kv_cache = torch.empty((2, 8, 4, 2, 16))
-    metadata = AttentionMetadata(
+    metadata = FullAttentionMetadata(
         query_positions=torch.tensor([0, 1], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 2], dtype=torch.int64),
         context_lengths=torch.tensor([2], dtype=torch.int64),
@@ -56,10 +56,10 @@ def test_attention_backend_receives_only_tensor_data_and_metadata() -> None:
         slot_mapping=torch.tensor([0, 1], dtype=torch.int64),
         block_size=4,
     )
-    backend = RecordingBackend()
+    operator = RecordingOperator()
 
-    output = invoke_backend(
-        backend,
+    output = invoke_operator(
+        operator,
         query,
         key,
         value,
@@ -74,19 +74,19 @@ def test_attention_backend_receives_only_tensor_data_and_metadata() -> None:
         layer_kv_cache,
         metadata,
     )
-    assert backend.arguments is not None
+    assert operator.arguments is not None
     assert all(
         actual is expected
-        for actual, expected in zip(backend.arguments, expected_arguments)
+        for actual, expected in zip(operator.arguments, expected_arguments)
     )
     assert output.shape == query.shape
     assert output.dtype is query.dtype
     assert output.device == query.device
 
 
-def make_write_metadata(slot_mapping: list[int]) -> AttentionMetadata:
+def make_write_metadata(slot_mapping: list[int]) -> FullAttentionMetadata:
     num_tokens = len(slot_mapping)
-    return AttentionMetadata(
+    return FullAttentionMetadata(
         query_positions=torch.arange(num_tokens, dtype=torch.int64),
         query_start_locations=torch.tensor(
             [0, num_tokens],
@@ -127,7 +127,7 @@ def test_kv_write_does_not_overwrite_shared_prefix_slots() -> None:
     layer_kv_cache[:, 0].fill_(9)
     key = torch.tensor([[[1.0, 2.0]], [[3.0, 4.0]]])
     value = key + 10
-    metadata = AttentionMetadata(
+    metadata = FullAttentionMetadata(
         query_positions=torch.tensor([4, 5], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 2], dtype=torch.int64),
         context_lengths=torch.tensor([6], dtype=torch.int64),
@@ -153,7 +153,7 @@ def test_kv_gather_handles_each_request_independently() -> None:
     flattened_cache[1, [6, 7, 2, 8]] = torch.tensor(
         [[[110.0]], [[111.0]], [[112.0]], [[120.0]]]
     )
-    metadata = AttentionMetadata(
+    metadata = FullAttentionMetadata(
         query_positions=torch.tensor([1, 2, 0], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 2, 3], dtype=torch.int64),
         context_lengths=torch.tensor([3, 1], dtype=torch.int64),
@@ -184,7 +184,7 @@ def test_kv_gather_sees_cached_history_and_current_prefill_chunk() -> None:
     flattened_cache[1, 4:6] = torch.tensor([[[11.0]], [[12.0]]])
     key = torch.tensor([[[3.0]], [[4.0]]])
     value = torch.tensor([[[13.0]], [[14.0]]])
-    metadata = AttentionMetadata(
+    metadata = FullAttentionMetadata(
         query_positions=torch.tensor([2, 3], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 2], dtype=torch.int64),
         context_lengths=torch.tensor([4], dtype=torch.int64),
@@ -212,7 +212,7 @@ def test_kv_gather_decode_reads_the_complete_context() -> None:
     flattened_cache[1, [4, 5, 10, 11]] = torch.tensor(
         [[[11.0]], [[12.0]], [[13.0]], [[14.0]]]
     )
-    metadata = AttentionMetadata(
+    metadata = FullAttentionMetadata(
         query_positions=torch.tensor([4], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 1], dtype=torch.int64),
         context_lengths=torch.tensor([5], dtype=torch.int64),
@@ -270,7 +270,7 @@ def make_attention_metadata(
     *,
     block_size: int,
     device: torch.device | str = "cpu",
-) -> AttentionMetadata:
+) -> FullAttentionMetadata:
     flattened_positions = [
         position
         for request_positions in query_positions
@@ -296,7 +296,7 @@ def make_attention_metadata(
         )
         for position in request_positions
     ]
-    return AttentionMetadata(
+    return FullAttentionMetadata(
         query_positions=torch.tensor(
             flattened_positions,
             dtype=torch.int64,
@@ -371,7 +371,7 @@ def test_full_causal_prefill_matches_dense_mha_gqa_and_mqa(
     )
     value = key + 1
     layer_kv_cache = torch.zeros((2, 3, 2, num_key_value_heads, 2))
-    metadata = AttentionMetadata(
+    metadata = FullAttentionMetadata(
         query_positions=torch.tensor([0, 1, 2], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 3], dtype=torch.int64),
         context_lengths=torch.tensor([3], dtype=torch.int64),
@@ -380,7 +380,7 @@ def test_full_causal_prefill_matches_dense_mha_gqa_and_mqa(
         block_size=2,
     )
 
-    output = ReferenceAttentionBackend()(
+    output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,
@@ -398,7 +398,7 @@ def test_reference_attention_restores_low_precision_dtype() -> None:
     key = torch.tensor([[[2.0, 1.0]]], dtype=torch.float16)
     value = torch.tensor([[[3.0, 4.0]]], dtype=torch.float16)
     layer_kv_cache = torch.zeros((2, 1, 2, 1, 2), dtype=torch.float16)
-    metadata = AttentionMetadata(
+    metadata = FullAttentionMetadata(
         query_positions=torch.tensor([0], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 1], dtype=torch.int64),
         context_lengths=torch.tensor([1], dtype=torch.int64),
@@ -407,7 +407,7 @@ def test_reference_attention_restores_low_precision_dtype() -> None:
         block_size=2,
     )
 
-    output = ReferenceAttentionBackend()(
+    output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,
@@ -432,7 +432,7 @@ def test_single_token_self_attention_matches_dense_reference() -> None:
         block_size=2,
     )
 
-    output = ReferenceAttentionBackend()(
+    output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,
@@ -452,7 +452,7 @@ def test_chunked_prefill_matches_full_prefill_and_dense_reference() -> None:
     query, key, value = make_attention_tensors(6)
     block_table = [4, 1, 3]
     full_cache = torch.zeros((2, 5, 2, 2, 3))
-    full_output = ReferenceAttentionBackend()(
+    full_output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,
@@ -468,7 +468,7 @@ def test_chunked_prefill_matches_full_prefill_and_dense_reference() -> None:
     chunked_outputs = []
     for start, end in ((0, 2), (2, 4), (4, 6)):
         chunked_outputs.append(
-            ReferenceAttentionBackend()(
+            ReferenceFullAttentionOperator()(
                 query[start:end],
                 key[start:end],
                 value[start:end],
@@ -491,7 +491,7 @@ def test_prefill_then_decode_matches_full_sequence_attention() -> None:
     query, key, value = make_attention_tensors(5)
     block_table = [3, 0, 4]
     full_cache = torch.zeros((2, 5, 2, 2, 3))
-    full_output = ReferenceAttentionBackend()(
+    full_output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,
@@ -505,7 +505,7 @@ def test_prefill_then_decode_matches_full_sequence_attention() -> None:
 
     decode_cache = torch.zeros_like(full_cache)
     incremental_outputs = [
-        ReferenceAttentionBackend()(
+        ReferenceFullAttentionOperator()(
             query[:3],
             key[:3],
             value[:3],
@@ -519,7 +519,7 @@ def test_prefill_then_decode_matches_full_sequence_attention() -> None:
     ]
     for position in (3, 4):
         incremental_outputs.append(
-            ReferenceAttentionBackend()(
+            ReferenceFullAttentionOperator()(
                 query[position : position + 1],
                 key[position : position + 1],
                 value[position : position + 1],
@@ -553,7 +553,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
     block_table_b = [2, 3]
 
     mixed_cache = torch.zeros((2, 4, 2, 2, 3))
-    ReferenceAttentionBackend()(
+    ReferenceFullAttentionOperator()(
         query_b[:2],
         key_b[:2],
         value_b[:2],
@@ -564,7 +564,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
             block_size=2,
         ),
     )
-    mixed_output = ReferenceAttentionBackend()(
+    mixed_output = ReferenceFullAttentionOperator()(
         torch.cat((query_a, query_b[2:])),
         torch.cat((key_a, key_b[2:])),
         torch.cat((value_a, value_b[2:])),
@@ -577,7 +577,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
     )
 
     cache_a = torch.zeros_like(mixed_cache)
-    output_a = ReferenceAttentionBackend()(
+    output_a = ReferenceFullAttentionOperator()(
         query_a,
         key_a,
         value_a,
@@ -589,7 +589,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
         ),
     )
     cache_b = torch.zeros_like(mixed_cache)
-    ReferenceAttentionBackend()(
+    ReferenceFullAttentionOperator()(
         query_b[:2],
         key_b[:2],
         value_b[:2],
@@ -600,7 +600,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
             block_size=2,
         ),
     )
-    output_b = ReferenceAttentionBackend()(
+    output_b = ReferenceFullAttentionOperator()(
         query_b[2:],
         key_b[2:],
         value_b[2:],
@@ -619,7 +619,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
 def test_non_contiguous_physical_blocks_do_not_change_attention() -> None:
     query, key, value = make_attention_tensors(6)
     contiguous_cache = torch.zeros((2, 5, 2, 2, 3))
-    contiguous_output = ReferenceAttentionBackend()(
+    contiguous_output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,
@@ -632,7 +632,7 @@ def test_non_contiguous_physical_blocks_do_not_change_attention() -> None:
     )
 
     non_contiguous_cache = torch.zeros_like(contiguous_cache)
-    non_contiguous_output = ReferenceAttentionBackend()(
+    non_contiguous_output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,
@@ -659,7 +659,7 @@ def test_reused_block_does_not_expose_stale_values_beyond_new_context() -> None:
         num_key_value_heads=1,
     )
     layer_kv_cache = torch.zeros((2, 2, 4, 1, 3))
-    ReferenceAttentionBackend()(
+    ReferenceFullAttentionOperator()(
         old_query,
         old_key,
         old_value,
@@ -681,7 +681,7 @@ def test_reused_block_does_not_expose_stale_values_beyond_new_context() -> None:
     query = query + 0.4
     key = key - 0.3
     value = value + 0.8
-    output = ReferenceAttentionBackend()(
+    output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,
@@ -711,7 +711,7 @@ def test_shared_prefix_produces_identical_history_attention() -> None:
         num_key_value_heads=1,
     )
     layer_kv_cache = torch.zeros((2, 3, 2, 1, 3))
-    ReferenceAttentionBackend()(
+    ReferenceFullAttentionOperator()(
         prefix_query,
         prefix_key,
         prefix_value,
@@ -731,7 +731,7 @@ def test_shared_prefix_produces_identical_history_attention() -> None:
     key = key - 0.15
     value = value + 0.35
 
-    output = ReferenceAttentionBackend()(
+    output = ReferenceFullAttentionOperator()(
         torch.cat((query, query)),
         torch.cat((key, key)),
         torch.cat((value, value)),
@@ -786,7 +786,7 @@ def test_gpu_low_precision_matches_dense_reference(
         dtype=dtype,
         device=device,
     )
-    output = ReferenceAttentionBackend()(
+    output = ReferenceFullAttentionOperator()(
         query,
         key,
         value,

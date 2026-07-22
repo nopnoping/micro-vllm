@@ -69,7 +69,7 @@ Phase 3 调整前 Worker 接收 `ModelConfig`，再通过 Registry 构造一个�
 ModelRunner 调用它：
 
 ```python
-model_initializer = lambda: load_model(model_name_or_path, attention_backend, ...)
+model_initializer = lambda: load_model(config)
 worker = Worker(
     model_initializer,
     cache_initialization_config,

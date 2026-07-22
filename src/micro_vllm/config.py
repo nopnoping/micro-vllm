@@ -28,7 +28,7 @@ class ModelConfig:
     cache_dir: str | Path | None = None
     token: str | bool | None = None
     local_files_only: bool = False
-    attention_backend: str = "reference"
+    attention_operator: str = "reference"
     device: torch.device | str = "cuda"
     dtype: torch.dtype = torch.float16
     metadata: Mapping[str, object] | None = None

@@ -207,7 +207,8 @@ V1 必须回答以下问题：
 - [x] decode 读取完整 full-attention context。
 - [x] 支持 MHA、GQA 和 MQA。
 - [x] softmax 使用数值稳定 dtype。
-- [x] reference backend 不访问 Scheduler、Request 或 KVCacheManager。
+- [x] reference full-attention operator 不访问 Scheduler、Request 或
+  KVCacheManager。
 - [x] full prefill、chunked prefill 和 decode 与 dense causal reference 对拍。
 
 ### Tiny Llama
@@ -422,11 +423,11 @@ model name/path
 
 ### Optimized Attention
 
-- [ ] 至少提供一个 GPU prefill backend。
-- [ ] 至少提供一个 paged decode attention backend。
+- [ ] 至少提供一个 GPU prefill operator。
+- [ ] 至少提供一个 paged decode attention operator。
 - [ ] optimized chunked prefill 能读取历史 paged KV 和当前 chunk。
-- [ ] optimized backend 与 reference backend 在规定容差内对拍。
-- [ ] backend 可独立关闭并回退到 reference path。
+- [ ] optimized operator 与 reference operator 在规定容差内对拍。
+- [ ] operator 可独立关闭并回退到 reference path。
 - [ ] 优化项不得进入 Scheduler 核心抽象。
 
 ### P1 优化
@@ -485,7 +486,7 @@ model name/path
 - LoRA；
 - OpenAI API server；
 - Ray、RPC framework、故障恢复；
-- 多套 optimized attention backend。
+- 多套 optimized attention operator。
 
 ## 12. V1 发布验收
 

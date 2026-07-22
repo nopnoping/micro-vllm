@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import (
     CacheConfig,
     LLMConfig,
@@ -19,7 +20,6 @@ from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.executor.single_process import SingleProcessExecutor
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.worker import Worker
@@ -95,7 +95,7 @@ def make_real_engine(
         ),
     )
     worker = Worker(
-        lambda: LlamaModel(make_model_config(), ReferenceAttentionBackend()),
+        lambda: LlamaModel(make_model_config(), create_attention("reference")),
         config,
     )
     cache_manager = KVCacheManager(config)

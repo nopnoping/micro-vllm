@@ -5,7 +5,9 @@ from dataclasses import FrozenInstanceError, fields
 import pytest
 import torch
 
-from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
+from micro_vllm.attention.base import PAD_BLOCK_ID
+from micro_vllm.attention.full.metadata import FullAttentionMetadata
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.config import CacheConfig
 from micro_vllm.sampling.params import SamplingParams
@@ -17,8 +19,8 @@ from micro_vllm.worker.model_runner import (
 )
 
 
-def make_attention_metadata() -> AttentionMetadata:
-    return AttentionMetadata(
+def make_attention_metadata() -> FullAttentionMetadata:
+    return FullAttentionMetadata(
         query_positions=torch.tensor([0, 1, 4], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 2, 3], dtype=torch.int64),
         context_lengths=torch.tensor([2, 5], dtype=torch.int64),
@@ -102,6 +104,7 @@ def flatten_requests(*requests: ScheduledRequest) -> ModelInput:
     total_tokens = sum(request.num_scheduled_tokens for request in requests)
     return flatten_model_input(
         SchedulerOutput(requests),
+        attention=create_attention("reference"),
         block_table=torch.zeros((len(requests), 2), dtype=torch.int64),
         slot_mapping=torch.zeros(total_tokens, dtype=torch.int64),
         block_size=4,
@@ -358,6 +361,7 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
     )
     model_input = flatten_model_input(
         plan,
+        attention=create_attention("reference"),
         block_table=block_table,
         slot_mapping=slot_mapping,
         block_size=cache_config.block_size,

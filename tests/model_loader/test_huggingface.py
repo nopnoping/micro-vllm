@@ -9,8 +9,9 @@ import torch
 
 import micro_vllm.model_loader.base as base_module
 import micro_vllm.model_loader.default as default_module
+from micro_vllm.attention.base import Attention
+from micro_vllm.attention.full.attention import FullAttention
 from micro_vllm.config import LLMConfig, ModelConfig
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.model_loader import load_model
 
 
@@ -39,11 +40,11 @@ def test_load_model_delegates_snapshot_resolution_to_hugging_face(
         def __init__(
             self,
             config: ModelConfig,
-            attention_backend: ReferenceAttentionBackend,
+            attention: Attention,
         ) -> None:
             events.append("build")
             assert config.architectures == ("FakeModel",)
-            assert isinstance(attention_backend, ReferenceAttentionBackend)
+            assert isinstance(attention, FullAttention)
             self.weights: list[tuple[str, torch.Tensor]] = []
 
         def load_weights(

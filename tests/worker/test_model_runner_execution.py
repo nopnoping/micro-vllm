@@ -6,9 +6,10 @@ import pytest
 import torch
 from torch.nn import functional as F
 
+from micro_vllm.attention.base import AttentionMetadata, PAD_BLOCK_ID
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
-from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 from micro_vllm.worker.model_runner import ModelRunner
@@ -19,6 +20,7 @@ class FakeModel(torch.nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
+        self.attention = create_attention("reference")
         self.config = make_model_config()
         self.forward_inputs: list[tuple[torch.Tensor, torch.Tensor]] = []
         self.logit_inputs: list[torch.Tensor] = []

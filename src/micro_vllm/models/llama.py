@@ -7,11 +7,8 @@ from collections.abc import Iterable
 import torch
 from torch import nn
 
+from micro_vllm.attention.base import Attention, AttentionMetadata
 from micro_vllm.config import ModelConfig
-from micro_vllm.layers.attention_backend import (
-    AttentionBackend,
-    AttentionMetadata,
-)
 from micro_vllm.layers.embedding import LMHead, TokenEmbedding
 from micro_vllm.layers.linear import Linear
 from micro_vllm.layers.mlp import SwiGLUMLP
@@ -29,7 +26,7 @@ class LlamaAttention(nn.Module):
         num_attention_heads: int,
         num_key_value_heads: int,
         rope_theta: float,
-        backend: AttentionBackend,
+        attention: Attention,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
@@ -49,7 +46,7 @@ class LlamaAttention(nn.Module):
         )
         self.o_proj = Linear(hidden_size, hidden_size, bias=False)
         self.rotary_embedding = RotaryEmbedding(self.head_dim, base=rope_theta)
-        self.backend = backend
+        self.attention = attention
 
     def forward(
         self,
@@ -74,14 +71,14 @@ class LlamaAttention(nn.Module):
             self.head_dim,
         )
         query, key = self.rotary_embedding(positions, query, key)
-        attention = self.backend(
+        attention_output = self.attention(
             query,
             key,
             value,
             layer_kv_cache,
             metadata,
         )
-        return self.o_proj(attention.flatten(start_dim=1))
+        return self.o_proj(attention_output.flatten(start_dim=1))
 
 
 class LlamaDecoderLayer(nn.Module):
@@ -96,7 +93,7 @@ class LlamaDecoderLayer(nn.Module):
         num_key_value_heads: int,
         rope_theta: float,
         rms_norm_eps: float,
-        attention_backend: AttentionBackend,
+        attention: Attention,
     ) -> None:
         super().__init__()
         self.self_attn = LlamaAttention(
@@ -104,7 +101,7 @@ class LlamaDecoderLayer(nn.Module):
             num_attention_heads=num_attention_heads,
             num_key_value_heads=num_key_value_heads,
             rope_theta=rope_theta,
-            backend=attention_backend,
+            attention=attention,
         )
         self.mlp = SwiGLUMLP(
             hidden_size,
@@ -148,7 +145,7 @@ class LlamaModel(nn.Module):
     def __init__(
         self,
         config: ModelConfig,
-        attention_backend: AttentionBackend,
+        attention: Attention,
     ) -> None:
         super().__init__()
         values = config.values
@@ -170,6 +167,7 @@ class LlamaModel(nn.Module):
         self._tie_word_embeddings = values.get("tie_word_embeddings", False)
 
         self.config = config
+        self.attention = attention
         self.embed_tokens = TokenEmbedding(vocab_size, hidden_size)
         self.layers = nn.ModuleList(
             LlamaDecoderLayer(
@@ -179,7 +177,7 @@ class LlamaModel(nn.Module):
                 num_key_value_heads=num_key_value_heads,
                 rope_theta=rope_theta,
                 rms_norm_eps=rms_norm_eps,
-                attention_backend=attention_backend,
+                attention=attention,
             )
             for _ in range(num_hidden_layers)
         )

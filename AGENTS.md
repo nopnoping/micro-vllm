@@ -23,11 +23,13 @@ opaque behavior.
 - `core` owns device-independent scheduling and logical cache state.
 - `executor` owns execution interfaces and worker lifecycle coordination.
 - `worker` owns device resources and turns execution plans into model runs.
+- `attention` owns attention semantics, runtime metadata, tensor operators, and
+  operator selection.
 - `models` owns the architecture registry, model assembly, and loading tensor
   streams into model parameters.
 - `model_loader` owns user model resolution, config file parsing, remote
   download, checkpoint discovery, tensor iteration, and load orchestration.
-- `layers` owns reusable neural-network layers and execution backends.
+- `layers` owns reusable, architecture-independent neural-network layers.
 - `sampling` owns sampling configuration and logits-to-token behavior.
 
 Enforce these boundaries:

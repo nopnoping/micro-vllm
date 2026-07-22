@@ -10,11 +10,9 @@ from safetensors import safe_open
 import torch
 from transformers import LlamaForCausalLM
 
+from micro_vllm.attention.base import map_cache_slots
+from micro_vllm.attention.full.metadata import FullAttentionMetadata
 from micro_vllm.config import LLMConfig, ModelConfig
-from micro_vllm.layers.attention_backend import (
-    AttentionMetadata,
-    map_cache_slots,
-)
 from micro_vllm.model_loader import load_model
 from micro_vllm.models.llama import LlamaModel
 
@@ -289,10 +287,10 @@ def _make_attention_metadata(
     positions: torch.Tensor,
     *,
     device: torch.device | str,
-) -> AttentionMetadata:
+) -> FullAttentionMetadata:
     block_size = 2
     physical_blocks = torch.tensor([2, 0], dtype=torch.int64, device=device)
-    return AttentionMetadata(
+    return FullAttentionMetadata(
         query_positions=positions,
         query_start_locations=torch.tensor([0, 4], dtype=torch.int64, device=device),
         context_lengths=torch.tensor([4], dtype=torch.int64, device=device),

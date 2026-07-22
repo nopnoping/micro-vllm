@@ -102,7 +102,7 @@ def test_llm_config_groups_user_configuration() -> None:
     assert config.model_config.model == "org/model"
     assert config.model_config.metadata is None
     assert config.model_config.device == "cpu"
-    assert config.model_config.attention_backend == "reference"
+    assert config.model_config.attention_operator == "reference"
     assert config.scheduler_config.max_model_len == 2048
     assert config.scheduler_config.max_num_seqs == 8
     assert config.cache_config.block_size == 16
@@ -111,10 +111,10 @@ def test_llm_config_groups_user_configuration() -> None:
 def test_llm_config_can_be_updated_during_runtime() -> None:
     config = LLMConfig(model_config=ModelConfig(model="org/model"))
 
-    config.model_config.attention_backend = "custom"
+    config.model_config.attention_operator = "custom"
     config.scheduler_config.max_num_seqs = 4
 
-    assert config.model_config.attention_backend == "custom"
+    assert config.model_config.attention_operator == "custom"
     assert config.scheduler_config.max_num_seqs == 4
 
 

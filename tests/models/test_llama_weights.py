@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.llama import LlamaModel
 
@@ -23,7 +23,7 @@ def make_model(*, tied: bool = False) -> LlamaModel:
             "tie_word_embeddings": tied,
         },
     )
-    return LlamaModel(config, ReferenceAttentionBackend())
+    return LlamaModel(config, create_attention("reference"))
 
 
 def checkpoint_tensors(

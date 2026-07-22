@@ -1,15 +1,15 @@
-"""Tests for the low-level attention metadata contract."""
+"""Tests for full-attention metadata."""
 
 from dataclasses import FrozenInstanceError, fields
 
 import pytest
 import torch
 
-import micro_vllm.layers as layers
-from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
+from micro_vllm.attention.base import AttentionMetadata, PAD_BLOCK_ID
+from micro_vllm.attention.full.metadata import FullAttentionMetadata
 
 
-def make_metadata(**overrides: object) -> AttentionMetadata:
+def make_metadata(**overrides: object) -> FullAttentionMetadata:
     values = {
         "query_positions": torch.tensor([0, 1, 4], dtype=torch.int64),
         "query_start_locations": torch.tensor([0, 2, 3], dtype=torch.int64),
@@ -22,7 +22,7 @@ def make_metadata(**overrides: object) -> AttentionMetadata:
         "block_size": 4,
     }
     values.update(overrides)
-    return AttentionMetadata(**values)
+    return FullAttentionMetadata(**values)
 
 
 def test_metadata_stores_only_flattened_attention_inputs() -> None:
@@ -41,23 +41,8 @@ def test_metadata_stores_only_flattened_attention_inputs() -> None:
     assert metadata.block_size == 4
 
 
-def test_layers_package_exports_attention_metadata_contract() -> None:
-    assert layers.__all__ == (
-        "AttentionBackend",
-        "AttentionMetadata",
-        "LMHead",
-        "Linear",
-        "PAD_BLOCK_ID",
-        "RMSNorm",
-        "ReferenceAttentionBackend",
-        "RotaryEmbedding",
-        "SwiGLUMLP",
-        "TokenEmbedding",
-        "gather_kv_cache",
-        "write_kv_cache",
-    )
-    assert layers.AttentionMetadata is AttentionMetadata
-    assert layers.PAD_BLOCK_ID == PAD_BLOCK_ID
+def test_full_metadata_implements_attention_metadata_contract() -> None:
+    assert isinstance(make_metadata(), AttentionMetadata)
 
 
 def test_metadata_is_frozen() -> None:

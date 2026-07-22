@@ -4,27 +4,26 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from micro_vllm.layers.attention_backend import (
-    AttentionMetadata,
-    PAD_BLOCK_ID,
-    ReferenceAttentionBackend,
-    map_cache_slots,
-)
+from micro_vllm.attention.base import PAD_BLOCK_ID, map_cache_slots
+from micro_vllm.attention.full.attention import FullAttention
+from micro_vllm.attention.full.metadata import FullAttentionMetadata
+from micro_vllm.attention.full.operator import FullAttentionOperator
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.llama import LlamaModel
 
 
-class RecordingZeroBackend:
+class RecordingZeroOperator(FullAttentionOperator):
     def __init__(self) -> None:
         self.layer_caches: list[torch.Tensor] = []
 
-    def __call__(
+    def forward(
         self,
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
         layer_kv_cache: torch.Tensor,
-        metadata: AttentionMetadata,
+        metadata: FullAttentionMetadata,
         /,
     ) -> torch.Tensor:
         self.layer_caches.append(layer_kv_cache)
@@ -51,7 +50,7 @@ def make_metadata(
     *,
     block_table: list[int],
     block_size: int,
-) -> AttentionMetadata:
+) -> FullAttentionMetadata:
     positions = torch.arange(num_tokens, dtype=torch.int64)
     slots = torch.tensor(
         [
@@ -61,7 +60,7 @@ def make_metadata(
         ],
         dtype=torch.int64,
     )
-    return AttentionMetadata(
+    return FullAttentionMetadata(
         query_positions=positions,
         query_start_locations=torch.tensor([0, num_tokens], dtype=torch.int64),
         context_lengths=torch.tensor([num_tokens], dtype=torch.int64),
@@ -142,7 +141,7 @@ def make_model_pair(
 ) -> tuple[LlamaModel, LlamaForCausalLM]:
     torch.manual_seed(0)
     reference = LlamaForCausalLM(make_reference_config(config)).eval()
-    model = LlamaModel(config, ReferenceAttentionBackend())
+    model = LlamaModel(config, create_attention("reference"))
     model.load_state_dict(map_from_transformers_state_dict(reference))
     return (
         model.to(device=device, dtype=dtype),
@@ -153,8 +152,8 @@ def make_model_pair(
 def test_llama_model_uses_one_physical_cache_per_layer() -> None:
     torch.manual_seed(0)
     config = make_config()
-    backend = RecordingZeroBackend()
-    model = LlamaModel(config, backend)
+    operator = RecordingZeroOperator()
+    model = LlamaModel(config, FullAttention(operator))
     input_ids = torch.tensor([1, 3, 5], dtype=torch.int64)
     positions = torch.arange(3, dtype=torch.int64)
     metadata = make_metadata(3, block_table=[0], block_size=4)
@@ -170,10 +169,10 @@ def test_llama_model_uses_one_physical_cache_per_layer() -> None:
     assert hidden_states.shape == torch.Size(
         (3, config.require_positive_int("hidden_size"))
     )
-    assert len(backend.layer_caches) == len(layer_caches)
+    assert len(operator.layer_caches) == len(layer_caches)
     assert all(
         received is expected
-        for received, expected in zip(backend.layer_caches, layer_caches)
+        for received, expected in zip(operator.layer_caches, layer_caches)
     )
     assert model.training is False
     assert all(layer.training is False for layer in model.layers)
@@ -182,7 +181,7 @@ def test_llama_model_uses_one_physical_cache_per_layer() -> None:
 def test_forward_and_compute_logits_are_separate() -> None:
     torch.manual_seed(0)
     config = make_config(num_hidden_layers=1)
-    model = LlamaModel(config, RecordingZeroBackend())
+    model = LlamaModel(config, FullAttention(RecordingZeroOperator()))
     input_ids = torch.tensor([2, 4, 6], dtype=torch.int64)
     positions = torch.arange(3, dtype=torch.int64)
     metadata = make_metadata(3, block_table=[0], block_size=4)
@@ -303,7 +302,7 @@ def make_batch_metadata(
     *,
     block_size: int,
     device: torch.device | str = "cpu",
-) -> AttentionMetadata:
+) -> FullAttentionMetadata:
     position_tensors = tuple(
         torch.tensor(positions, dtype=torch.int64, device=device)
         for positions in positions_by_request
@@ -325,7 +324,7 @@ def make_batch_metadata(
     query_start_locations = [0]
     for positions in positions_by_request:
         query_start_locations.append(query_start_locations[-1] + len(positions))
-    return AttentionMetadata(
+    return FullAttentionMetadata(
         query_positions=torch.cat(position_tensors),
         query_start_locations=torch.tensor(
             query_start_locations,
@@ -383,7 +382,7 @@ def run_batch(
 
 def clone_model(model: LlamaModel, config: ModelConfig) -> LlamaModel:
     parameter = next(model.parameters())
-    clone = LlamaModel(config, ReferenceAttentionBackend()).to(
+    clone = LlamaModel(config, create_attention("reference")).to(
         device=parameter.device,
         dtype=parameter.dtype,
     )

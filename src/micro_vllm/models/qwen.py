@@ -7,11 +7,8 @@ from collections.abc import Iterable
 import torch
 from torch import nn
 
+from micro_vllm.attention.base import Attention, AttentionMetadata
 from micro_vllm.config import ModelConfig
-from micro_vllm.layers.attention_backend import (
-    AttentionBackend,
-    AttentionMetadata,
-)
 from micro_vllm.layers.embedding import LMHead, TokenEmbedding
 from micro_vllm.layers.linear import Linear
 from micro_vllm.layers.mlp import SwiGLUMLP
@@ -32,7 +29,7 @@ class Qwen3Attention(nn.Module):
         rope_theta: float,
         rms_norm_eps: float,
         attention_bias: bool,
-        backend: AttentionBackend,
+        attention: Attention,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
@@ -64,7 +61,7 @@ class Qwen3Attention(nn.Module):
         self.q_norm = RMSNorm(head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(head_dim, eps=rms_norm_eps)
         self.rotary_embedding = RotaryEmbedding(head_dim, base=rope_theta)
-        self.backend = backend
+        self.attention = attention
 
     def forward(
         self,
@@ -91,14 +88,14 @@ class Qwen3Attention(nn.Module):
         query = self.q_norm(query)
         key = self.k_norm(key)
         query, key = self.rotary_embedding(positions, query, key)
-        attention = self.backend(
+        attention_output = self.attention(
             query,
             key,
             value,
             layer_kv_cache,
             metadata,
         )
-        return self.o_proj(attention.flatten(start_dim=1))
+        return self.o_proj(attention_output.flatten(start_dim=1))
 
 
 class Qwen3DecoderLayer(nn.Module):
@@ -115,7 +112,7 @@ class Qwen3DecoderLayer(nn.Module):
         rope_theta: float,
         rms_norm_eps: float,
         attention_bias: bool,
-        attention_backend: AttentionBackend,
+        attention: Attention,
     ) -> None:
         super().__init__()
         self.self_attn = Qwen3Attention(
@@ -126,7 +123,7 @@ class Qwen3DecoderLayer(nn.Module):
             rope_theta=rope_theta,
             rms_norm_eps=rms_norm_eps,
             attention_bias=attention_bias,
-            backend=attention_backend,
+            attention=attention,
         )
         self.mlp = SwiGLUMLP(hidden_size, intermediate_size)
         self.input_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps)
@@ -164,7 +161,7 @@ class Qwen3Model(nn.Module):
     def __init__(
         self,
         config: ModelConfig,
-        attention_backend: AttentionBackend,
+        attention: Attention,
     ) -> None:
         super().__init__()
         values = config.values
@@ -193,6 +190,7 @@ class Qwen3Model(nn.Module):
         self._tie_word_embeddings = values.get("tie_word_embeddings", False)
 
         self.config = config
+        self.attention = attention
         self.embed_tokens = TokenEmbedding(vocab_size, hidden_size)
         self.layers = nn.ModuleList(
             Qwen3DecoderLayer(
@@ -204,7 +202,7 @@ class Qwen3Model(nn.Module):
                 rope_theta=rope_theta,
                 rms_norm_eps=rms_norm_eps,
                 attention_bias=attention_bias,
-                attention_backend=attention_backend,
+                attention=attention,
             )
             for _ in range(num_hidden_layers)
         )

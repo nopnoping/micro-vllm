@@ -2,8 +2,8 @@
 
 import pytest
 
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import ModelConfig
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.qwen import Qwen3Model
 
 
@@ -21,7 +21,7 @@ def make_model(**overrides: object) -> Qwen3Model:
     values.update(overrides)
     return Qwen3Model(
         ModelConfig(model="unused", metadata=values),
-        ReferenceAttentionBackend(),
+        create_attention("reference"),
     )
 
 

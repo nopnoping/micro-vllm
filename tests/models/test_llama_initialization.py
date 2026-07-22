@@ -2,8 +2,8 @@
 
 import pytest
 
+from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import ModelConfig
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.llama import LlamaModel
 
 
@@ -19,7 +19,7 @@ def make_model(**overrides: object) -> LlamaModel:
     values.update(overrides)
     return LlamaModel(
         ModelConfig(model="unused", metadata=values),
-        ReferenceAttentionBackend(),
+        create_attention("reference"),
     )
 
 

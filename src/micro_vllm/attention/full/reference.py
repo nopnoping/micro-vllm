@@ -1,67 +1,19 @@
-"""Reference and optimized attention backend contracts."""
+"""Readable reference operator for full causal attention."""
 
 import math
-from dataclasses import dataclass
-from typing import Final, Protocol
 
 import torch
 
-
-PAD_BLOCK_ID: Final = -1
-
-
-@dataclass(frozen=True, slots=True, eq=False)
-class AttentionMetadata:
-    """Flattened query and physical-cache indexing metadata."""
-
-    query_positions: torch.Tensor
-    query_start_locations: torch.Tensor
-    context_lengths: torch.Tensor
-    block_table: torch.Tensor
-    slot_mapping: torch.Tensor
-    block_size: int
-
-    @property
-    def num_requests(self) -> int:
-        """Number of requests represented by the metadata."""
-
-        return self.context_lengths.numel()
-
-class AttentionBackend(Protocol):
-    """Callable boundary for attention over one layer's physical KV cache."""
-
-    def __call__(
-        self,
-        query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        layer_kv_cache: torch.Tensor,
-        metadata: AttentionMetadata,
-        /,
-    ) -> torch.Tensor:
-        """Return attention output for every flattened query row."""
-
-        ...
-
-
-def map_cache_slots(
-    positions: torch.Tensor,
-    block_table: torch.Tensor,
-    block_size: int,
-) -> torch.Tensor:
-    """Map logical token positions to flattened physical cache slots."""
-
-    logical_blocks = positions // block_size
-    block_offsets = positions % block_size
-    physical_blocks = block_table.index_select(0, logical_blocks)
-    return physical_blocks * block_size + block_offsets
+from micro_vllm.attention.base import map_cache_slots
+from micro_vllm.attention.full.metadata import FullAttentionMetadata
+from micro_vllm.attention.full.operator import FullAttentionOperator
 
 
 def write_kv_cache(
     key: torch.Tensor,
     value: torch.Tensor,
     layer_kv_cache: torch.Tensor,
-    metadata: AttentionMetadata,
+    metadata: FullAttentionMetadata,
 ) -> None:
     """Write current query keys and values into their physical cache slots."""
 
@@ -76,7 +28,7 @@ def write_kv_cache(
 
 def gather_kv_cache(
     layer_kv_cache: torch.Tensor,
-    metadata: AttentionMetadata,
+    metadata: FullAttentionMetadata,
 ) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
     """Gather each request's complete K/V context."""
 
@@ -109,16 +61,16 @@ def gather_kv_cache(
     return tuple(histories)
 
 
-class ReferenceAttentionBackend:
-    """Readable full causal attention over paged physical K/V cache."""
+class ReferenceFullAttentionOperator(FullAttentionOperator):
+    """Readable full causal attention over a paged physical K/V cache."""
 
-    def __call__(
+    def forward(
         self,
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
         layer_kv_cache: torch.Tensor,
-        metadata: AttentionMetadata,
+        metadata: FullAttentionMetadata,
         /,
     ) -> torch.Tensor:
         num_attention_heads = query.shape[1]
@@ -152,9 +104,9 @@ class ReferenceAttentionBackend:
                 dtype=torch.int64,
                 device=metadata.query_positions.device,
             )
-            causal_mask = context_positions.unsqueeze(0) > metadata.query_positions[
-                query_start:query_end
-            ].unsqueeze(1)
+            causal_mask = context_positions.unsqueeze(0) > (
+                metadata.query_positions[query_start:query_end].unsqueeze(1)
+            )
             scores.masked_fill_(causal_mask.unsqueeze(0), -torch.inf)
             weights = torch.softmax(
                 scores * scale,

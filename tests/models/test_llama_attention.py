@@ -2,29 +2,31 @@
 
 import torch
 
-from micro_vllm.layers.attention_backend import AttentionMetadata
+from micro_vllm.attention.full.attention import FullAttention
+from micro_vllm.attention.full.metadata import FullAttentionMetadata
+from micro_vllm.attention.full.operator import FullAttentionOperator
 from micro_vllm.models.llama import LlamaAttention
 
 
-class RecordingBackend:
+class RecordingOperator(FullAttentionOperator):
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
 
-    def __call__(
+    def forward(
         self,
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
         layer_kv_cache: torch.Tensor,
-        metadata: AttentionMetadata,
+        metadata: FullAttentionMetadata,
         /,
     ) -> torch.Tensor:
         self.calls.append((query, key, value, layer_kv_cache, metadata))
         return query
 
 
-def make_metadata() -> AttentionMetadata:
-    return AttentionMetadata(
+def make_metadata() -> FullAttentionMetadata:
+    return FullAttentionMetadata(
         query_positions=torch.tensor([0, 1, 2], dtype=torch.int64),
         query_start_locations=torch.tensor([0, 3], dtype=torch.int64),
         context_lengths=torch.tensor([3], dtype=torch.int64),
@@ -34,14 +36,14 @@ def make_metadata() -> AttentionMetadata:
     )
 
 
-def test_llama_attention_projects_rotates_and_invokes_backend() -> None:
-    backend = RecordingBackend()
+def test_llama_attention_projects_rotates_and_invokes_attention() -> None:
+    operator = RecordingOperator()
     attention = LlamaAttention(
         hidden_size=8,
         num_attention_heads=2,
         num_key_value_heads=1,
         rope_theta=10_000.0,
-        backend=backend,
+        attention=FullAttention(operator),
     )
     hidden_states = torch.linspace(-1.0, 1.0, steps=3 * 8).reshape(3, 8)
     positions = torch.tensor([0, 1, 2], dtype=torch.int64)
@@ -55,8 +57,8 @@ def test_llama_attention_projects_rotates_and_invokes_backend() -> None:
         metadata,
     )
 
-    assert len(backend.calls) == 1
-    query, key, value, received_cache, received_metadata = backend.calls[0]
+    assert len(operator.calls) == 1
+    query, key, value, received_cache, received_metadata = operator.calls[0]
     assert isinstance(query, torch.Tensor)
     assert isinstance(key, torch.Tensor)
     assert isinstance(value, torch.Tensor)

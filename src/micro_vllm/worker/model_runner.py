@@ -8,14 +8,15 @@ from typing import Protocol, cast
 import torch
 from torch import nn
 
-from micro_vllm.config import LLMConfig, ModelConfig
-from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
-from micro_vllm.executor.interface import ModelRunnerOutput
-from micro_vllm.layers.attention_backend import (
+from micro_vllm.attention.base import (
+    Attention,
     AttentionMetadata,
     PAD_BLOCK_ID,
     map_cache_slots,
 )
+from micro_vllm.config import LLMConfig, ModelConfig
+from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.sampling.sampler import Sampler
 from micro_vllm.worker.kv_cache import (
@@ -27,6 +28,7 @@ from micro_vllm.worker.kv_cache import (
 class _RunnerModel(Protocol):
     """Model operations required by ModelRunner."""
 
+    attention: Attention
     config: ModelConfig
 
     def __call__(
@@ -65,6 +67,7 @@ class ModelInput:
 def flatten_model_input(
     plan: SchedulerOutput,
     *,
+    attention: Attention,
     block_table: torch.Tensor,
     slot_mapping: torch.Tensor,
     block_size: int,
@@ -95,7 +98,7 @@ def flatten_model_input(
             sampling_row_indices.append(len(input_ids) - 1)
 
     device = block_table.device
-    metadata = AttentionMetadata(
+    metadata = attention.build_metadata(
         query_positions=torch.tensor(positions, dtype=torch.int64, device=device),
         query_start_locations=torch.tensor(
             query_start_locations,
@@ -380,6 +383,7 @@ class ModelRunner:
         )
         model_input = flatten_model_input(
             plan,
+            attention=model.attention,
             block_table=block_table,
             slot_mapping=slot_mapping,
             block_size=self._block_size,
@@ -485,7 +489,8 @@ class ModelRunner:
         )
 
     def _build_model_input(self, plan: SchedulerOutput) -> ModelInput:
-        if self._physical_kv_cache is None:
+        model = self._model
+        if model is None or self._physical_kv_cache is None:
             raise RuntimeError("model runner is not initialized")
         block_table = build_block_table(plan, device=self._device)
         slot_mapping = build_slot_mapping(
@@ -495,6 +500,7 @@ class ModelRunner:
         )
         return flatten_model_input(
             plan,
+            attention=model.attention,
             block_table=block_table,
             slot_mapping=slot_mapping,
             block_size=self._block_size,
