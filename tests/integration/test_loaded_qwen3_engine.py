@@ -219,7 +219,10 @@ def test_qwen3_mixed_batch_and_prefix_cache_preserve_tokens(
     first = prefix.executor.plans[0].scheduled_requests[0]
     second = prefix.executor.plans[1].scheduled_requests[0]
     assert second.num_computed_tokens == 4
-    assert second.block_table[:2] == first.block_table[:2]
+    assert (
+        second.block_tables[0].block_ids[:2]
+        == first.block_tables[0].block_ids[:2]
+    )
     expected = reference_greedy_tokens(reference_model, prompt, max_tokens=1)
     assert request_output_tokens(prefix, "first") == expected
     assert request_output_tokens(prefix, "second") == expected
@@ -288,8 +291,20 @@ def test_qwen3_reused_block_and_request_termination_release_cache(
         max_tokens=1,
     )
     assert output.finish_reason is FinishReason.LENGTH
-    assert reused.executor.plans[0].scheduled_requests[0].block_table == (0,)
-    assert reused.executor.plans[1].scheduled_requests[0].block_table == (0,)
+    assert (
+        reused.executor.plans[0]
+        .scheduled_requests[0]
+        .block_tables[0]
+        .block_ids
+        == (0,)
+    )
+    assert (
+        reused.executor.plans[1]
+        .scheduled_requests[0]
+        .block_tables[0]
+        .block_ids
+        == (0,)
+    )
     assert reused.cache_manager.num_free_blocks == 1
 
     aborting = make_loaded_engine(

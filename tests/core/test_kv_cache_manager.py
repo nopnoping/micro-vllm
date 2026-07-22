@@ -20,6 +20,7 @@ from micro_vllm.core.kv_cache_spec import (
     KVCacheLayout,
     build_kv_cache_topology,
 )
+from micro_vllm.core.scheduler_output import CacheGroupBlockTable
 
 
 def make_manager(
@@ -121,8 +122,10 @@ def test_default_layout_preserves_the_full_only_path() -> None:
 
     allocation = manager.allocate_slots("request-1", 0, 3)
 
-    assert allocation == KVCacheAllocation(((0, 1),), (0, 1))
-    assert allocation.block_table == (0, 1)
+    assert allocation == KVCacheAllocation(
+        (CacheGroupBlockTable((0, 1)),),
+        (0, 1),
+    )
     assert manager.get_block_table("request-1") == (0, 1)
 
 
@@ -166,13 +169,16 @@ def test_common_hit_restores_each_group_snapshot_before_allocation() -> None:
 
     assert hit.num_computed_tokens == 4
     assert allocation is not None
-    assert allocation.block_tables[0][:2] == full_block_ids
-    assert allocation.block_tables[1][:2] == (
+    assert allocation.block_tables[0].block_ids[:2] == full_block_ids
+    assert allocation.block_tables[1].block_ids[:2] == (
         manager._block_pool.null_block_id,
         sliding_block_id,
     )
     assert len(allocation.new_block_ids) == 2
-    assert allocation.block_tables[0][2] != allocation.block_tables[1][2]
+    assert (
+        allocation.block_tables[0].block_ids[2]
+        != allocation.block_tables[1].block_ids[2]
+    )
 
 
 def test_prefix_discovery_does_not_acquire_blocks() -> None:
@@ -229,7 +235,7 @@ def test_chunked_group_can_skip_completed_chunks_without_prefix_cache() -> None:
 
     assert hit.num_computed_tokens == 4
     assert allocation is not None
-    assert allocation.block_table[:2] == (
+    assert allocation.block_tables[0].block_ids[:2] == (
         manager._block_pool.null_block_id,
         manager._block_pool.null_block_id,
     )
@@ -308,7 +314,7 @@ def test_running_allocation_fills_only_scheduled_holes() -> None:
 
     assert second is not None
     assert len(second.new_block_ids) == 1
-    assert second.block_table[:2] == (
+    assert second.block_tables[0].block_ids[:2] == (
         manager._block_pool.null_block_id,
         manager._block_pool.null_block_id,
     )
@@ -347,7 +353,10 @@ def test_commit_step_reuses_a_canonical_group_block() -> None:
 
     manager.register_request("request-2")
     allocation = manager.allocate_slots("request-2", 0, 2)
-    assert allocation == KVCacheAllocation(((1,),), (1,))
+    assert allocation == KVCacheAllocation(
+        (CacheGroupBlockTable((1,)),),
+        (1,),
+    )
     manager.commit_step("request-2", (1, 2), 2)
 
     assert manager.get_block_table("request-2") == (0,)
@@ -365,7 +374,9 @@ def test_commit_step_releases_only_the_bounded_group_history() -> None:
     manager.register_request("request-1")
     allocation = manager.allocate_slots("request-1", 0, 6)
     assert allocation is not None
-    full_block_ids, sliding_block_ids = allocation.block_tables
+    full_table, sliding_table = allocation.block_tables
+    full_block_ids = full_table.block_ids
+    sliding_block_ids = sliding_table.block_ids
 
     manager.commit_step("request-1", (1, 2, 3, 4, 5, 6), 6)
 
@@ -438,7 +449,7 @@ def test_allocation_snapshot_is_frozen_and_stable() -> None:
 
     assert manager.allocate_slots("request-1", 4, 1) is not None
 
-    assert first.block_tables == ((0,),)
+    assert first.block_tables == (CacheGroupBlockTable((0,)),)
     assert first.new_block_ids == (0,)
     assert manager.get_block_table("request-1") == (0, 1)
     with pytest.raises(FrozenInstanceError):

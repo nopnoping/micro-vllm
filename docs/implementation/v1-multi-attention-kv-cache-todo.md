@@ -366,9 +366,8 @@ execute 数据流。
 - [x] preempt/recompute、abort 和 finish 一次性释放所有 group。
 - [x] victim selection 保持现有 deterministic Scheduler 策略。
 
-Phase 3 保留 `ScheduledRequest.block_table` 的 full-only execute 兼容视图；
-per-group tables 已由 coordinator 生成，但进入 SchedulerOutput/ModelRunner 的
-数据 contract 统一留到 Phase 5 完成。
+Phase 3 先由 coordinator 生成 per-group tables；Phase 5 已将
+SchedulerOutput/ModelRunner 数据 contract 统一为有序 group snapshots。
 
 ## 8. Phase 4：PhysicalKVCache 共享 page layout
 
@@ -385,16 +384,16 @@ per-group tables 已由 coordinator 生成，但进入 SchedulerOutput/ModelRunn
 
 ## 9. Phase 5：per-group SchedulerOutput 和 ModelRunner execute
 
-- [ ] 引入 frozen `CacheGroupBlockTable`。
-- [ ] `ScheduledRequest` 统一携带 group snapshots，移除单 `block_table` 特例。
-- [ ] 每 group 构造独立 padded block-table tensor。
-- [ ] 每 group 构造独立 slot mapping。
-- [ ] 每 group/spec 构造独立 AttentionMetadata。
-- [ ] common positions/query row ordering 只构造一次。
-- [ ] 按 group 的有序 layer indices 展开 physical buffer 和 metadata。
-- [ ] sampling row、request ID 和 logits selection 不受 group 数量影响。
-- [ ] SchedulerOutput 不含 tensor、Request、model object 或 mutable container。
-- [ ] full-only 模型也走一元 group tuple 的统一路径。
+- [x] 引入 frozen `CacheGroupBlockTable`。
+- [x] `ScheduledRequest` 统一携带 group snapshots，移除单 `block_table` 特例。
+- [x] 每 group 构造独立 padded block-table tensor。
+- [x] 每 group 构造独立 slot mapping。
+- [x] 每 group/spec 构造独立 AttentionMetadata。
+- [x] common positions/query row ordering 只构造一次。
+- [x] 按 group 的有序 layer indices 展开 physical buffer 和 metadata。
+- [x] sampling row、request ID 和 logits selection 不受 group 数量影响。
+- [x] SchedulerOutput 不含 tensor、Request、model object 或 mutable container。
+- [x] full-only 模型也走一元 group tuple 的统一路径。
 
 ## 10. Phase 6：hybrid correctness 和生命周期验收
 
@@ -506,7 +505,7 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 ## 17. 实现状态
 
 2026-07-22：完成第二轮技术方案 review、实现清单重写，以及 Phase 0 至
-Phase 4。
+Phase 5。
 ModelRunner 从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是
 唯一的 layer/group 映射来源。BlockPool 的最后一个物理 page 现在永久作为公共
 null block，BlockTable 和 rectangular padding 只保存真实非负 block ID；prefix
@@ -516,4 +515,6 @@ hash domain 已包含 group ID。Full、SlidingWindow 和 ChunkedLocal group pol
 Scheduler 不再持有 cache namespace 或 cached block ID。按当前要求只完成本地
 静态检查。PhysicalKVCache 按 `page_layer_count` 分配共享 buffers，ModelRunner
 冻结 layout 并按 group-layer index 展开 layer 地址，Worker 将同一 layout 暴露给
-控制面。未执行 SSH 远端测试。
+控制面。SchedulerOutput 现在携带 immutable per-group block snapshots，
+ModelRunner 为每个 group 构造 block table、slot mapping 和 metadata，再按
+`layer_indices` 展开给模型层。未执行 SSH 远端测试。

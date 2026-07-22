@@ -15,6 +15,7 @@ from micro_vllm.core.kv_cache_spec import (
     KVCacheLayout,
     build_kv_cache_topology,
 )
+from micro_vllm.core.scheduler_output import CacheGroupBlockTable
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,14 +30,8 @@ class KVCacheHit:
 class KVCacheAllocation:
     """Immutable per-group tables after one atomic shared-pool allocation."""
 
-    block_tables: tuple[tuple[int, ...], ...]
+    block_tables: tuple[CacheGroupBlockTable, ...]
     new_block_ids: tuple[int, ...]
-
-    @property
-    def block_table(self) -> tuple[int, ...]:
-        """Return the first group table for the current full-only runner path."""
-
-        return self.block_tables[0]
 
 
 class KVCacheManager:
@@ -99,7 +94,7 @@ class KVCacheManager:
         )
 
     def get_block_table(self, request_id: str) -> tuple[int, ...]:
-        """Return the first group table for the current full-only runner path."""
+        """Return the sole group table for full-only diagnostics."""
 
         return self.get_block_tables(request_id)[0]
 
@@ -211,7 +206,10 @@ class KVCacheManager:
             next_new_block += len(new_indices)
 
         return KVCacheAllocation(
-            block_tables=self.get_block_tables(request_id),
+            block_tables=tuple(
+                CacheGroupBlockTable(block_ids)
+                for block_ids in self.get_block_tables(request_id)
+            ),
             new_block_ids=new_block_ids,
         )
 

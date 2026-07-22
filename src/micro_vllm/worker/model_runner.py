@@ -19,7 +19,11 @@ from micro_vllm.core.kv_cache_spec import (
     KVCacheTopology,
     build_kv_cache_topology,
 )
-from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.core.scheduler_output import (
+    CacheGroupBlockTable,
+    ScheduledRequest,
+    SchedulerOutput,
+)
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.sampling.sampler import Sampler
@@ -40,7 +44,7 @@ class _RunnerModel(Protocol):
         input_ids: torch.Tensor,
         positions: torch.Tensor,
         layer_kv_caches: tuple[torch.Tensor, ...],
-        attention_metadata: AttentionMetadata,
+        layer_attention_metadata: tuple[AttentionMetadata, ...],
     ) -> torch.Tensor: ...
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor: ...
@@ -54,29 +58,30 @@ class ModelInput:
     """Flattened tensor batch consumed internally by ModelRunner."""
 
     input_ids: torch.Tensor
-    attention_metadata: AttentionMetadata
+    positions: torch.Tensor
+    layer_attention_metadata: tuple[AttentionMetadata, ...]
     request_ids: tuple[str, ...]
     sampling_row_indices: torch.Tensor
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "layer_attention_metadata",
+            tuple(self.layer_attention_metadata),
+        )
         object.__setattr__(self, "request_ids", tuple(self.request_ids))
-
-    @property
-    def positions(self) -> torch.Tensor:
-        """Flattened absolute positions shared with attention metadata."""
-
-        return self.attention_metadata.query_positions
 
 
 def flatten_model_input(
     plan: SchedulerOutput,
     *,
-    attention: Attention,
-    block_table: torch.Tensor,
-    slot_mapping: torch.Tensor,
+    topology: KVCacheTopology,
+    layer_attentions: tuple[Attention, ...],
+    block_tables: tuple[torch.Tensor, ...],
+    slot_mappings: tuple[torch.Tensor, ...],
     block_size: int,
 ) -> ModelInput:
-    """Flatten scheduled requests in stable plan order."""
+    """Build shared batch tensors and per-layer attention metadata."""
 
     input_ids: list[int] = []
     positions: list[int] = []
@@ -101,7 +106,7 @@ def flatten_model_input(
         if request.requires_sampling:
             sampling_row_indices.append(len(input_ids) - 1)
 
-    device = block_table.device
+    device = block_tables[0].device
     query_positions = torch.tensor(
         positions,
         dtype=torch.int64,
@@ -117,18 +122,26 @@ def flatten_model_input(
         dtype=torch.int64,
         device=device,
     )
-    attention_metadata = attention.build_metadata(
-        query_positions=query_positions,
-        query_start_locations=query_start_locations_tensor,
-        context_lengths=context_lengths_tensor,
-        block_table=block_table,
-        slot_mapping=slot_mapping,
-        block_size=block_size,
+    group_metadata = tuple(
+        layer_attentions[group.layer_indices[0]].build_metadata(
+            query_positions=query_positions,
+            query_start_locations=query_start_locations_tensor,
+            context_lengths=context_lengths_tensor,
+            block_table=block_tables[group_index],
+            slot_mapping=slot_mappings[group_index],
+            block_size=block_size,
+        )
+        for group_index, group in enumerate(topology.groups)
     )
+    layer_metadata = [group_metadata[0]] * topology.num_layers
+    for group_index, group in enumerate(topology.groups):
+        for layer_index in group.layer_indices:
+            layer_metadata[layer_index] = group_metadata[group_index]
 
     return ModelInput(
         input_ids=torch.tensor(input_ids, dtype=torch.int64, device=device),
-        attention_metadata=attention_metadata,
+        positions=query_positions,
+        layer_attention_metadata=tuple(layer_metadata),
         request_ids=tuple(request_ids),
         sampling_row_indices=torch.tensor(
             sampling_row_indices,
@@ -140,6 +153,7 @@ def flatten_model_input(
 
 def build_slot_mapping(
     plan: SchedulerOutput,
+    cache_group_index: int,
     block_size: int,
     *,
     device: torch.device,
@@ -157,7 +171,7 @@ def build_slot_mapping(
             device=device,
         )
         block_table = torch.tensor(
-            request.block_table,
+            request.block_tables[cache_group_index].block_ids,
             dtype=torch.int64,
             device=device,
         )
@@ -175,6 +189,7 @@ def build_slot_mapping(
 
 def build_block_table(
     plan: SchedulerOutput,
+    cache_group_index: int,
     *,
     null_block_id: int,
     device: torch.device,
@@ -182,7 +197,10 @@ def build_block_table(
     """Pad physical block tables to one rectangular int64 tensor."""
 
     max_num_blocks = max(
-        (len(request.block_table) for request in plan.scheduled_requests),
+        (
+            len(request.block_tables[cache_group_index].block_ids)
+            for request in plan.scheduled_requests
+        ),
         default=0,
     )
     block_table = torch.full(
@@ -192,8 +210,9 @@ def build_block_table(
         device=device,
     )
     for row_index, request in enumerate(plan.scheduled_requests):
-        block_table[row_index, : len(request.block_table)] = torch.tensor(
-            request.block_table,
+        block_ids = request.block_tables[cache_group_index].block_ids
+        block_table[row_index, : len(block_ids)] = torch.tensor(
+            block_ids,
             dtype=torch.int64,
             device=device,
         )
@@ -356,6 +375,7 @@ class ModelRunner:
     def _make_warmup_plan(self) -> tuple[SchedulerOutput, int]:
         model_config = self._config.model_config
         scheduler_config = self._config.scheduler_config
+        topology = cast(KVCacheTopology, self._kv_cache_topology)
         max_position_embeddings = model_config.positive_int(
             "max_position_embeddings",
             scheduler_config.max_model_len,
@@ -377,6 +397,19 @@ class ModelRunner:
             num_blocks = (
                 num_tokens + self._block_size - 1
             ) // self._block_size
+            block_tables: list[CacheGroupBlockTable] = []
+            for _ in topology.groups:
+                block_tables.append(
+                    CacheGroupBlockTable(
+                        tuple(
+                            range(
+                                next_block_id,
+                                next_block_id + num_blocks,
+                            )
+                        )
+                    )
+                )
+                next_block_id += num_blocks
             scheduled_requests.append(
                 ScheduledRequest(
                     request_id=f"__warmup__-{request_index}",
@@ -384,12 +417,9 @@ class ModelRunner:
                     num_computed_tokens=0,
                     num_scheduled_tokens=num_tokens,
                     requires_sampling=False,
-                    block_table=tuple(
-                        range(next_block_id, next_block_id + num_blocks)
-                    ),
+                    block_tables=tuple(block_tables),
                 )
             )
-            next_block_id += num_blocks
             remaining_tokens -= num_tokens
         return SchedulerOutput(tuple(scheduled_requests)), next_block_id + 1
 
@@ -402,22 +432,9 @@ class ModelRunner:
         if model is None:
             raise RuntimeError("model must be initialized before warmup")
 
-        block_table = build_block_table(
+        model_input = self._build_model_input(
             plan,
-            null_block_id=profile_cache.null_block_id,
-            device=self._device,
-        )
-        slot_mapping = build_slot_mapping(
-            plan,
-            self._block_size,
-            device=self._device,
-        )
-        model_input = flatten_model_input(
-            plan,
-            attention=model.layer_attentions[0],
-            block_table=block_table,
-            slot_mapping=slot_mapping,
-            block_size=self._block_size,
+            profile_cache.null_block_id,
         )
         layer_kv_caches = self._bind_layer_kv_caches(profile_cache)
         with torch.inference_mode():
@@ -425,11 +442,10 @@ class ModelRunner:
                 model_input.input_ids,
                 model_input.positions,
                 layer_kv_caches,
-                model_input.attention_metadata,
+                model_input.layer_attention_metadata,
             )
-            sampling_row_indices = (
-                model_input.attention_metadata.query_start_locations[1:] - 1
-            )
+            first_metadata = model_input.layer_attention_metadata[0]
+            sampling_row_indices = first_metadata.query_start_locations[1:] - 1
             sampling_hidden_states = hidden_states.index_select(
                 0,
                 sampling_row_indices,
@@ -483,7 +499,10 @@ class ModelRunner:
         physical_kv_cache = self._physical_kv_cache
         if model is None or physical_kv_cache is None:
             raise RuntimeError("model runner is not initialized")
-        model_input = self._build_model_input(plan)
+        model_input = self._build_model_input(
+            plan,
+            physical_kv_cache.null_block_id,
+        )
         layer_kv_caches = self._bind_layer_kv_caches(physical_kv_cache)
 
         with torch.inference_mode():
@@ -491,7 +510,7 @@ class ModelRunner:
                 model_input.input_ids,
                 model_input.positions,
                 layer_kv_caches,
-                model_input.attention_metadata,
+                model_input.layer_attention_metadata,
             )
             sampling_hidden_states = hidden_states.index_select(
                 0,
@@ -538,24 +557,38 @@ class ModelRunner:
                 ]
         return tuple(layer_kv_caches)
 
-    def _build_model_input(self, plan: SchedulerOutput) -> ModelInput:
+    def _build_model_input(
+        self,
+        plan: SchedulerOutput,
+        null_block_id: int,
+    ) -> ModelInput:
         model = self._model
-        if model is None or self._physical_kv_cache is None:
+        if model is None:
             raise RuntimeError("model runner is not initialized")
-        block_table = build_block_table(
-            plan,
-            null_block_id=self._physical_kv_cache.null_block_id,
-            device=self._device,
+        topology = cast(KVCacheTopology, self._kv_cache_topology)
+        block_tables = tuple(
+            build_block_table(
+                plan,
+                group_index,
+                null_block_id=null_block_id,
+                device=self._device,
+            )
+            for group_index in range(len(topology.groups))
         )
-        slot_mapping = build_slot_mapping(
-            plan,
-            self._block_size,
-            device=self._device,
+        slot_mappings = tuple(
+            build_slot_mapping(
+                plan,
+                group_index,
+                self._block_size,
+                device=self._device,
+            )
+            for group_index in range(len(topology.groups))
         )
         return flatten_model_input(
             plan,
-            attention=model.layer_attentions[0],
-            block_table=block_table,
-            slot_mapping=slot_mapping,
+            topology=topology,
+            layer_attentions=model.layer_attentions,
+            block_tables=block_tables,
+            slot_mappings=slot_mappings,
             block_size=self._block_size,
         )

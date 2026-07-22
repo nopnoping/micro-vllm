@@ -222,15 +222,20 @@ class Qwen3Model(nn.Module):
         input_ids: torch.Tensor,
         positions: torch.Tensor,
         layer_kv_caches: tuple[torch.Tensor, ...],
-        attention_metadata: AttentionMetadata,
+        layer_attention_metadata: tuple[AttentionMetadata, ...],
     ) -> torch.Tensor:
         hidden_states = self.embed_tokens(input_ids)
-        for layer, layer_kv_cache in zip(self.layers, layer_kv_caches):
+        for layer, layer_kv_cache, metadata in zip(
+            self.layers,
+            layer_kv_caches,
+            layer_attention_metadata,
+            strict=True,
+        ):
             hidden_states = layer(
                 hidden_states,
                 positions,
                 layer_kv_cache,
-                attention_metadata,
+                metadata,
             )
         return self.norm(hidden_states)
 

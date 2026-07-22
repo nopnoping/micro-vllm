@@ -4,7 +4,11 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.core.scheduler_output import (
+    CacheGroupBlockTable,
+    ScheduledRequest,
+    SchedulerOutput,
+)
 from micro_vllm.sampling.params import SamplingParams
 
 
@@ -15,7 +19,7 @@ def make_scheduled_request() -> ScheduledRequest:
         num_computed_tokens=0,
         num_scheduled_tokens=2,
         requires_sampling=True,
-        block_table=(0,),
+        block_tables=(CacheGroupBlockTable((0,)),),
         sampling_params=SamplingParams(max_tokens=2),
         sample_index=0,
     )
@@ -29,7 +33,7 @@ def make_scheduled_request() -> ScheduledRequest:
         ("num_computed_tokens", 1),
         ("num_scheduled_tokens", 1),
         ("requires_sampling", False),
-        ("block_table", (1,)),
+        ("block_tables", (CacheGroupBlockTable((1,)),)),
         ("sampling_params", None),
         ("sample_index", 1),
     ],
@@ -67,7 +71,7 @@ def test_original_token_list_does_not_change_plan_snapshot() -> None:
         num_computed_tokens=0,
         num_scheduled_tokens=2,
         requires_sampling=True,
-        block_table=(0,),
+        block_tables=(CacheGroupBlockTable((0,)),),
         sampling_params=SamplingParams(max_tokens=2),
         sample_index=0,
     )
@@ -79,19 +83,24 @@ def test_original_token_list_does_not_change_plan_snapshot() -> None:
 
 def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
     block_table = [0, 7]
+    group_block_table = CacheGroupBlockTable(block_table)
+    block_tables = [group_block_table]
     scheduled_request = ScheduledRequest(
         request_id="request-1",
         input_token_ids=(1,),
         num_computed_tokens=0,
         num_scheduled_tokens=1,
         requires_sampling=True,
-        block_table=block_table,
+        block_tables=block_tables,
         sampling_params=SamplingParams(max_tokens=1),
         sample_index=0,
     )
 
     block_table[0] = 9
     block_table.append(2)
+    block_tables.clear()
 
-    assert scheduled_request.block_table == (0, 7)
-    assert isinstance(scheduled_request.block_table, tuple)
+    assert scheduled_request.block_tables == (group_block_table,)
+    assert group_block_table.block_ids == (0, 7)
+    with pytest.raises(FrozenInstanceError):
+        group_block_table.block_ids = ()

@@ -168,7 +168,7 @@ def test_llama_model_uses_one_physical_cache_per_layer() -> None:
         input_ids,
         positions,
         layer_caches,
-        metadata,
+        (metadata,) * len(layer_caches),
     )
 
     assert hidden_states.shape == torch.Size(
@@ -201,7 +201,7 @@ def test_forward_and_compute_logits_are_separate() -> None:
         input_ids,
         positions,
         layer_caches,
-        metadata,
+        (metadata,) * len(layer_caches),
     )
     assert lm_head_inputs == []
 
@@ -252,7 +252,7 @@ def test_gqa_tiny_llama_layers_hidden_states_and_logits_match_transformers() -> 
             input_ids,
             positions,
             layer_caches,
-            metadata,
+            (metadata,) * len(layer_caches),
         )
         reference_hidden_states = reference.model(
             input_ids.unsqueeze(0),
@@ -384,7 +384,7 @@ def run_batch(
         input_ids,
         metadata.query_positions,
         layer_caches,
-        metadata,
+        (metadata,) * len(layer_caches),
     )
 
 
@@ -594,7 +594,7 @@ def test_gpu_fp16_hidden_states_and_logits_match_transformers() -> None:
         input_ids,
         positions,
         layer_caches,
-        metadata,
+        (metadata,) * len(layer_caches),
     )
     reference_hidden_states = reference.model(
         input_ids.unsqueeze(0),

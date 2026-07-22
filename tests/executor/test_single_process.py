@@ -2,7 +2,11 @@
 
 import pytest
 
-from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.core.scheduler_output import (
+    CacheGroupBlockTable,
+    ScheduledRequest,
+    SchedulerOutput,
+)
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
 from micro_vllm.executor.single_process import SingleProcessExecutor
 from micro_vllm.sampling.params import SamplingParams
@@ -33,7 +37,7 @@ def make_plan() -> SchedulerOutput:
                 num_computed_tokens=0,
                 num_scheduled_tokens=1,
                 requires_sampling=True,
-                block_table=(2,),
+                block_tables=(CacheGroupBlockTable((2,)),),
                 sampling_params=SamplingParams(max_tokens=1),
                 sample_index=0,
             ),
@@ -43,7 +47,7 @@ def make_plan() -> SchedulerOutput:
                 num_computed_tokens=0,
                 num_scheduled_tokens=2,
                 requires_sampling=False,
-                block_table=(7,),
+                block_tables=(CacheGroupBlockTable((7,)),),
             ),
         )
     )

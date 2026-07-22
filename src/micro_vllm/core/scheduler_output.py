@@ -6,21 +6,31 @@ from micro_vllm.sampling.params import SamplingParams
 
 
 @dataclass(frozen=True, slots=True)
+class CacheGroupBlockTable:
+    """One cache group's immutable logical-to-physical block snapshot."""
+
+    block_ids: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "block_ids", tuple(self.block_ids))
+
+
+@dataclass(frozen=True, slots=True)
 class ScheduledRequest:
-    """Immutable snapshot of one request scheduled for a model run."""
+    """Immutable request snapshot with tables in cache-topology order."""
 
     request_id: str
     input_token_ids: tuple[int, ...]
     num_computed_tokens: int
     num_scheduled_tokens: int
     requires_sampling: bool
-    block_table: tuple[int, ...]
+    block_tables: tuple[CacheGroupBlockTable, ...]
     sampling_params: SamplingParams | None = None
     sample_index: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "input_token_ids", tuple(self.input_token_ids))
-        object.__setattr__(self, "block_table", tuple(self.block_table))
+        object.__setattr__(self, "block_tables", tuple(self.block_tables))
 
 
 @dataclass(frozen=True, slots=True)

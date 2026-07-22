@@ -180,7 +180,7 @@ def test_logical_block_release_does_not_clear_physical_storage() -> None:
     manager.register_request("request-1")
     allocation = manager.allocate_slots("request-1", 0, 1)
     assert allocation is not None
-    physical_block_id = allocation.block_table[0]
+    physical_block_id = allocation.block_tables[0].block_ids[0]
     layout = KVCacheLayout(
         block_size=4,
         num_blocks=8,

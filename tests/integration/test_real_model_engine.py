@@ -259,7 +259,10 @@ def test_prefix_hit_reuses_physical_blocks_and_matches_cache_off() -> None:
     second = second_plan.scheduled_requests[0]
     assert second.num_computed_tokens == 4
     assert second.input_token_ids == (5,)
-    assert second.block_table[:2] == first.block_table[:2]
+    assert (
+        second.block_tables[0].block_ids[:2]
+        == first.block_tables[0].block_ids[:2]
+    )
     assert request_output_tokens(prefix_on, "first") == request_output_tokens(
         prefix_on,
         "second",
@@ -324,8 +327,20 @@ def test_reused_physical_block_does_not_leak_stale_kv() -> None:
     fresh.engine.add_request("new", [7], SamplingParams(max_tokens=1))
     run_to_completion(fresh)
 
-    assert reused.executor.plans[0].scheduled_requests[0].block_table == (0,)
-    assert reused.executor.plans[1].scheduled_requests[0].block_table == (0,)
+    assert (
+        reused.executor.plans[0]
+        .scheduled_requests[0]
+        .block_tables[0]
+        .block_ids
+        == (0,)
+    )
+    assert (
+        reused.executor.plans[1]
+        .scheduled_requests[0]
+        .block_tables[0]
+        .block_ids
+        == (0,)
+    )
     assert request_output_tokens(reused, "new") == request_output_tokens(
         fresh,
         "new",

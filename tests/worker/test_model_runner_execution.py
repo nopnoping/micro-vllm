@@ -9,7 +9,11 @@ from torch.nn import functional as F
 from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.attention.spec import ChunkedLocalSpec, FullAttentionSpec
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
-from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.core.scheduler_output import (
+    CacheGroupBlockTable,
+    ScheduledRequest,
+    SchedulerOutput,
+)
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 from micro_vllm.worker.model_runner import ModelRunner
@@ -28,19 +32,19 @@ class FakeModel(torch.nn.Module):
         self.forward_inputs: list[tuple[torch.Tensor, torch.Tensor]] = []
         self.logit_inputs: list[torch.Tensor] = []
         self.layer_kv_caches: tuple[torch.Tensor, ...] = ()
-        self.metadata: AttentionMetadata | None = None
+        self.layer_attention_metadata: tuple[AttentionMetadata, ...] = ()
 
     def forward(
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
         layer_kv_caches: tuple[torch.Tensor, ...],
-        attention_metadata: AttentionMetadata,
+        layer_attention_metadata: tuple[AttentionMetadata, ...],
     ) -> torch.Tensor:
         assert torch.is_inference_mode_enabled()
         self.forward_inputs.append((input_ids.clone(), positions.clone()))
         self.layer_kv_caches = layer_kv_caches
-        self.metadata = attention_metadata
+        self.layer_attention_metadata = layer_attention_metadata
         return torch.stack((input_ids, positions), dim=-1).to(torch.float32)
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -258,10 +262,23 @@ def test_layer_binding_reuses_group_layer_index_buffer_addresses() -> None:
     assert runner.kv_cache_layout.page_layer_count == 2
     assert len(cache) == 2
     assert len(model.layer_kv_caches) == 4
+    assert len(model.layer_attention_metadata) == 4
     assert model.layer_kv_caches[0] is cache[0]
     assert model.layer_kv_caches[1] is cache[0]
     assert model.layer_kv_caches[2] is cache[1]
     assert model.layer_kv_caches[3] is cache[1]
+    full_metadata = model.layer_attention_metadata[0]
+    chunked_metadata = model.layer_attention_metadata[1]
+    assert model.layer_attention_metadata[2] is full_metadata
+    assert model.layer_attention_metadata[3] is chunked_metadata
+    assert chunked_metadata is not full_metadata
+    assert full_metadata.query_positions is chunked_metadata.query_positions
+    assert (
+        full_metadata.block_table.tolist()
+        != chunked_metadata.block_table.tolist()
+    )
+    assert full_metadata.slot_mapping.tolist() == list(range(8))
+    assert chunked_metadata.slot_mapping.tolist() == list(range(8, 16))
 
 
 def test_gpu_capacity_must_fit_data_and_null_pages() -> None:
@@ -314,7 +331,7 @@ def make_request(
     *,
     num_computed_tokens: int,
     requires_sampling: bool,
-    block_table: tuple[int, ...],
+    block_ids: tuple[int, ...],
 ) -> ScheduledRequest:
     return ScheduledRequest(
         request_id=request_id,
@@ -322,7 +339,7 @@ def make_request(
         num_computed_tokens=num_computed_tokens,
         num_scheduled_tokens=len(input_token_ids),
         requires_sampling=requires_sampling,
-        block_table=block_table,
+        block_tables=(CacheGroupBlockTable(block_ids),),
         sampling_params=(
             SamplingParams(max_tokens=4) if requires_sampling else None
         ),
@@ -339,21 +356,21 @@ def test_mixed_batch_selects_sampling_rows_and_preserves_plan() -> None:
                 (7,),
                 num_computed_tokens=2,
                 requires_sampling=True,
-                block_table=(6, 1),
+                block_ids=(6, 1),
             ),
             make_request(
                 "middle-prefill",
                 (20, 21),
                 num_computed_tokens=0,
                 requires_sampling=False,
-                block_table=(4,),
+                block_ids=(4,),
             ),
             make_request(
                 "last-sampled",
                 (31, 32),
                 num_computed_tokens=3,
                 requires_sampling=True,
-                block_table=(3, 5, 2),
+                block_ids=(3, 5, 2),
             ),
         )
     )
@@ -361,7 +378,9 @@ def test_mixed_batch_selects_sampling_rows_and_preserves_plan() -> None:
     input_token_ids = tuple(
         request.input_token_ids for request in plan.scheduled_requests
     )
-    block_tables = tuple(request.block_table for request in plan.scheduled_requests)
+    block_tables = tuple(
+        request.block_tables for request in plan.scheduled_requests
+    )
 
     first_output = runner.execute(plan)
     second_output = runner.execute(plan)
@@ -378,24 +397,24 @@ def test_mixed_batch_selects_sampling_rows_and_preserves_plan() -> None:
         for layer_index, actual in enumerate(model.layer_kv_caches)
     )
 
-    assert model.metadata is not None
-    assert model.metadata.query_positions.tolist() == [2, 0, 1, 3, 4]
-    assert model.metadata.query_start_locations.tolist() == [0, 1, 3, 5]
-    assert model.metadata.context_lengths.tolist() == [3, 2, 5]
-    assert model.metadata.block_table.tolist() == [
+    metadata = model.layer_attention_metadata[0]
+    assert metadata.query_positions.tolist() == [2, 0, 1, 3, 4]
+    assert metadata.query_start_locations.tolist() == [0, 1, 3, 5]
+    assert metadata.context_lengths.tolist() == [3, 2, 5]
+    assert metadata.block_table.tolist() == [
         [6, 1, NULL_BLOCK_ID],
         [4, NULL_BLOCK_ID, NULL_BLOCK_ID],
         [3, 5, 2],
     ]
-    assert model.metadata.slot_mapping.tolist() == [2, 8, 9, 11, 4]
-    assert model.metadata.query_positions.device == torch.device("cpu")
+    assert metadata.slot_mapping.tolist() == [2, 8, 9, 11, 4]
+    assert metadata.query_positions.device == torch.device("cpu")
 
     assert plan.scheduled_requests is scheduled_requests
     assert tuple(
         request.input_token_ids for request in plan.scheduled_requests
     ) == input_token_ids
     assert tuple(
-        request.block_table for request in plan.scheduled_requests
+        request.block_tables for request in plan.scheduled_requests
     ) == block_tables
 
 
@@ -408,7 +427,7 @@ def test_batch_without_sampling_still_executes_model() -> None:
                 (10, 11),
                 num_computed_tokens=0,
                 requires_sampling=False,
-                block_table=(0,),
+                block_ids=(0,),
             ),
         )
     )
@@ -429,14 +448,14 @@ def test_batch_with_all_requests_sampling_preserves_request_order() -> None:
                 (12,),
                 num_computed_tokens=0,
                 requires_sampling=True,
-                block_table=(2,),
+                block_ids=(2,),
             ),
             make_request(
                 "first-id",
                 (22, 23),
                 num_computed_tokens=0,
                 requires_sampling=True,
-                block_table=(7,),
+                block_ids=(7,),
             ),
         )
     )

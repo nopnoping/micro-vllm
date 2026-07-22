@@ -8,9 +8,14 @@ from micro_vllm.core.kv_cache_spec import (
 )
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
-from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.core.scheduler_output import (
+    CacheGroupBlockTable,
+    ScheduledRequest,
+    SchedulerOutput,
+)
 
 __all__ = (
+    "CacheGroupBlockTable",
     "FinishReason",
     "KVCacheGroupSpec",
     "KVCacheLayout",

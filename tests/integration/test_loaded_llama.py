@@ -273,7 +273,7 @@ def _run_model_pair(
         input_ids,
         positions,
         layer_caches,
-        metadata,
+        (metadata,) * len(layer_caches),
     )
     reference_hidden_states = reference_model.model(
         input_ids.unsqueeze(0),

@@ -249,7 +249,7 @@ class Scheduler:
             num_computed_tokens=num_computed_tokens,
             num_scheduled_tokens=num_scheduled_tokens,
             requires_sampling=requires_sampling,
-            block_table=allocation.block_table,
+            block_tables=allocation.block_tables,
             sampling_params=(
                 request.sampling_params if requires_sampling else None
             ),

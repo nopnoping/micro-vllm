@@ -361,7 +361,10 @@ def test_loaded_prefix_cache_reuses_blocks_and_preserves_tokens(
     second = second_plan.scheduled_requests[0]
     assert second.num_computed_tokens == 4
     assert second.input_token_ids == (5,)
-    assert second.block_table[:2] == first.block_table[:2]
+    assert (
+        second.block_tables[0].block_ids[:2]
+        == first.block_tables[0].block_ids[:2]
+    )
     assert request_output_tokens(prefix_on, "first") == expected
     assert request_output_tokens(prefix_on, "second") == expected
     assert request_output_tokens(prefix_off, "uncached") == expected
@@ -434,8 +437,20 @@ def test_loaded_reused_block_does_not_leak_stale_kv(
     run_to_completion(fresh)
 
     expected = reference_greedy_tokens(reference_model, [7], max_tokens=1)
-    assert reused.executor.plans[0].scheduled_requests[0].block_table == (0,)
-    assert reused.executor.plans[1].scheduled_requests[0].block_table == (0,)
+    assert (
+        reused.executor.plans[0]
+        .scheduled_requests[0]
+        .block_tables[0]
+        .block_ids
+        == (0,)
+    )
+    assert (
+        reused.executor.plans[1]
+        .scheduled_requests[0]
+        .block_tables[0]
+        .block_ids
+        == (0,)
+    )
     assert request_output_tokens(reused, "new") == expected
     assert request_output_tokens(fresh, "new") == expected
 

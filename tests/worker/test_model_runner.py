@@ -6,9 +6,14 @@ import pytest
 import torch
 
 from micro_vllm.attention.attention import Attention, AttentionMetadata
-from micro_vllm.attention.spec import FullAttentionSpec
-from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.attention.spec import FullAttentionSpec, SlidingWindowSpec
 from micro_vllm.config import CacheConfig
+from micro_vllm.core.kv_cache_spec import build_kv_cache_topology
+from micro_vllm.core.scheduler_output import (
+    CacheGroupBlockTable,
+    ScheduledRequest,
+    SchedulerOutput,
+)
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.model_runner import (
     ModelInput,
@@ -36,9 +41,11 @@ def make_attention_metadata() -> AttentionMetadata:
 
 
 def make_model_input(**overrides: object) -> ModelInput:
+    metadata = make_attention_metadata()
     values = {
         "input_ids": torch.tensor([10, 11, 12], dtype=torch.int64),
-        "attention_metadata": make_attention_metadata(),
+        "positions": metadata.query_positions,
+        "layer_attention_metadata": (metadata,),
         "request_ids": ("request-1", "request-2"),
         "sampling_row_indices": torch.tensor([1, 2], dtype=torch.int64),
     }
@@ -51,13 +58,17 @@ def test_model_input_contains_only_runner_batch_data() -> None:
 
     assert [field.name for field in fields(model_input)] == [
         "input_ids",
-        "attention_metadata",
+        "positions",
+        "layer_attention_metadata",
         "request_ids",
         "sampling_row_indices",
     ]
     assert model_input.input_ids.tolist() == [10, 11, 12]
     assert model_input.positions.tolist() == [0, 1, 4]
-    assert model_input.positions is model_input.attention_metadata.query_positions
+    assert (
+        model_input.positions
+        is model_input.layer_attention_metadata[0].query_positions
+    )
     assert model_input.request_ids == ("request-1", "request-2")
     assert model_input.sampling_row_indices.tolist() == [1, 2]
 
@@ -94,7 +105,7 @@ def make_scheduled_request(
         num_computed_tokens=num_computed_tokens,
         num_scheduled_tokens=len(input_token_ids),
         requires_sampling=requires_sampling,
-        block_table=(0,),
+        block_tables=(CacheGroupBlockTable((0,)),),
         sampling_params=(
             SamplingParams(max_tokens=1) if requires_sampling else None
         ),
@@ -106,9 +117,12 @@ def flatten_requests(*requests: ScheduledRequest) -> ModelInput:
     total_tokens = sum(request.num_scheduled_tokens for request in requests)
     return flatten_model_input(
         SchedulerOutput(requests),
-        attention=Attention(FullAttentionSpec(), "reference"),
-        block_table=torch.zeros((len(requests), 2), dtype=torch.int64),
-        slot_mapping=torch.zeros(total_tokens, dtype=torch.int64),
+        topology=build_kv_cache_topology((FullAttentionSpec(),)),
+        layer_attentions=(Attention(FullAttentionSpec(), "reference"),),
+        block_tables=(
+            torch.zeros((len(requests), 2), dtype=torch.int64),
+        ),
+        slot_mappings=(torch.zeros(total_tokens, dtype=torch.int64),),
         block_size=4,
     )
 
@@ -126,11 +140,14 @@ def test_flattens_single_request_prefill() -> None:
     assert model_input.input_ids.tolist() == [10, 11, 12]
     assert model_input.positions.tolist() == [0, 1, 2]
     assert (
-        model_input.attention_metadata.query_context_start_positions.tolist()
+        model_input.layer_attention_metadata[
+            0
+        ].query_context_start_positions.tolist()
         == [0, 0, 0]
     )
-    assert model_input.attention_metadata.query_start_locations.tolist() == [0, 3]
-    assert model_input.attention_metadata.context_lengths.tolist() == [3]
+    metadata = model_input.layer_attention_metadata[0]
+    assert metadata.query_start_locations.tolist() == [0, 3]
+    assert metadata.context_lengths.tolist() == [3]
     assert model_input.request_ids == ("request-1",)
     assert model_input.sampling_row_indices.tolist() == [2]
 
@@ -147,8 +164,9 @@ def test_flattens_single_request_decode() -> None:
 
     assert model_input.input_ids.tolist() == [13]
     assert model_input.positions.tolist() == [3]
-    assert model_input.attention_metadata.query_start_locations.tolist() == [0, 1]
-    assert model_input.attention_metadata.context_lengths.tolist() == [4]
+    metadata = model_input.layer_attention_metadata[0]
+    assert metadata.query_start_locations.tolist() == [0, 1]
+    assert metadata.context_lengths.tolist() == [4]
     assert model_input.sampling_row_indices.tolist() == [0]
 
 
@@ -163,7 +181,7 @@ def test_chunked_prefill_starts_from_computed_position_without_sampling() -> Non
     )
 
     assert model_input.positions.tolist() == [2, 3]
-    assert model_input.attention_metadata.context_lengths.tolist() == [4]
+    assert model_input.layer_attention_metadata[0].context_lengths.tolist() == [4]
     assert model_input.sampling_row_indices.tolist() == []
 
 
@@ -185,8 +203,9 @@ def test_mixed_batch_preserves_request_order_and_independent_positions() -> None
 
     assert model_input.input_ids.tolist() == [20, 30, 31, 32]
     assert model_input.positions.tolist() == [4, 0, 1, 2]
-    assert model_input.attention_metadata.query_start_locations.tolist() == [0, 1, 4]
-    assert model_input.attention_metadata.context_lengths.tolist() == [5, 3]
+    metadata = model_input.layer_attention_metadata[0]
+    assert metadata.query_start_locations.tolist() == [0, 1, 4]
+    assert metadata.context_lengths.tolist() == [5, 3]
     assert model_input.request_ids == ("decode", "prefill")
     assert model_input.sampling_row_indices.tolist() == [0]
 
@@ -211,6 +230,73 @@ def test_sampling_rows_follow_request_order() -> None:
     assert model_input.sampling_row_indices.tolist() == [0, 2]
 
 
+def test_builds_per_group_metadata_over_shared_batch_tensors() -> None:
+    full = Attention(FullAttentionSpec(), "reference")
+    sliding = Attention(SlidingWindowSpec(3), "reference")
+    topology = build_kv_cache_topology(
+        (full.spec, sliding.spec, full.spec)
+    )
+    request = ScheduledRequest(
+        request_id="request-1",
+        input_token_ids=(10,),
+        num_computed_tokens=4,
+        num_scheduled_tokens=1,
+        requires_sampling=False,
+        block_tables=(
+            CacheGroupBlockTable((2, 3, 4)),
+            CacheGroupBlockTable((NULL_BLOCK_ID, NULL_BLOCK_ID, 5)),
+        ),
+    )
+    plan = SchedulerOutput((request,))
+    block_tables = tuple(
+        build_block_table(
+            plan,
+            group_index,
+            null_block_id=NULL_BLOCK_ID,
+            device=torch.device("cpu"),
+        )
+        for group_index in range(2)
+    )
+    slot_mappings = tuple(
+        build_slot_mapping(
+            plan,
+            group_index,
+            2,
+            device=torch.device("cpu"),
+        )
+        for group_index in range(2)
+    )
+
+    model_input = flatten_model_input(
+        plan,
+        topology=topology,
+        layer_attentions=(full, sliding, full),
+        block_tables=block_tables,
+        slot_mappings=slot_mappings,
+        block_size=2,
+    )
+
+    full_metadata, sliding_metadata, repeated_full_metadata = (
+        model_input.layer_attention_metadata
+    )
+    assert repeated_full_metadata is full_metadata
+    assert sliding_metadata is not full_metadata
+    assert full_metadata.query_positions is sliding_metadata.query_positions
+    assert (
+        full_metadata.query_start_locations
+        is sliding_metadata.query_start_locations
+    )
+    assert full_metadata.context_lengths is sliding_metadata.context_lengths
+    assert full_metadata.query_context_start_positions.tolist() == [0]
+    assert sliding_metadata.query_context_start_positions.tolist() == [2]
+    assert full_metadata.block_table.tolist() == [[2, 3, 4]]
+    assert sliding_metadata.block_table.tolist() == [
+        [NULL_BLOCK_ID, NULL_BLOCK_ID, 5]
+    ]
+    assert full_metadata.slot_mapping.tolist() == [8]
+    assert sliding_metadata.slot_mapping.tolist() == [10]
+
+
 def test_slot_mapping_crosses_physical_block_boundary() -> None:
     request = ScheduledRequest(
         request_id="request-1",
@@ -218,11 +304,12 @@ def test_slot_mapping_crosses_physical_block_boundary() -> None:
         num_computed_tokens=3,
         num_scheduled_tokens=2,
         requires_sampling=False,
-        block_table=(2, 5),
+        block_tables=(CacheGroupBlockTable((2, 5)),),
     )
 
     slot_mapping = build_slot_mapping(
         SchedulerOutput((request,)),
+        0,
         4,
         device=torch.device("cpu"),
     )
@@ -239,7 +326,7 @@ def test_slot_mapping_preserves_mixed_request_order() -> None:
         num_computed_tokens=4,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(0, 3),
+        block_tables=(CacheGroupBlockTable((0, 3)),),
     )
     second = ScheduledRequest(
         request_id="second",
@@ -247,11 +334,12 @@ def test_slot_mapping_preserves_mixed_request_order() -> None:
         num_computed_tokens=1,
         num_scheduled_tokens=2,
         requires_sampling=False,
-        block_table=(6,),
+        block_tables=(CacheGroupBlockTable((6,)),),
     )
 
     slot_mapping = build_slot_mapping(
         SchedulerOutput((first, second)),
+        0,
         4,
         device=torch.device("cpu"),
     )
@@ -266,12 +354,13 @@ def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
         num_computed_tokens=7,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(0, 6),
+        block_tables=(CacheGroupBlockTable((0, 6)),),
     )
     cache_config = CacheConfig(block_size=4, num_blocks=8)
 
     slot_mapping = build_slot_mapping(
         SchedulerOutput((request,)),
+        0,
         cache_config.block_size,
         device=torch.device("cpu"),
     )
@@ -287,7 +376,7 @@ def test_block_table_pads_different_request_lengths() -> None:
         num_computed_tokens=0,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(2,),
+        block_tables=(CacheGroupBlockTable((2,)),),
     )
     second = ScheduledRequest(
         request_id="second",
@@ -295,11 +384,12 @@ def test_block_table_pads_different_request_lengths() -> None:
         num_computed_tokens=4,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(3, 5, 6),
+        block_tables=(CacheGroupBlockTable((3, 5, 6)),),
     )
 
     block_table = build_block_table(
         SchedulerOutput((first, second)),
+        0,
         null_block_id=NULL_BLOCK_ID,
         device=torch.device("cpu"),
     )
@@ -319,11 +409,12 @@ def test_block_table_preserves_explicit_null_mapping() -> None:
         num_computed_tokens=0,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(2, NULL_BLOCK_ID),
+        block_tables=(CacheGroupBlockTable((2, NULL_BLOCK_ID)),),
     )
 
     block_table = build_block_table(
         SchedulerOutput((request,)),
+        0,
         null_block_id=NULL_BLOCK_ID,
         device=torch.device("cpu"),
     )
@@ -334,6 +425,7 @@ def test_block_table_preserves_explicit_null_mapping() -> None:
 def test_empty_plan_builds_two_dimensional_empty_block_table() -> None:
     block_table = build_block_table(
         SchedulerOutput(()),
+        0,
         null_block_id=NULL_BLOCK_ID,
         device=torch.device("cpu"),
     )
@@ -349,7 +441,7 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
         num_computed_tokens=0,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(2,),
+        block_tables=(CacheGroupBlockTable((2,)),),
     )
     second = ScheduledRequest(
         request_id="second",
@@ -357,26 +449,29 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
         num_computed_tokens=4,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(3, 5),
+        block_tables=(CacheGroupBlockTable((3, 5)),),
     )
     plan = SchedulerOutput((first, second))
     cache_config = CacheConfig(block_size=4, num_blocks=8)
 
     block_table = build_block_table(
         plan,
+        0,
         null_block_id=NULL_BLOCK_ID,
         device=torch.device("cpu"),
     )
     slot_mapping = build_slot_mapping(
         plan,
+        0,
         cache_config.block_size,
         device=torch.device("cpu"),
     )
     model_input = flatten_model_input(
         plan,
-        attention=Attention(FullAttentionSpec(), "reference"),
-        block_table=block_table,
-        slot_mapping=slot_mapping,
+        topology=build_kv_cache_topology((FullAttentionSpec(),)),
+        layer_attentions=(Attention(FullAttentionSpec(), "reference"),),
+        block_tables=(block_table,),
+        slot_mappings=(slot_mapping,),
         block_size=cache_config.block_size,
     )
 

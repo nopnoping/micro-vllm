@@ -4,7 +4,11 @@ import pytest
 import torch
 
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
-from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
+from micro_vllm.core.scheduler_output import (
+    CacheGroupBlockTable,
+    ScheduledRequest,
+    SchedulerOutput,
+)
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
@@ -62,7 +66,7 @@ def make_plan() -> SchedulerOutput:
                 num_computed_tokens=0,
                 num_scheduled_tokens=2,
                 requires_sampling=True,
-                block_table=(3,),
+                block_tables=(CacheGroupBlockTable((3,)),),
                 sampling_params=SamplingParams(max_tokens=1),
                 sample_index=0,
             ),

@@ -126,7 +126,10 @@ def test_scheduler_uses_multi_group_cache_through_one_manager_facade() -> None:
 
     plan = scheduler.schedule()
 
-    assert plan.scheduled_requests[0].block_table == (0,)
+    assert tuple(
+        table.block_ids
+        for table in plan.scheduled_requests[0].block_tables
+    ) == ((0,), (1,))
     assert manager.get_block_tables("request-1") == ((0,), (1,))
     assert not hasattr(scheduler, "_cache_namespace")
 
@@ -263,15 +266,15 @@ def test_prompt_chunks_append_blocks_only_when_crossing_boundary() -> None:
     first_plan = scheduler.schedule()
     first = first_plan.scheduled_requests[0]
     assert first.num_scheduled_tokens == 3
-    assert first.block_table == (0,)
+    assert first.block_tables[0].block_ids == (0,)
     scheduler.update(first_plan, ModelRunnerOutput())
 
     second_plan = scheduler.schedule()
     second = second_plan.scheduled_requests[0]
     assert second.num_computed_tokens == 3
     assert second.num_scheduled_tokens == 2
-    assert second.block_table == (0, 1)
-    assert len(second.block_table) * 4 >= 5
+    assert second.block_tables[0].block_ids == (0, 1)
+    assert len(second.block_tables[0].block_ids) * 4 >= 5
 
 
 def test_sampled_token_gets_a_slot_only_on_next_schedule() -> None:
@@ -280,7 +283,7 @@ def test_sampled_token_gets_a_slot_only_on_next_schedule() -> None:
     scheduler.add_request(request)
 
     first_plan = scheduler.schedule()
-    assert first_plan.scheduled_requests[0].block_table == (0,)
+    assert first_plan.scheduled_requests[0].block_tables[0].block_ids == (0,)
     scheduler.update(first_plan, make_output({"request-1": 7}))
     assert scheduler._kv_cache_manager.get_block_table("request-1") == (0,)
 
@@ -288,7 +291,7 @@ def test_sampled_token_gets_a_slot_only_on_next_schedule() -> None:
     second = second_plan.scheduled_requests[0]
     assert second.input_token_ids == (7,)
     assert second.num_computed_tokens == 4
-    assert second.block_table == (0, 1)
+    assert second.block_tables[0].block_ids == (0, 1)
 
 
 def test_pending_plan_is_reused_without_allocating_blocks_twice() -> None:
@@ -331,7 +334,7 @@ def test_capacity_failure_keeps_prior_success_and_later_request_waiting() -> Non
     plan = scheduler.schedule()
 
     assert [item.request_id for item in plan.scheduled_requests] == ["first"]
-    assert plan.scheduled_requests[0].block_table == (0,)
+    assert plan.scheduled_requests[0].block_tables[0].block_ids == (0,)
     assert first.status is RequestStatus.RUNNING
     assert second.status is RequestStatus.WAITING
     assert scheduler._kv_cache_manager.get_block_table("second") == ()
@@ -531,7 +534,7 @@ def test_waiting_request_uses_prefix_hit_before_admission() -> None:
     assert scheduled.num_computed_tokens == 4
     assert scheduled.num_scheduled_tokens == 1
     assert scheduled.requires_sampling is True
-    assert scheduled.block_table[:2] == (0, 1)
+    assert scheduled.block_tables[0].block_ids[:2] == (0, 1)
 
 
 def test_prefix_hit_larger_than_cache_fails_without_claiming_blocks() -> None:
@@ -844,7 +847,7 @@ def test_non_finished_update_keeps_request_cache_reserved() -> None:
     request = make_request("request-1", [1, 2, 3, 4, 5], max_tokens=2)
     scheduler.add_request(request)
     plan = scheduler.schedule()
-    assert plan.scheduled_requests[0].block_table == (0, 1)
+    assert plan.scheduled_requests[0].block_tables[0].block_ids == (0, 1)
 
     scheduler.update(plan, make_output({"request-1": 7}))
 
@@ -917,7 +920,7 @@ def test_abort_handles_waiting_and_running_requests() -> None:
     running = make_request("running", [2, 3, 4, 5])
     scheduler.add_request(running)
     pending_plan = scheduler.schedule()
-    assert pending_plan.scheduled_requests[0].block_table == (0,)
+    assert pending_plan.scheduled_requests[0].block_tables[0].block_ids == (0,)
     assert scheduler._kv_cache_manager._block_pool.num_free_blocks == 1
     assert scheduler.abort_request("running") is True
     with pytest.raises(ValueError, match="not pending"):
@@ -936,10 +939,10 @@ def test_abort_pending_request_preserves_other_request_reservation() -> None:
     scheduler.add_request(first)
     scheduler.add_request(second)
     pending_plan = scheduler.schedule()
-    assert [item.block_table for item in pending_plan.scheduled_requests] == [
-        (0,),
-        (1,),
-    ]
+    assert [
+        item.block_tables[0].block_ids
+        for item in pending_plan.scheduled_requests
+    ] == [(0,), (1,)]
 
     assert scheduler.abort_request("first") is True
 
@@ -953,7 +956,7 @@ def test_abort_pending_request_preserves_other_request_reservation() -> None:
 
     rebuilt_plan = scheduler.schedule()
     assert [item.request_id for item in rebuilt_plan.scheduled_requests] == ["second"]
-    assert rebuilt_plan.scheduled_requests[0].block_table == (1,)
+    assert rebuilt_plan.scheduled_requests[0].block_tables[0].block_ids == (1,)
     assert scheduler._kv_cache_manager._block_pool.free_block_ids == (0,)
 
 
