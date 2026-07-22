@@ -11,6 +11,7 @@ from micro_vllm.attention.attention import (
     AttentionMetadata,
     PAD_BLOCK_ID,
 )
+from micro_vllm.attention.spec import FullAttentionSpec
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.sampling.params import SamplingParams
@@ -23,7 +24,7 @@ class FakeModel(torch.nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
-        attention = Attention("reference")
+        attention = Attention(FullAttentionSpec(), "reference")
         self.attention_groups = (attention,)
         self.layer_attention_group_ids = (0, 0)
         self.config = make_model_config()

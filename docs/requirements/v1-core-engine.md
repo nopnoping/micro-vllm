@@ -449,10 +449,11 @@ ModelInitializer
 
 - [ ] 相同 spec 的 layer 组成一个 KVCacheGroup。
 - [ ] 每个 request 为每个 cache group 拥有独立 block table。
+- [ ] 所有 cache group 从同一个全局 BlockPool 分配 block ID。
 - [ ] SchedulerOutput 能表达多个 group 的 block table。
 - [ ] full group 保留完整历史。
 - [ ] sliding/local group 可以回收不可见的旧 block。
-- [ ] 不同 group 的 physical cache layout 与 block ID 生命周期明确。
+- [ ] `group_id` 进入 cache/hash identity，但 block ID 生命周期由共享 pool 管理。
 
 ### Reference correctness
 

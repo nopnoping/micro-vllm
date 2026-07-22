@@ -10,6 +10,7 @@ from micro_vllm.attention.attention import (
     AttentionMetadata,
     PAD_BLOCK_ID,
 )
+from micro_vllm.attention.spec import FullAttentionSpec
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.config import CacheConfig
 from micro_vllm.sampling.params import SamplingParams
@@ -107,7 +108,7 @@ def flatten_requests(*requests: ScheduledRequest) -> ModelInput:
     total_tokens = sum(request.num_scheduled_tokens for request in requests)
     return flatten_model_input(
         SchedulerOutput(requests),
-        attention=Attention("reference"),
+        attention=Attention(FullAttentionSpec(), "reference"),
         block_table=torch.zeros((len(requests), 2), dtype=torch.int64),
         slot_mapping=torch.zeros(total_tokens, dtype=torch.int64),
         block_size=4,
@@ -368,7 +369,7 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
     )
     model_input = flatten_model_input(
         plan,
-        attention=Attention("reference"),
+        attention=Attention(FullAttentionSpec(), "reference"),
         block_table=block_table,
         slot_mapping=slot_mapping,
         block_size=cache_config.block_size,

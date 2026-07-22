@@ -4,6 +4,7 @@ import torch
 
 from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.attention.operators.base import AttentionOperator
+from micro_vllm.attention.spec import FullAttentionSpec
 from micro_vllm.models.llama import LlamaAttention
 
 
@@ -38,7 +39,7 @@ def make_metadata() -> AttentionMetadata:
 
 def test_llama_attention_projects_rotates_and_invokes_attention() -> None:
     operator = RecordingOperator()
-    attention_impl = Attention("reference")
+    attention_impl = Attention(FullAttentionSpec(), "reference")
     attention_impl.operator = operator
     attention = LlamaAttention(
         hidden_size=8,

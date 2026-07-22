@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from micro_vllm.attention.attention import Attention, AttentionMetadata
+from micro_vllm.attention.spec import FullAttentionSpec
 from micro_vllm.config import ModelConfig
 from micro_vllm.layers.embedding import LMHead, TokenEmbedding
 from micro_vllm.layers.linear import Linear
@@ -188,7 +189,7 @@ class Qwen3Model(nn.Module):
         attention_bias = values.get("attention_bias", False)
         self._tie_word_embeddings = values.get("tie_word_embeddings", False)
 
-        attention = Attention(config.attention_operator)
+        attention = Attention(FullAttentionSpec(), config.attention_operator)
         self.config = config
         self.attention_groups = (attention,)
         self.layer_attention_group_ids = (0,) * num_hidden_layers

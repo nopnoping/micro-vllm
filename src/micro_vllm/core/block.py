@@ -94,6 +94,19 @@ class BlockPool:
         block.ref_count += 1
         return block
 
+    def can_allocate(
+        self,
+        count: int,
+        cached_block_ids: Iterable[int] = (),
+    ) -> bool:
+        """Whether one allocation fits without changing pool state."""
+
+        num_cached_free_blocks = sum(
+            self._blocks[block_id].ref_count == 0
+            for block_id in cached_block_ids
+        )
+        return count + num_cached_free_blocks <= self.num_free_blocks
+
     def allocate(
         self,
         count: int,
@@ -101,13 +114,11 @@ class BlockPool:
     ) -> tuple[int, ...] | None:
         """Atomically retain cached blocks and allocate ``count`` new blocks."""
 
-        cached_blocks = [self._blocks[block_id] for block_id in cached_block_ids]
-        num_cached_free_blocks = sum(
-            block.ref_count == 0 for block in cached_blocks
-        )
-        if count + num_cached_free_blocks > self.num_free_blocks:
+        cached_ids = tuple(cached_block_ids)
+        if not self.can_allocate(count, cached_ids):
             return None
 
+        cached_blocks = [self._blocks[block_id] for block_id in cached_ids]
         for block in cached_blocks:
             if block.ref_count == 0:
                 self._free_block_ids.remove(block.block_id)
@@ -173,6 +184,40 @@ class BlockTable:
         previous_block_id = self._physical_block_ids[logical_block_index]
         self._physical_block_ids[logical_block_index] = physical_block_id
         return previous_block_id
+
+    def fill_missing(
+        self,
+        logical_block_indices: Iterable[int],
+        physical_block_ids: Iterable[int],
+    ) -> None:
+        """Fill absolute logical indices while preserving sparse table holes."""
+
+        for logical_block_index, physical_block_id in zip(
+            logical_block_indices,
+            physical_block_ids,
+        ):
+            num_missing_entries = (
+                logical_block_index + 1 - self.num_logical_blocks
+            )
+            if num_missing_entries > 0:
+                self._physical_block_ids.extend([None] * num_missing_entries)
+            self._physical_block_ids[logical_block_index] = physical_block_id
+
+    def release_before(
+        self,
+        first_retained_logical_block: int,
+    ) -> tuple[int, ...]:
+        """Unmap blocks before one absolute index and return their IDs."""
+
+        released_block_ids: list[int] = []
+        for logical_block_index in range(
+            min(first_retained_logical_block, self.num_logical_blocks)
+        ):
+            block_id = self._physical_block_ids[logical_block_index]
+            if block_id is not None:
+                released_block_ids.append(block_id)
+                self._physical_block_ids[logical_block_index] = None
+        return tuple(released_block_ids)
 
     def clear(self) -> tuple[int, ...]:
         """Remove all mappings and return their non-empty physical block IDs."""

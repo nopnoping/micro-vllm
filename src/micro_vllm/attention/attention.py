@@ -7,6 +7,8 @@ from typing import Final
 
 import torch
 
+from micro_vllm.attention.spec import AttentionSpec
+
 PAD_BLOCK_ID: Final = -1
 
 
@@ -45,11 +47,12 @@ def map_cache_slots(
 class Attention:
     """Own an operator and the metadata semantics it consumes."""
 
-    def __init__(self, operator_name: str) -> None:
+    def __init__(self, spec: AttentionSpec, operator_name: str) -> None:
         from micro_vllm.attention.operators.registry import (
             get_attention_operator_class,
         )
 
+        self.spec = spec
         operator_class = get_attention_operator_class(operator_name)
         self.operator = operator_class()
 
@@ -63,11 +66,20 @@ class Attention:
         slot_mapping: torch.Tensor,
         block_size: int,
     ) -> AttentionMetadata:
-        """Build metadata for full causal attention."""
+        """Build per-query visibility metadata for this attention semantic."""
+
+        context_starts = torch.tensor(
+            [
+                self.spec.context_start(query_position)
+                for query_position in query_positions.tolist()
+            ],
+            dtype=query_positions.dtype,
+            device=query_positions.device,
+        )
 
         return AttentionMetadata(
             query_positions=query_positions,
-            query_context_start_positions=torch.zeros_like(query_positions),
+            query_context_start_positions=context_starts,
             query_start_locations=query_start_locations,
             context_lengths=context_lengths,
             block_table=block_table,

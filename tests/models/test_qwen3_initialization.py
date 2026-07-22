@@ -2,6 +2,7 @@
 
 import pytest
 
+from micro_vllm.attention.spec import FullAttentionSpec
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.qwen import Qwen3Model
 
@@ -52,6 +53,7 @@ def test_qwen3_initializes_explicit_head_dimension_and_qk_norm() -> None:
     assert attention.rotary_embedding.base == 500_000.0
     assert model.embed_tokens.weight is model.lm_head.weight
     assert model.attention_groups == (attention,)
+    assert model.attention_groups[0].spec == FullAttentionSpec()
     assert model.layer_attention_group_ids == (0, 0, 0)
     assert all(
         layer.self_attn.attention is model.attention_groups[0]

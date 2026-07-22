@@ -25,7 +25,7 @@ def make_full_group(
 def test_full_only_layout_uses_the_same_single_group_contract() -> None:
     layout = KVCacheLayout(
         block_size=16,
-        num_blocks_per_group=32,
+        num_blocks=32,
         groups=(make_full_group(),),
     )
 
@@ -37,7 +37,7 @@ def test_full_only_layout_uses_the_same_single_group_contract() -> None:
 def test_hybrid_layout_uses_stable_first_layer_group_order() -> None:
     layout = KVCacheLayout(
         block_size=4,
-        num_blocks_per_group=8,
+        num_blocks=8,
         groups=(
             make_full_group(layer_indices=(0, 2)),
             KVCacheGroupSpec(
@@ -51,7 +51,7 @@ def test_hybrid_layout_uses_stable_first_layer_group_order() -> None:
     assert layout.layer_attention_group_ids == (0, 1, 0, 1)
     assert layout.groups[0].attention_spec == FullAttentionSpec()
     assert layout.groups[1].attention_spec == ChunkedLocalSpec(4)
-    assert tuple(range(layout.num_blocks_per_group)) == tuple(range(8))
+    assert tuple(range(layout.num_blocks)) == tuple(range(8))
 
 
 def test_layout_and_nested_groups_are_frozen() -> None:

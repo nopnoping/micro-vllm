@@ -12,6 +12,12 @@ from micro_vllm.attention.operators.reference import (
     gather_kv_cache,
     write_kv_cache,
 )
+from micro_vllm.attention.spec import (
+    AttentionSpec,
+    ChunkedLocalSpec,
+    FullAttentionSpec,
+    SlidingWindowSpec,
+)
 
 
 def make_full_metadata(
@@ -286,10 +292,41 @@ def test_kv_gather_decode_reads_the_complete_context() -> None:
     ]
 
 
+def test_kv_gather_reads_only_the_minimum_contiguous_context() -> None:
+    layer_kv_cache = torch.zeros((2, 4, 2, 1, 1))
+    flattened_cache = layer_kv_cache.view(2, 8, 1, 1)
+    flattened_cache[0, [1, 6, 7]] = torch.tensor(
+        [[[3.0]], [[4.0]], [[5.0]]]
+    )
+    flattened_cache[1, [1, 6, 7]] = torch.tensor(
+        [[[13.0]], [[14.0]], [[15.0]]]
+    )
+    metadata = AttentionMetadata(
+        query_positions=torch.tensor([4, 5], dtype=torch.int64),
+        query_context_start_positions=torch.tensor([3, 4], dtype=torch.int64),
+        query_start_locations=torch.tensor([0, 2], dtype=torch.int64),
+        context_lengths=torch.tensor([6], dtype=torch.int64),
+        block_table=torch.tensor([[2, 0, 3]], dtype=torch.int64),
+        slot_mapping=torch.tensor([6, 7], dtype=torch.int64),
+        block_size=2,
+    )
+
+    ((gathered_key, gathered_value),) = gather_kv_cache(
+        layer_kv_cache,
+        metadata,
+    )
+
+    assert gathered_key.flatten().tolist() == [3.0, 4.0, 5.0]
+    assert gathered_value.flatten().tolist() == [13.0, 14.0, 15.0]
+
+
 def dense_causal_attention(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
+    *,
+    query_positions: torch.Tensor | None = None,
+    query_context_starts: torch.Tensor | None = None,
 ) -> torch.Tensor:
     head_group_size = query.shape[1] // key.shape[1]
     key = key.repeat_interleave(head_group_size, dim=1).to(torch.float32)
@@ -300,12 +337,22 @@ def dense_causal_attention(
         query.to(torch.float32),
         key,
     )
-    causal_mask = torch.ones(
-        query.shape[0],
+    if query_positions is None:
+        query_positions = torch.arange(
+            query.shape[0],
+            dtype=torch.int64,
+            device=query.device,
+        )
+    if query_context_starts is None:
+        query_context_starts = torch.zeros_like(query_positions)
+    key_positions = torch.arange(
         key.shape[0],
-        dtype=torch.bool,
+        dtype=torch.int64,
         device=query.device,
-    ).triu(diagonal=1)
+    )
+    causal_mask = (
+        key_positions.unsqueeze(0) < query_context_starts.unsqueeze(1)
+    ) | (key_positions.unsqueeze(0) > query_positions.unsqueeze(1))
     scores.masked_fill_(causal_mask.unsqueeze(0), -torch.inf)
     weights = torch.softmax(scores * scale, dim=-1)
     return torch.einsum("hqk,khd->qhd", weights, value).to(query.dtype)
@@ -316,6 +363,7 @@ def make_attention_metadata(
     block_tables: list[list[int]],
     *,
     block_size: int,
+    attention_spec: AttentionSpec | None = None,
     device: torch.device | str = "cpu",
 ) -> AttentionMetadata:
     flattened_positions = [
@@ -343,9 +391,16 @@ def make_attention_metadata(
         )
         for position in request_positions
     ]
-    return make_full_metadata(
-        query_positions=torch.tensor(
-            flattened_positions,
+    position_tensor = torch.tensor(
+        flattened_positions,
+        dtype=torch.int64,
+        device=device,
+    )
+    spec = attention_spec or FullAttentionSpec()
+    return AttentionMetadata(
+        query_positions=position_tensor,
+        query_context_start_positions=torch.tensor(
+            [spec.context_start(position) for position in flattened_positions],
             dtype=torch.int64,
             device=device,
         ),
@@ -438,6 +493,58 @@ def test_full_causal_prefill_matches_dense_mha_gqa_and_mqa(
     expected = dense_causal_attention(query, key, value)
     assert torch.allclose(output, expected, atol=1e-6, rtol=1e-6)
     assert output.dtype is query.dtype
+
+
+@pytest.mark.parametrize("num_key_value_heads", [4, 2])
+@pytest.mark.parametrize(
+    ("attention_spec", "block_size"),
+    [
+        (SlidingWindowSpec(2), 4),
+        (SlidingWindowSpec(4), 4),
+        (SlidingWindowSpec(6), 4),
+        (ChunkedLocalSpec(2), 4),
+        (ChunkedLocalSpec(4), 4),
+        (ChunkedLocalSpec(6), 4),
+    ],
+)
+def test_bounded_prefill_matches_explicit_dense_mask(
+    attention_spec: AttentionSpec,
+    block_size: int,
+    num_key_value_heads: int,
+) -> None:
+    num_tokens = 9
+    query, key, value = make_attention_tensors(
+        num_tokens,
+        num_attention_heads=4,
+        num_key_value_heads=num_key_value_heads,
+    )
+    block_table = [4, 1, 3]
+    layer_kv_cache = torch.zeros(
+        (2, 5, block_size, num_key_value_heads, 3)
+    )
+    metadata = make_attention_metadata(
+        [list(range(num_tokens))],
+        [block_table],
+        block_size=block_size,
+        attention_spec=attention_spec,
+    )
+
+    output = ReferenceAttentionOperator()(
+        query,
+        key,
+        value,
+        layer_kv_cache,
+        metadata,
+    )
+
+    expected = dense_causal_attention(
+        query,
+        key,
+        value,
+        query_positions=metadata.query_positions,
+        query_context_starts=metadata.query_context_start_positions,
+    )
+    torch.testing.assert_close(output, expected, atol=1e-6, rtol=1e-6)
 
 
 def test_reference_attention_restores_low_precision_dtype() -> None:
@@ -534,6 +641,55 @@ def test_chunked_prefill_matches_full_prefill_and_dense_reference() -> None:
     torch.testing.assert_close(chunked_output, expected, atol=1e-6, rtol=1e-6)
 
 
+@pytest.mark.parametrize(
+    "attention_spec",
+    [SlidingWindowSpec(3), ChunkedLocalSpec(4)],
+)
+def test_bounded_chunked_prefill_and_decode_match_dense_mask(
+    attention_spec: AttentionSpec,
+) -> None:
+    num_tokens = 8
+    query, key, value = make_attention_tensors(num_tokens)
+    block_size = 3
+    block_table = [6, 1, 4]
+    layer_kv_cache = torch.zeros((2, 7, block_size, 2, 3))
+    outputs = []
+    for start, end in ((0, 3), (3, 6), (6, 7), (7, 8)):
+        outputs.append(
+            ReferenceAttentionOperator()(
+                query[start:end],
+                key[start:end],
+                value[start:end],
+                layer_kv_cache,
+                make_attention_metadata(
+                    [list(range(start, end))],
+                    [block_table],
+                    block_size=block_size,
+                    attention_spec=attention_spec,
+                ),
+            )
+        )
+
+    query_positions = torch.arange(num_tokens, dtype=torch.int64)
+    query_context_starts = torch.tensor(
+        [attention_spec.context_start(position) for position in range(num_tokens)],
+        dtype=torch.int64,
+    )
+    expected = dense_causal_attention(
+        query,
+        key,
+        value,
+        query_positions=query_positions,
+        query_context_starts=query_context_starts,
+    )
+    torch.testing.assert_close(
+        torch.cat(outputs),
+        expected,
+        atol=1e-6,
+        rtol=1e-6,
+    )
+
+
 def test_prefill_then_decode_matches_full_sequence_attention() -> None:
     query, key, value = make_attention_tensors(5)
     block_table = [3, 0, 4]
@@ -590,7 +746,13 @@ def test_prefill_then_decode_matches_full_sequence_attention() -> None:
     )
 
 
-def test_mixed_prefill_and_decode_match_independent_requests() -> None:
+@pytest.mark.parametrize(
+    "attention_spec",
+    [FullAttentionSpec(), SlidingWindowSpec(2), ChunkedLocalSpec(2)],
+)
+def test_mixed_prefill_and_decode_match_independent_requests(
+    attention_spec: AttentionSpec,
+) -> None:
     query_a, key_a, value_a = make_attention_tensors(2)
     query_b, key_b, value_b = make_attention_tensors(3)
     query_b = query_b + 0.3
@@ -609,6 +771,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
             [[0, 1]],
             [block_table_b],
             block_size=2,
+            attention_spec=attention_spec,
         ),
     )
     mixed_output = ReferenceAttentionOperator()(
@@ -620,6 +783,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
             [[0, 1], [2]],
             [block_table_a, block_table_b],
             block_size=2,
+            attention_spec=attention_spec,
         ),
     )
 
@@ -633,6 +797,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
             [[0, 1]],
             [block_table_a],
             block_size=2,
+            attention_spec=attention_spec,
         ),
     )
     cache_b = torch.zeros_like(mixed_cache)
@@ -645,6 +810,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
             [[0, 1]],
             [block_table_b],
             block_size=2,
+            attention_spec=attention_spec,
         ),
     )
     output_b = ReferenceAttentionOperator()(
@@ -656,6 +822,7 @@ def test_mixed_prefill_and_decode_match_independent_requests() -> None:
             [[2]],
             [block_table_b],
             block_size=2,
+            attention_spec=attention_spec,
         ),
     )
 

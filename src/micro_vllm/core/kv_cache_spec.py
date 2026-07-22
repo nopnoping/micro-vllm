@@ -18,15 +18,15 @@ class KVCacheGroupSpec:
 
 @dataclass(frozen=True, slots=True)
 class KVCacheLayout:
-    """Stable group ordering and per-group block-ID namespaces for one model.
+    """Stable group ordering over one shared physical block namespace.
 
-    Each group owns block IDs in ``[0, num_blocks_per_group)`` independently.
+    All groups allocate block IDs from the same ``[0, num_blocks)`` pool.
     The union of ``layer_indices`` is exactly ``range(num_layers)`` where
     ``num_layers`` is inferred from the immutable group declarations.
     """
 
     block_size: int
-    num_blocks_per_group: int
+    num_blocks: int
     groups: tuple[KVCacheGroupSpec, ...]
 
     @property

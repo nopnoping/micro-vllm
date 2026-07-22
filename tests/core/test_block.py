@@ -89,6 +89,23 @@ def test_cached_free_blocks_count_towards_atomic_allocation_capacity() -> None:
     assert tuple(pool.block_hash(block_id) for block_id in range(2)) == hashes_before
 
 
+def test_capacity_preflight_has_no_side_effects() -> None:
+    pool = BlockPool(3)
+    assert pool.allocate(2) == (0, 1)
+    pool.cache_block(0, b"a" * 32)
+    pool.release(0)
+    free_before = pool.free_block_ids
+    refcounts_before = tuple(pool.ref_count(block_id) for block_id in range(3))
+    hashes_before = tuple(pool.block_hash(block_id) for block_id in range(3))
+
+    assert pool.can_allocate(1, (0,)) is True
+    assert pool.can_allocate(2, (0,)) is False
+
+    assert pool.free_block_ids == free_before
+    assert tuple(pool.ref_count(block_id) for block_id in range(3)) == refcounts_before
+    assert tuple(pool.block_hash(block_id) for block_id in range(3)) == hashes_before
+
+
 def test_allocate_allows_zero_new_blocks() -> None:
     assert BlockPool(2).allocate(0) == ()
 
@@ -234,6 +251,25 @@ def test_unmapped_physical_block_is_none() -> None:
     table.extend([7, None])
 
     assert table.physical_block(1) is None
+
+
+def test_fill_missing_uses_absolute_logical_indices() -> None:
+    table = BlockTable()
+    table.extend([7, None])
+
+    table.fill_missing((1, 3), (11, 13))
+
+    assert table.snapshot() == (7, 11, None, 13)
+
+
+def test_release_before_preserves_absolute_logical_indices() -> None:
+    table = BlockTable()
+    table.extend([7, 11, None, 13, 17])
+
+    assert table.release_before(3) == (7, 11)
+    assert table.snapshot() == (None, None, None, 13, 17)
+    assert table.release_before(4) == (13,)
+    assert table.snapshot() == (None, None, None, None, 17)
 
 
 def test_block_table_snapshot_is_immutable_and_stable() -> None:

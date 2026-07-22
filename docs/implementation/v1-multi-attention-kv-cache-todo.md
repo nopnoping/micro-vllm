@@ -9,7 +9,7 @@
 model layers
     -> immutable AttentionSpec per layer
     -> layers with the same cache semantics form one KVCacheGroup
-    -> Scheduler reserves every group atomically
+    -> Scheduler reserves every group atomically from one shared BlockPool
     -> ScheduledRequest carries one block-table snapshot per group
     -> ModelRunner builds one AttentionMetadata per group
     -> each layer selects its group's metadata and physical KV tensor
@@ -21,7 +21,7 @@ V1.5 完成后必须支持：
 - sliding-window attention；
 - chunk-aligned local attention；
 - 同一模型内 full + local 的 hybrid layer 组合；
-- 各 cache group 独立分配、回收、抢占和释放 block；
+- 各 cache group 独立维护 block table 和回收边界，共享一个 BlockPool；
 - Mistral-family sliding-window 模型的 checkpoint 加载和端到端执行。
 
 ## 2. 范围和非目标
@@ -40,7 +40,7 @@ V1.5 完成后必须支持：
 ### 本阶段不实现
 
 - optimized/CUDA attention operator；仍使用 reference operator。
-- 不同 cache group 使用不同 block size、dtype 或 block capacity。
+- 不同 cache group 使用不同 block size、dtype 或独立 physical pool/capacity。
 - cyclic/ring block table；首版保留 absolute logical block index 和稀疏 `None` mapping。
 - CPU KV swap/offload、KV connector 或 disaggregated serving。
 - 对 non-full/hybrid cache group 启用 prefix cache。
@@ -82,7 +82,7 @@ class KVCacheGroupSpec:
 @dataclass(frozen=True, slots=True)
 class KVCacheLayout:
     block_size: int
-    num_blocks_per_group: int
+    num_blocks: int
     groups: tuple[KVCacheGroupSpec, ...]
 ```
 
@@ -91,9 +91,9 @@ class KVCacheLayout:
 - `group_id` 从 `0` 开始连续编号，按模型 layer 首次出现顺序稳定生成。
 - 每个 layer 恰好属于一个 group，`layer_indices` 不重复且完整覆盖。
 - 同一 group 中的 layer 必须具有相同 `AttentionSpec`。
-- V1.5 所有 group 使用相同 block size 和 `num_blocks_per_group`。
-- block ID 只在 group 内有效；`group 0 / block 3` 与 `group 1 / block 3`
-  是两块独立 physical storage。
+- V1.5 所有 group 共享同一 block size、`num_blocks` 和 BlockPool。
+- block ID 属于全局共享 namespace；同一个 block ID 不能同时承载两个 group
+  的不同内容。`group_id` 只参与 cache/hash identity、table ownership 和语义选择。
 
 Model 不导入 `core` 或构造 `KVCacheLayout`。模型只暴露：
 
@@ -128,13 +128,14 @@ class ScheduledRequest:
 
 ### 3.4 逻辑 block 分配和回收
 
-`KVCacheManager` 拥有每 group 独立的 BlockPool 和 request BlockTable。
+`KVCacheManager` 拥有一个全局共享 BlockPool，并为每个 request/group 维护独立
+BlockTable。
 对一个 request 的分配必须是跨 group 原子操作：
 
 1. 计算每 group 当前 scheduled positions 需要的 absolute logical blocks。
-2. 对所有 BlockPool 执行无副作用 capacity preflight。
-3. 只有所有 group 都可容纳时才提交 acquire/allocate。
-4. 任一 group 容量不足时返回失败，不改变任何 pool/table。
+2. 汇总所有 group 的 block 需求，对共享 BlockPool 执行一次无副作用 preflight。
+3. 只有总需求可容纳时，才按稳定 group 顺序提交 acquire/allocate。
+4. 共享 pool 容量不足时返回失败，不改变 pool 或任何 group table。
 
 bounded-context group 只在 `Scheduler.update()` 成功后回收旧 block：
 
@@ -176,27 +177,27 @@ V1.5 首版保持明确限制：
 
 ## 5. Phase 1：Attention 语义和 reference correctness
 
-- [ ] `Attention` 构造时显式接收 `AttentionSpec` 和 operator name。
-- [ ] full spec 生成全零 `query_context_start_positions`。
-- [ ] sliding spec 在 prefill、chunked prefill 和 decode 下生成正确 start positions。
-- [ ] chunked-local spec 在 query chunk 跨越 local boundary 时为每个 query 生成独立 start。
-- [ ] `AttentionOperator` 签名不增加 spec/model/scheduler 参数。
-- [ ] reference gather 只读取当前 batch 所需的最小连续 physical context。
-- [ ] full、sliding 和 chunked-local 分别与显式 dense boolean mask 对拍。
-- [ ] 覆盖 window/chunk 小于、等于和大于 block size 的组合。
-- [ ] 覆盖 MHA、GQA、多 request mixed batch 和跨 boundary chunked prefill。
+- [x] `Attention` 构造时显式接收 `AttentionSpec` 和 operator name。
+- [x] full spec 生成全零 `query_context_start_positions`。
+- [x] sliding spec 在 prefill、chunked prefill 和 decode 下生成正确 start positions。
+- [x] chunked-local spec 在 query chunk 跨越 local boundary 时为每个 query 生成独立 start。
+- [x] `AttentionOperator` 签名不增加 spec/model/scheduler 参数。
+- [x] reference gather 只读取当前 batch 所需的最小连续 physical context。
+- [x] full、sliding 和 chunked-local 分别与显式 dense boolean mask 对拍。
+- [x] 覆盖 window/chunk 小于、等于和大于 block size 的组合。
+- [x] 覆盖 MHA、GQA、多 request mixed batch 和跨 boundary chunked prefill。
 - [ ] 现有 full-attention 数值对拍不回归。
 
 ## 6. Phase 2：多 Group 逻辑 KV Cache
 
-- [ ] `KVCacheManager` 按 layout 创建每 group 独立 BlockPool。
+- [ ] `KVCacheManager` 按 layout 创建一个由所有 group 共享的 BlockPool。
 - [ ] 每 request 按 group 拥有独立 BlockTable。
-- [ ] BlockTable 支持将 absolute logical block mapping 替换为 `None` 并返回旧 ID。
-- [ ] BlockTable 支持为指定 absolute logical indices 填充缺失 mapping。
-- [ ] BlockPool 提供无副作用 capacity preflight。
+- [x] BlockTable 支持将 absolute logical block mapping 替换为 `None` 并返回旧 ID。
+- [x] BlockTable 支持为指定 absolute logical indices 填充缺失 mapping。
+- [x] BlockPool 提供无副作用 capacity preflight。
 - [ ] 多 group allocation 成功时一次性返回全部 immutable snapshots。
-- [ ] 任一 group 容量不足时不改变任何 free queue、refcount 或 table。
-- [ ] `num_free_blocks` 不再隐含表示唯一 pool，对外提供按 group 的 snapshot。
+- [ ] 多 group 总需求超过共享 pool 时不改变 free queue、refcount 或 table。
+- [ ] `num_free_blocks` 明确表示共享 pool 的全局剩余容量。
 - [ ] sliding group 在 window 向前移动后释放完全不可见 block。
 - [ ] chunked-local group 进入新 local chunk 后释放上一 chunk block。
 - [ ] visibility boundary 所在的 partial block 保留，mask 隔离 block 内额外 token。
@@ -224,9 +225,9 @@ V1.5 首版保持明确限制：
 - [ ] Worker 只读暴露 runner 初始化后的 layout，不自行构造 spec。
 - [ ] `LLM` 在 Worker 初始化后用 layout 构造 KVCacheManager/Scheduler。
 - [ ] warmup plan 为每 group 创建合法 block-table snapshot。
-- [ ] GPU profile 仍将 `num_blocks` 解释为每 group 的相同 capacity。
+- [ ] GPU profile 将 `num_blocks` 解释为所有 group 共享的全局 capacity。
 - [ ] bytes-per-block 统计一个 block index 在所有 group/layer 的总 K/V 字节。
-- [ ] PhysicalKVCache 仍以 layer 顺序暴露 tensor，但每层只使用所属 group 的 block namespace。
+- [ ] PhysicalKVCache 仍以 layer 顺序暴露 tensor，所有层使用同一全局 block namespace。
 - [ ] model forward 按 `layer_attention_group_ids` 选择 metadata，不在 layer 内查全局 registry。
 - [ ] shutdown 释放所有 physical layer cache，不留 group-specific tensor 引用。
 - [ ] CPU deterministic capacity 和 CUDA profiled capacity 均覆盖单/多 group。
@@ -376,7 +377,7 @@ Hub cache 完整后再执行上述离线命令。公开模型测试应单独运�
 - [ ] FullAttention 现有测试和 Llama/Qwen 端到端结果不变。
 - [ ] SlidingWindow 和 ChunkedLocal 都有独立 dense-mask reference 对拍。
 - [ ] Scheduler 仍只根据 token/sequence budget 和分配成败调度，不读取模型类型。
-- [ ] 任一 cache group 分配失败都不会留下部分 reservation。
+- [ ] 多 group 总分配超过共享 pool 时不会留下部分 reservation。
 - [ ] bounded group 能回收旧 block，full group 仍保留完整历史。
 - [ ] hybrid model 通过 prefill、chunked prefill、decode、mixed batch 和 preemption 验收。
 - [ ] Mistral-family 通过 local tiny checkpoint 和固定公开 checkpoint 验收。

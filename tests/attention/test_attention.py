@@ -4,6 +4,11 @@ import torch
 
 from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.attention.operators.base import AttentionOperator
+from micro_vllm.attention.spec import (
+    ChunkedLocalSpec,
+    FullAttentionSpec,
+    SlidingWindowSpec,
+)
 
 
 class RecordingOperator(AttentionOperator):
@@ -25,7 +30,7 @@ class RecordingOperator(AttentionOperator):
 
 def test_attention_builds_metadata_and_delegates_to_operator() -> None:
     operator = RecordingOperator()
-    attention = Attention("reference")
+    attention = Attention(FullAttentionSpec(), "reference")
     attention.operator = operator
     query_positions = torch.tensor([0, 1], dtype=torch.int64)
     query_start_locations = torch.tensor([0, 2], dtype=torch.int64)
@@ -65,3 +70,31 @@ def test_attention_builds_metadata_and_delegates_to_operator() -> None:
     assert metadata.block_size == 4
     assert operator.metadata is metadata
     assert output is query
+
+
+def test_attention_builds_per_query_visibility_starts() -> None:
+    query_positions = torch.tensor([2, 3, 4, 5], dtype=torch.int64)
+    common_arguments = {
+        "query_positions": query_positions,
+        "query_start_locations": torch.tensor([0, 4], dtype=torch.int64),
+        "context_lengths": torch.tensor([6], dtype=torch.int64),
+        "block_table": torch.tensor([[0, 1]], dtype=torch.int64),
+        "slot_mapping": torch.tensor([2, 3, 4, 5], dtype=torch.int64),
+        "block_size": 4,
+    }
+
+    full_metadata = Attention(FullAttentionSpec(), "reference").build_metadata(
+        **common_arguments
+    )
+    sliding_metadata = Attention(
+        SlidingWindowSpec(3),
+        "reference",
+    ).build_metadata(**common_arguments)
+    chunked_metadata = Attention(
+        ChunkedLocalSpec(4),
+        "reference",
+    ).build_metadata(**common_arguments)
+
+    assert full_metadata.query_context_start_positions.tolist() == [0, 0, 0, 0]
+    assert sliding_metadata.query_context_start_positions.tolist() == [0, 1, 2, 3]
+    assert chunked_metadata.query_context_start_positions.tolist() == [0, 0, 4, 4]
