@@ -163,6 +163,11 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     cache = runner._physical_kv_cache
     assert cache_config.num_blocks == 8
     assert cache is not None
+    layout = runner.kv_cache_layout
+    assert layout.block_size == 2
+    assert layout.num_blocks == 8
+    assert layout.topology is topology
+    assert len(cache) == layout.page_layer_count == 2
     assert len(model.forward_inputs) == 1
     assert model.forward_inputs[0][0].numel() == 8
     with pytest.raises(RuntimeError, match="already initialized"):
@@ -172,6 +177,7 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     assert len(cache) == 0
     assert runner._model is None
     assert runner._model_initializer is None
+    assert runner._kv_cache_layout is None
     assert runner._kv_cache_topology is None
     assert runner._physical_kv_cache is None
 
@@ -211,6 +217,51 @@ def test_model_runner_derives_gpu_block_count_from_available_bytes() -> None:
     assert runner._determine_num_blocks(
         available_memory_bytes=bytes_per_block * 20,
     ) == 20
+
+
+def test_capacity_uses_max_group_layers_instead_of_total_layers() -> None:
+    model = FakeModel()
+    model.layer_attentions = (
+        Attention(FullAttentionSpec(), "reference"),
+        Attention(ChunkedLocalSpec(4), "reference"),
+    )
+    runner = make_uninitialized_runner(
+        lambda: model,
+        num_blocks=None,
+    )
+    runner.initialize_model()
+    bytes_per_block = 1 * 2 * 2 * 1 * 4 * 4
+
+    assert runner._determine_num_blocks(
+        available_memory_bytes=bytes_per_block * 20,
+    ) == 20
+
+
+def test_layer_binding_reuses_group_layer_index_buffer_addresses() -> None:
+    model = FakeModel()
+    full = Attention(FullAttentionSpec(), "reference")
+    chunked = Attention(ChunkedLocalSpec(4), "reference")
+    model.layer_attentions = (full, chunked, full, chunked)
+    model.config.set_metadata(
+        {
+            **model.config.values,
+            "num_hidden_layers": 4,
+        }
+    )
+    runner = make_uninitialized_runner(lambda: model)
+
+    runner.initialize_model()
+    runner.initialize_kv_cache()
+
+    cache = runner._physical_kv_cache
+    assert cache is not None
+    assert runner.kv_cache_layout.page_layer_count == 2
+    assert len(cache) == 2
+    assert len(model.layer_kv_caches) == 4
+    assert model.layer_kv_caches[0] is cache[0]
+    assert model.layer_kv_caches[1] is cache[0]
+    assert model.layer_kv_caches[2] is cache[1]
+    assert model.layer_kv_caches[3] is cache[1]
 
 
 def test_gpu_capacity_must_fit_data_and_null_pages() -> None:

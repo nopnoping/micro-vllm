@@ -87,6 +87,11 @@ def test_worker_orchestrates_model_runner_lifecycle() -> None:
     assert not hasattr(worker, "_physical_kv_cache")
     physical_kv_cache = worker._model_runner._physical_kv_cache
     assert physical_kv_cache is not None
+    layout = worker.kv_cache_layout
+    assert layout is worker._model_runner.kv_cache_layout
+    assert layout.block_size == 2
+    assert layout.num_blocks == 8
+    assert layout.page_layer_count == 2
     assert physical_kv_cache[0].shape == torch.Size((2, 8, 2, 1, 4))
     assert physical_kv_cache[0].device == torch.device("cpu")
     assert physical_kv_cache[0].dtype is torch.float32
@@ -132,6 +137,8 @@ def test_shutdown_releases_resources_and_execute_fails() -> None:
     assert worker._model_runner is None
     with pytest.raises(RuntimeError, match="worker is shut down"):
         worker.execute(make_plan())
+    with pytest.raises(RuntimeError, match="worker is shut down"):
+        _ = worker.kv_cache_layout
 
 
 def test_cpu_worker_executes_reference_model() -> None:

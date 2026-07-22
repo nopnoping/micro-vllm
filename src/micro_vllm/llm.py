@@ -61,7 +61,7 @@ class LLM:
         worker = Worker(initialize_model, config)
         scheduler = Scheduler(
             config,
-            KVCacheManager(config),
+            KVCacheManager(config, worker.kv_cache_layout),
         )
         executor = SingleProcessExecutor(worker)
 

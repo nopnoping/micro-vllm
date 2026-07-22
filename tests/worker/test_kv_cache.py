@@ -3,8 +3,10 @@
 import pytest
 import torch
 
+from micro_vllm.attention.spec import FullAttentionSpec, SlidingWindowSpec
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
+from micro_vllm.core.kv_cache_spec import KVCacheLayout, build_kv_cache_topology
 from micro_vllm.worker.kv_cache import (
     PhysicalKVCache,
     kv_cache_block_size_bytes,
@@ -32,32 +34,38 @@ def make_cache(
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
 ) -> PhysicalKVCache:
-    return PhysicalKVCache(
-        LLMConfig(
-            model_config=ModelConfig(
-                model="unused",
-                metadata=make_model_config().values,
-                device=device,
-                dtype=dtype,
-            ),
-            cache_config=CacheConfig(block_size=4, num_blocks=8),
+    config = LLMConfig(
+        model_config=ModelConfig(
+            model="unused",
+            metadata=make_model_config().values,
+            device=device,
+            dtype=dtype,
+        ),
+        cache_config=CacheConfig(block_size=4, num_blocks=8),
+    )
+    layout = KVCacheLayout(
+        block_size=4,
+        num_blocks=8,
+        topology=build_kv_cache_topology(
+            (FullAttentionSpec(), FullAttentionSpec())
         ),
     )
+    return PhysicalKVCache(config, layout)
 
 
 def test_cpu_cache_uses_model_cache_and_execution_configuration() -> None:
     cache = make_cache()
-    first_layer = cache[0]
+    first_buffer = cache[0]
 
     assert len(cache) == 2
     assert cache.null_block_id == 7
-    assert first_layer.shape == torch.Size((2, 8, 4, 2, 16))
-    assert first_layer.dtype is torch.float32
-    assert first_layer.device == torch.device("cpu")
-    for layer_cache in (cache[0], cache[1]):
-        assert layer_cache.shape == first_layer.shape
-        assert layer_cache.dtype is first_layer.dtype
-        assert layer_cache.device == first_layer.device
+    assert first_buffer.shape == torch.Size((2, 8, 4, 2, 16))
+    assert first_buffer.dtype is torch.float32
+    assert first_buffer.device == torch.device("cpu")
+    for buffer in (cache[0], cache[1]):
+        assert buffer.shape == first_buffer.shape
+        assert buffer.dtype is first_buffer.dtype
+        assert buffer.device == first_buffer.device
 
 
 def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
@@ -82,10 +90,61 @@ def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
         cache_config=CacheConfig(block_size=4, num_blocks=3),
     )
 
-    cache = PhysicalKVCache(config)
+    layout = KVCacheLayout(
+        block_size=4,
+        num_blocks=3,
+        topology=build_kv_cache_topology(
+            (FullAttentionSpec(), FullAttentionSpec())
+        ),
+    )
+    cache = PhysicalKVCache(config, layout)
 
     assert cache[0].shape == torch.Size((2, 3, 4, 2, 8))
-    assert kv_cache_block_size_bytes(config) == 2 * 2 * 4 * 2 * 8 * 4
+    assert (
+        kv_cache_block_size_bytes(config, layout.topology)
+        == 2 * 2 * 4 * 2 * 8 * 4
+    )
+
+
+def test_cache_uses_max_group_layers_instead_of_total_model_layers() -> None:
+    model_config = make_model_config()
+    model_config.set_metadata(
+        {
+            **model_config.values,
+            "num_hidden_layers": 6,
+        }
+    )
+    config = LLMConfig(
+        model_config=ModelConfig(
+            model="unused",
+            metadata=model_config.values,
+            device="cpu",
+            dtype=torch.float32,
+        ),
+        cache_config=CacheConfig(block_size=4, num_blocks=8),
+    )
+    layout = KVCacheLayout(
+        block_size=4,
+        num_blocks=8,
+        topology=build_kv_cache_topology(
+            (
+                FullAttentionSpec(),
+                FullAttentionSpec(),
+                SlidingWindowSpec(4),
+                SlidingWindowSpec(4),
+                SlidingWindowSpec(4),
+                SlidingWindowSpec(4),
+            )
+        ),
+    )
+
+    cache = PhysicalKVCache(config, layout)
+
+    assert layout.page_layer_count == 4
+    assert len(cache) == 4
+    assert kv_cache_block_size_bytes(config, layout.topology) == (
+        4 * 2 * 4 * 2 * 16 * 4
+    )
 
 
 def test_physical_block_id_indexes_the_block_dimension() -> None:
@@ -101,7 +160,7 @@ def test_physical_block_id_indexes_the_block_dimension() -> None:
     assert torch.count_nonzero(layer_cache[:, physical_block_id + 1 :]).item() == 0
 
 
-def test_layers_do_not_share_storage() -> None:
+def test_physical_buffers_do_not_share_storage() -> None:
     cache = make_cache()
 
     assert cache[0].data_ptr() != cache[1].data_ptr()
@@ -122,7 +181,14 @@ def test_logical_block_release_does_not_clear_physical_storage() -> None:
     allocation = manager.allocate_slots("request-1", 0, 1)
     assert allocation is not None
     physical_block_id = allocation.block_table[0]
-    cache = PhysicalKVCache(config)
+    layout = KVCacheLayout(
+        block_size=4,
+        num_blocks=8,
+        topology=build_kv_cache_topology(
+            (FullAttentionSpec(), FullAttentionSpec())
+        ),
+    )
+    cache = PhysicalKVCache(config, layout)
     cache[0][:, physical_block_id].fill_(7)
 
     manager.free_request("request-1")

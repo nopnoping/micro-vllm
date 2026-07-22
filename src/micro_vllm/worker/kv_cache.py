@@ -1,19 +1,18 @@
 """ModelRunner-owned physical KV-cache tensor storage."""
 
-from typing import cast
-
 import torch
 
 from micro_vllm.config import LLMConfig, ModelConfig
+from micro_vllm.core.kv_cache_spec import KVCacheLayout, KVCacheTopology
 
 
 def kv_cache_block_size_bytes(
     llm_config: LLMConfig,
+    topology: KVCacheTopology,
 ) -> int:
-    """Return the physical bytes consumed by one block across all layers."""
+    """Return the bytes consumed by one shared physical cache page."""
 
     model_config = llm_config.model_config
-    num_layers = model_config.require_positive_int("num_hidden_layers")
     head_dim = _model_head_dim(model_config)
     num_attention_heads = model_config.require_positive_int(
         "num_attention_heads"
@@ -24,7 +23,7 @@ def kv_cache_block_size_bytes(
     )
     element_size = torch.empty((), dtype=model_config.dtype).element_size()
     return (
-        num_layers
+        topology.page_layer_count
         * 2
         * llm_config.cache_config.block_size
         * num_key_value_heads
@@ -34,17 +33,16 @@ def kv_cache_block_size_bytes(
 
 
 class PhysicalKVCache:
-    """Per-layer physical KV tensors owned by one ModelRunner."""
+    """Shared physical KV page buffers owned by one ModelRunner."""
 
-    __slots__ = ("_layer_caches", "_null_block_id")
+    __slots__ = ("_buffers", "_null_block_id")
 
     def __init__(
         self,
         llm_config: LLMConfig,
+        layout: KVCacheLayout,
     ) -> None:
-        cache_config = llm_config.cache_config
         model_config = llm_config.model_config
-        num_layers = model_config.require_positive_int("num_hidden_layers")
         head_dim = _model_head_dim(model_config)
         num_attention_heads = model_config.require_positive_int(
             "num_attention_heads"
@@ -56,27 +54,27 @@ class PhysicalKVCache:
         shape = torch.Size(
             (
                 2,
-                cast(int, cache_config.num_blocks),
-                cache_config.block_size,
+                layout.num_blocks,
+                layout.block_size,
                 num_key_value_heads,
                 head_dim,
             )
         )
-        self._null_block_id = cast(int, cache_config.num_blocks) - 1
-        self._layer_caches = tuple(
+        self._null_block_id = layout.num_blocks - 1
+        self._buffers = tuple(
             torch.empty(
                 shape,
                 dtype=model_config.dtype,
                 device=model_config.device,
             )
-            for _ in range(num_layers)
+            for _ in range(layout.page_layer_count)
         )
 
     def __len__(self) -> int:
-        return len(self._layer_caches)
+        return len(self._buffers)
 
-    def __getitem__(self, layer_index: int) -> torch.Tensor:
-        return self._layer_caches[layer_index]
+    def __getitem__(self, buffer_index: int) -> torch.Tensor:
+        return self._buffers[buffer_index]
 
     @property
     def null_block_id(self) -> int:
@@ -87,7 +85,7 @@ class PhysicalKVCache:
     def release(self) -> None:
         """Drop owned tensor references without changing global device state."""
 
-        self._layer_caches = ()
+        self._buffers = ()
 
 
 def _model_head_dim(model_config: ModelConfig) -> int:

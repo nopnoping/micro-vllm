@@ -2,7 +2,7 @@
 
 import gc
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Protocol, cast
 
 import torch
@@ -15,6 +15,7 @@ from micro_vllm.attention.attention import (
 )
 from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.core.kv_cache_spec import (
+    KVCacheLayout,
     KVCacheTopology,
     build_kv_cache_topology,
 )
@@ -210,6 +211,7 @@ class ModelRunner:
         "_dtype",
         "_model",
         "_model_initializer",
+        "_kv_cache_layout",
         "_kv_cache_topology",
         "_peak_activation_memory_bytes",
         "_physical_kv_cache",
@@ -224,6 +226,7 @@ class ModelRunner:
         self._model_initializer: ModelInitializer | None = model_initializer
         self._model: _RunnerModel | None = None
         self._kv_cache_topology: KVCacheTopology | None = None
+        self._kv_cache_layout: KVCacheLayout | None = None
         self._physical_kv_cache: PhysicalKVCache | None = None
         self._config = config
         self._device = torch.device(config.model_config.device)
@@ -269,10 +272,22 @@ class ModelRunner:
         num_blocks = self._determine_num_blocks(
             available_memory_bytes=available_memory_bytes,
         )
+        layout = KVCacheLayout(
+            block_size=self._block_size,
+            num_blocks=num_blocks,
+            topology=cast(KVCacheTopology, self._kv_cache_topology),
+        )
         self._config.cache_config.num_blocks = num_blocks
-        physical_kv_cache = PhysicalKVCache(self._config)
+        physical_kv_cache = PhysicalKVCache(self._config, layout)
+        self._kv_cache_layout = layout
         self._physical_kv_cache = physical_kv_cache
         self._available_kv_cache_memory_bytes = available_memory_bytes
+
+    @property
+    def kv_cache_layout(self) -> KVCacheLayout:
+        """Initialized logical and physical cache layout."""
+
+        return cast(KVCacheLayout, self._kv_cache_layout)
 
     def _profile_model_memory(self) -> int | None:
         model = self._model
@@ -280,14 +295,12 @@ class ModelRunner:
             raise RuntimeError("model must be initialized before profiling")
 
         profile_plan, num_profile_blocks = self._make_warmup_plan()
-        profile_config = replace(
-            self._config,
-            cache_config=replace(
-                self._config.cache_config,
-                num_blocks=num_profile_blocks,
-            ),
+        profile_layout = KVCacheLayout(
+            block_size=self._block_size,
+            num_blocks=num_profile_blocks,
+            topology=cast(KVCacheTopology, self._kv_cache_topology),
         )
-        profile_cache = PhysicalKVCache(profile_config)
+        profile_cache = PhysicalKVCache(self._config, profile_layout)
         is_cuda = self._device.type == "cuda"
         baseline_allocated_bytes = 0
         if is_cuda:
@@ -406,10 +419,7 @@ class ModelRunner:
             slot_mapping=slot_mapping,
             block_size=self._block_size,
         )
-        layer_kv_caches = tuple(
-            profile_cache[layer_index]
-            for layer_index in range(len(profile_cache))
-        )
+        layer_kv_caches = self._bind_layer_kv_caches(profile_cache)
         with torch.inference_mode():
             hidden_states = model(
                 model_input.input_ids,
@@ -440,7 +450,11 @@ class ModelRunner:
                 )
             return requested_num_blocks
 
-        bytes_per_block = kv_cache_block_size_bytes(self._config)
+        topology = cast(KVCacheTopology, self._kv_cache_topology)
+        bytes_per_block = kv_cache_block_size_bytes(
+            self._config,
+            topology,
+        )
         num_blocks = available_memory_bytes // bytes_per_block
         if requested_num_blocks is not None:
             num_blocks = min(num_blocks, requested_num_blocks)
@@ -457,6 +471,7 @@ class ModelRunner:
         if physical_kv_cache is not None:
             physical_kv_cache.release()
         self._physical_kv_cache = None
+        self._kv_cache_layout = None
         self._kv_cache_topology = None
         self._model = None
         self._model_initializer = None
@@ -469,10 +484,7 @@ class ModelRunner:
         if model is None or physical_kv_cache is None:
             raise RuntimeError("model runner is not initialized")
         model_input = self._build_model_input(plan)
-        layer_kv_caches = tuple(
-            physical_kv_cache[layer_index]
-            for layer_index in range(len(physical_kv_cache))
-        )
+        layer_kv_caches = self._bind_layer_kv_caches(physical_kv_cache)
 
         with torch.inference_mode():
             hidden_states = model(
@@ -508,6 +520,23 @@ class ModelRunner:
             sampling_params,
             sample_indices,
         )
+
+    def _bind_layer_kv_caches(
+        self,
+        physical_kv_cache: PhysicalKVCache,
+    ) -> tuple[torch.Tensor, ...]:
+        """Expand shared page buffers into model layer order."""
+
+        topology = cast(KVCacheTopology, self._kv_cache_topology)
+        layer_kv_caches = [physical_kv_cache[0]] * topology.num_layers
+        for group in topology.groups:
+            for group_layer_index, layer_index in enumerate(
+                group.layer_indices
+            ):
+                layer_kv_caches[layer_index] = physical_kv_cache[
+                    group_layer_index
+                ]
+        return tuple(layer_kv_caches)
 
     def _build_model_input(self, plan: SchedulerOutput) -> ModelInput:
         model = self._model

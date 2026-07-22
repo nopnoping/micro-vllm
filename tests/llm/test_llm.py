@@ -113,6 +113,10 @@ def test_generate_preserves_batch_order_and_broadcasts_params(
     assert not hasattr(llm, "_model")
     assert llm._worker._model_runner is not None
     assert llm._worker._model_runner._model is not None
+    assert (
+        llm._scheduler._kv_cache_manager._layout
+        is llm._worker.kv_cache_layout
+    )
 
     with pytest.raises(FrozenInstanceError):
         outputs[0].output_text = "changed"  # type: ignore[misc]

@@ -372,15 +372,16 @@ per-group tables 已由 coordinator 生成，但进入 SchedulerOutput/ModelRunn
 
 ## 8. Phase 4：PhysicalKVCache 共享 page layout
 
-- [ ] memory profiling 前由 ModelRunner 派生 KVCacheTopology。
-- [ ] bytes-per-block 使用 `page_layer_count`，不使用 model 总 layer 数。
-- [ ] PhysicalKVCache 只创建 `page_layer_count` 个 buffers。
-- [ ] 所有 buffer 共享相同全局 block dimension。
-- [ ] group layer 通过 `group_layer_index` 绑定到共享 buffer。
-- [ ] 较短 group 的未使用 page slices 允许 padding 浪费。
-- [ ] warmup/profile 使用与正式执行相同的 topology 和 page size。
-- [ ] Worker 只读暴露初始化后的 KVCacheLayout。
-- [ ] CPU deterministic capacity 和 CUDA profiled capacity 使用相同含义。
+- [x] memory profiling 前由 ModelRunner 派生 KVCacheTopology。
+- [x] bytes-per-block 使用 `page_layer_count`，不使用 model 总 layer 数。
+- [x] PhysicalKVCache 只创建 `page_layer_count` 个 buffers。
+- [x] 所有 buffer 共享相同全局 block dimension。
+- [x] group layer 通过 `group_layer_index` 绑定到共享 buffer。
+- [x] 较短 group 的未使用 page slices 允许 padding 浪费。
+- [x] warmup/profile 使用与正式执行相同的 topology 和 page size。
+- [x] Worker 只读暴露初始化后的 KVCacheLayout。
+- [x] LLM 使用 Worker layout 构造逻辑 KVCacheManager。
+- [x] CPU deterministic capacity 和 CUDA profiled capacity 使用相同含义。
 
 ## 9. Phase 5：per-group SchedulerOutput 和 ModelRunner execute
 
@@ -504,8 +505,8 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 
 ## 17. 实现状态
 
-2026-07-22：完成第二轮技术方案 review、实现清单重写、Phase 0、Phase 1、
-Phase 2 和 Phase 3。
+2026-07-22：完成第二轮技术方案 review、实现清单重写，以及 Phase 0 至
+Phase 4。
 ModelRunner 从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是
 唯一的 layer/group 映射来源。BlockPool 的最后一个物理 page 现在永久作为公共
 null block，BlockTable 和 rectangular padding 只保存真实非负 block ID；prefix
@@ -513,4 +514,6 @@ hash domain 已包含 group ID。Full、SlidingWindow 和 ChunkedLocal group pol
 已使用同一个 BlockPool 实现。KVCacheManager 现在负责 fixed-point common hit、
 跨 group 原子 allocation、step commit/release 和完整 request lifecycle；
 Scheduler 不再持有 cache namespace 或 cached block ID。按当前要求只完成本地
-静态检查，未执行 SSH 远端测试。
+静态检查。PhysicalKVCache 按 `page_layer_count` 分配共享 buffers，ModelRunner
+冻结 layout 并按 group-layer index 展开 layer 地址，Worker 将同一 layout 暴露给
+控制面。未执行 SSH 远端测试。
