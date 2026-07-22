@@ -47,18 +47,27 @@ def test_cache_config_can_be_updated_with_runtime_capacity() -> None:
     assert config.num_blocks == 64
 
 
-@pytest.mark.parametrize("value", [0, -1])
-@pytest.mark.parametrize("field_name", ["block_size", "num_blocks"])
-def test_cache_config_rejects_non_positive_sizes(
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        ("block_size", 0, "block_size must be greater than zero"),
+        ("block_size", -1, "block_size must be greater than zero"),
+        ("num_blocks", 1, "num_blocks must include a data and null block"),
+        ("num_blocks", 0, "num_blocks must include a data and null block"),
+        ("num_blocks", -1, "num_blocks must include a data and null block"),
+    ],
+)
+def test_cache_config_rejects_invalid_sizes(
     field_name: str,
     value: int,
+    message: str,
 ) -> None:
     values = {"block_size": 16, "num_blocks": 128}
     values[field_name] = value
 
     with pytest.raises(
         ValueError,
-        match=rf"^{field_name} must be greater than zero$",
+        match=rf"^{message}$",
     ):
         CacheConfig(**values)
 

@@ -59,7 +59,7 @@ def make_scheduler(
         ),
         cache_config=CacheConfig(
             block_size=block_size,
-            num_blocks=num_blocks,
+            num_blocks=num_blocks + 1,
             enable_prefix_cache=enable_prefix_cache,
         ),
     )
@@ -81,7 +81,7 @@ def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> No
     config = LLMConfig(
         model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(4, 1, 128),
-        cache_config=CacheConfig(block_size=4, num_blocks=8),
+        cache_config=CacheConfig(block_size=4, num_blocks=9),
     )
     manager = KVCacheManager(config)
     scheduler = Scheduler(config, manager)
@@ -109,12 +109,12 @@ def test_each_scheduler_uses_an_independent_cache_manager() -> None:
     first_config = LLMConfig(
         model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(4, 1, 128),
-        cache_config=CacheConfig(block_size=4, num_blocks=8),
+        cache_config=CacheConfig(block_size=4, num_blocks=9),
     )
     second_config = LLMConfig(
         model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(4, 1, 128),
-        cache_config=CacheConfig(block_size=4, num_blocks=8),
+        cache_config=CacheConfig(block_size=4, num_blocks=9),
     )
     first_manager = KVCacheManager(first_config)
     second_manager = KVCacheManager(second_config)
@@ -514,7 +514,7 @@ def test_prefix_hit_larger_than_cache_fails_without_claiming_blocks() -> None:
         scheduler_config=SchedulerConfig(1, 1, 128),
         cache_config=CacheConfig(
             block_size=2,
-            num_blocks=2,
+            num_blocks=3,
             enable_prefix_cache=True,
         ),
     )
@@ -620,7 +620,7 @@ def test_preemption_stops_when_current_request_reaches_running_tail() -> None:
     config = LLMConfig(
         model_config=ModelConfig(model="unused"),
         scheduler_config=SchedulerConfig(3, 2, 128),
-        cache_config=CacheConfig(block_size=2, num_blocks=2),
+        cache_config=CacheConfig(block_size=2, num_blocks=3),
     )
     manager = KVCacheManager(config)
     scheduler = Scheduler(config, manager)
@@ -650,7 +650,7 @@ def test_preempted_victim_reenters_from_cached_prefix() -> None:
         scheduler_config=SchedulerConfig(4, 3, 128),
         cache_config=CacheConfig(
             block_size=2,
-            num_blocks=4,
+            num_blocks=5,
             enable_prefix_cache=True,
         ),
     )

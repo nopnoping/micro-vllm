@@ -7,12 +7,13 @@ from transformers import LlamaConfig, LlamaForCausalLM
 from micro_vllm.attention.attention import (
     Attention,
     AttentionMetadata,
-    PAD_BLOCK_ID,
     map_cache_slots,
 )
 from micro_vllm.attention.operators.base import AttentionOperator
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.llama import LlamaModel
+
+NULL_BLOCK_ID = 0
 
 
 class RecordingZeroOperator(AttentionOperator):
@@ -315,7 +316,7 @@ def make_batch_metadata(
     max_num_blocks = max(len(blocks) for blocks in block_tables)
     block_table = torch.full(
         (len(block_tables), max_num_blocks),
-        PAD_BLOCK_ID,
+        NULL_BLOCK_ID,
         dtype=torch.int64,
         device=device,
     )

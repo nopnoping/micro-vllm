@@ -83,9 +83,10 @@ class ModelConfig:
 class CacheConfig:
     """KV-cache configuration shared across initialization and execution.
 
-    Before initialization, ``num_blocks`` optionally limits GPU capacity and
-    provides the deterministic CPU capacity. The model runner replaces it with
-    the actual allocated capacity during initialization.
+    Before initialization, ``num_blocks`` optionally limits total GPU pages
+    and provides the deterministic CPU page count. One page is permanently
+    reserved as the shared null block. The model runner replaces the value
+    with the actual total page count during initialization.
     """
 
     block_size: int = 16
@@ -100,8 +101,8 @@ class CacheConfig:
             raise ValueError(
                 "gpu_memory_utilization must be greater than zero and at most one"
             )
-        if self.num_blocks is not None and self.num_blocks <= 0:
-            raise ValueError("num_blocks must be greater than zero")
+        if self.num_blocks is not None and self.num_blocks < 2:
+            raise ValueError("num_blocks must include a data and null block")
 
 
 @dataclass(slots=True)

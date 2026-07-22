@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
 
 import torch
 
 from micro_vllm.attention.spec import AttentionSpec
-
-PAD_BLOCK_ID: Final = -1
 
 
 @dataclass(frozen=True, slots=True, eq=False)

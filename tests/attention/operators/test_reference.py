@@ -5,7 +5,7 @@ import math
 import pytest
 import torch
 
-from micro_vllm.attention.attention import AttentionMetadata, PAD_BLOCK_ID
+from micro_vllm.attention.attention import AttentionMetadata
 from micro_vllm.attention.operators.base import AttentionOperator
 from micro_vllm.attention.operators.reference import (
     ReferenceAttentionOperator,
@@ -18,6 +18,8 @@ from micro_vllm.attention.spec import (
     FullAttentionSpec,
     SlidingWindowSpec,
 )
+
+NULL_BLOCK_ID = 0
 
 
 def make_full_metadata(
@@ -211,7 +213,7 @@ def test_kv_gather_handles_each_request_independently() -> None:
         query_start_locations=torch.tensor([0, 2, 3], dtype=torch.int64),
         context_lengths=torch.tensor([3, 1], dtype=torch.int64),
         block_table=torch.tensor(
-            [[3, 1, PAD_BLOCK_ID], [4, PAD_BLOCK_ID, PAD_BLOCK_ID]],
+            [[3, 1, NULL_BLOCK_ID], [4, NULL_BLOCK_ID, NULL_BLOCK_ID]],
             dtype=torch.int64,
         ),
         slot_mapping=torch.tensor([7, 2, 8], dtype=torch.int64),
@@ -379,7 +381,7 @@ def make_attention_metadata(
 
     max_num_blocks = max(len(block_table) for block_table in block_tables)
     padded_block_tables = [
-        block_table + [PAD_BLOCK_ID] * (max_num_blocks - len(block_table))
+        block_table + [NULL_BLOCK_ID] * (max_num_blocks - len(block_table))
         for block_table in block_tables
     ]
     slot_mapping = [

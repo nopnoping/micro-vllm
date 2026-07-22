@@ -14,7 +14,7 @@ class ScheduledRequest:
     num_computed_tokens: int
     num_scheduled_tokens: int
     requires_sampling: bool
-    block_table: tuple[int | None, ...]
+    block_table: tuple[int, ...]
     sampling_params: SamplingParams | None = None
     sample_index: int | None = None
 

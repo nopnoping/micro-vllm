@@ -11,7 +11,7 @@ from micro_vllm.core.prefix_cache import hash_block
 
 def make_manager(
     block_size: int = 4,
-    num_blocks: int = 8,
+    num_blocks: int = 9,
     *,
     enable_prefix_cache: bool = False,
 ) -> KVCacheManager:
@@ -56,8 +56,9 @@ def cache_token_blocks(
 def test_manager_owns_one_pool_and_empty_table_registry() -> None:
     manager = make_manager()
 
-    assert manager._block_pool.num_blocks == 8
+    assert manager._block_pool.num_blocks == 9
     assert manager._block_pool.num_free_blocks == 8
+    assert manager._block_pool.null_block_id == 8
     assert manager._block_tables == {}
 
 
@@ -75,7 +76,7 @@ def test_register_request_creates_isolated_empty_block_tables() -> None:
 def test_find_then_allocate_prefix_hit_separates_discovery_from_ownership() -> None:
     manager = make_manager(
         block_size=2,
-        num_blocks=4,
+        num_blocks=5,
         enable_prefix_cache=True,
     )
     block_hashes = cache_token_blocks(manager, ((1, 2), (3, 4)))
@@ -182,7 +183,7 @@ def test_find_prefix_hit_stops_at_first_missing_parent_chain_block() -> None:
 def test_allocate_prefix_hit_is_atomic_when_capacity_is_insufficient() -> None:
     manager = make_manager(
         block_size=2,
-        num_blocks=2,
+        num_blocks=3,
         enable_prefix_cache=True,
     )
     block_hashes = cache_token_blocks(manager, ((1, 2), (3, 4)))
@@ -252,7 +253,7 @@ def test_find_prefix_hit_keeps_last_aligned_block_for_model_computation(
 def test_commit_prefix_blocks_caches_only_complete_blocks_and_is_idempotent() -> None:
     manager = make_manager(
         block_size=2,
-        num_blocks=4,
+        num_blocks=5,
         enable_prefix_cache=True,
     )
     manager.register_request("request-1")
@@ -287,7 +288,7 @@ def test_commit_prefix_blocks_caches_only_complete_blocks_and_is_idempotent() ->
 def test_commit_prefix_blocks_reuses_canonical_block_and_releases_duplicate() -> None:
     manager = make_manager(
         block_size=2,
-        num_blocks=2,
+        num_blocks=3,
         enable_prefix_cache=True,
     )
     manager.register_request("request-1")
@@ -480,7 +481,7 @@ def test_allocate_slots_crosses_multiple_block_boundaries() -> None:
 
 
 def test_allocate_slots_isolates_request_tables_while_sharing_pool_capacity() -> None:
-    manager = make_manager(num_blocks=4)
+    manager = make_manager(num_blocks=5)
     manager.register_request("request-1")
     manager.register_request("request-2")
 
@@ -495,7 +496,7 @@ def test_allocate_slots_isolates_request_tables_while_sharing_pool_capacity() ->
 
 
 def test_allocate_slots_capacity_failure_is_atomic() -> None:
-    manager = make_manager(num_blocks=2)
+    manager = make_manager(num_blocks=3)
     manager.register_request("request-1")
     manager.register_request("request-2")
     assert manager.allocate_slots("request-1", 0, 4) is not None
@@ -509,8 +510,9 @@ def test_allocate_slots_capacity_failure_is_atomic() -> None:
     assert manager.get_block_table("request-1") == first_table_before
     assert manager.get_block_table("request-2") == second_table_before
     assert manager._block_pool.free_block_ids == free_blocks_before
-    assert tuple(manager._block_pool.ref_count(block_id) for block_id in range(2)) == (
+    assert tuple(manager._block_pool.ref_count(block_id) for block_id in range(3)) == (
         1,
+        0,
         0,
     )
 
@@ -530,18 +532,18 @@ def test_allocation_snapshot_does_not_change_after_later_allocation() -> None:
 
 def test_kv_cache_allocation_is_frozen_and_canonicalizes_sequences() -> None:
     allocation = KVCacheAllocation(
-        block_table=[0, None],  # type: ignore[arg-type]
+        block_table=[0, 8],  # type: ignore[arg-type]
         new_block_ids=[0],  # type: ignore[arg-type]
     )
 
-    assert allocation.block_table == (0, None)
+    assert allocation.block_table == (0, 8)
     assert allocation.new_block_ids == (0,)
     with pytest.raises(FrozenInstanceError):
         allocation.block_table = ()
 
 
 def test_free_request_blocks_keeps_an_empty_table_for_recompute() -> None:
-    manager = make_manager(num_blocks=2)
+    manager = make_manager(num_blocks=3)
     manager.register_request("request-1")
     assert manager.allocate_slots("request-1", 0, 5) is not None
 
@@ -553,7 +555,7 @@ def test_free_request_blocks_keeps_an_empty_table_for_recompute() -> None:
 
 
 def test_repeated_recompute_cycles_release_each_reference_once() -> None:
-    manager = make_manager(num_blocks=2)
+    manager = make_manager(num_blocks=3)
     manager.register_request("request-1")
 
     for _ in range(3):
@@ -562,16 +564,17 @@ def test_repeated_recompute_cycles_release_each_reference_once() -> None:
         assert manager.get_block_table("request-1") == ()
         assert manager.num_free_blocks == 2
         ref_counts = tuple(
-            manager._block_pool.ref_count(block_id) for block_id in range(2)
+            manager._block_pool.ref_count(block_id) for block_id in range(3)
         )
         assert ref_counts == (
+            0,
             0,
             0,
         )
 
 
 def test_free_request_recycles_all_request_owned_blocks() -> None:
-    manager = make_manager(num_blocks=4)
+    manager = make_manager(num_blocks=5)
     manager.register_request("request-1")
     assert manager.allocate_slots("request-1", 0, 9) is not None
 
@@ -579,7 +582,8 @@ def test_free_request_recycles_all_request_owned_blocks() -> None:
 
     assert manager._block_pool.num_free_blocks == 4
     assert manager._block_pool.free_block_ids == (3, 0, 1, 2)
-    assert tuple(manager._block_pool.ref_count(block_id) for block_id in range(4)) == (
+    assert tuple(manager._block_pool.ref_count(block_id) for block_id in range(5)) == (
+        0,
         0,
         0,
         0,
@@ -590,7 +594,7 @@ def test_free_request_recycles_all_request_owned_blocks() -> None:
 
 
 def test_free_request_does_not_affect_other_request() -> None:
-    manager = make_manager(num_blocks=4)
+    manager = make_manager(num_blocks=5)
     manager.register_request("request-1")
     manager.register_request("request-2")
     assert manager.allocate_slots("request-1", 0, 5) is not None
@@ -605,7 +609,7 @@ def test_free_request_does_not_affect_other_request() -> None:
 
 
 def test_free_request_releases_one_reference_from_shared_block() -> None:
-    manager = make_manager(num_blocks=2)
+    manager = make_manager(num_blocks=3)
     manager.register_request("request-1")
     manager.register_request("request-2")
     shared_block_ids = manager._block_pool.allocate(1)
@@ -628,7 +632,7 @@ def test_free_request_releases_one_reference_from_shared_block() -> None:
 
 
 def test_repeated_free_is_explicit_and_does_not_double_release() -> None:
-    manager = make_manager(num_blocks=2)
+    manager = make_manager(num_blocks=3)
     manager.register_request("request-1")
     assert manager.allocate_slots("request-1", 0, 1) is not None
     manager.free_request("request-1")

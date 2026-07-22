@@ -74,7 +74,7 @@ def make_loaded_engine(
         ),
         cache_config=CacheConfig(
             block_size=block_size,
-            num_blocks=num_blocks,
+            num_blocks=num_blocks + 1,
             enable_prefix_cache=enable_prefix_cache,
         ),
     )

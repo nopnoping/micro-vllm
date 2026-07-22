@@ -13,7 +13,7 @@ from micro_vllm.core.prefix_cache import hash_block
 class KVCacheAllocation:
     """Immutable result of reserving logical KV-cache slots for one request."""
 
-    block_table: tuple[int | None, ...]
+    block_table: tuple[int, ...]
     new_block_ids: tuple[int, ...]
 
     def __post_init__(self) -> None:
@@ -45,9 +45,11 @@ class KVCacheManager:
     def register_request(self, request_id: str) -> None:
         """Create an empty BlockTable owned by ``request_id``."""
 
-        self._block_tables[request_id] = BlockTable()
+        self._block_tables[request_id] = BlockTable(
+            self._block_pool.null_block_id
+        )
 
-    def get_block_table(self, request_id: str) -> tuple[int | None, ...]:
+    def get_block_table(self, request_id: str) -> tuple[int, ...]:
         """Return an immutable snapshot for a registered request."""
 
         return self._require_block_table(request_id).snapshot()

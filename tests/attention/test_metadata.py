@@ -5,7 +5,9 @@ from dataclasses import FrozenInstanceError, fields
 import pytest
 import torch
 
-from micro_vllm.attention.attention import AttentionMetadata, PAD_BLOCK_ID
+from micro_vllm.attention.attention import AttentionMetadata
+
+NULL_BLOCK_ID = 4
 
 
 def make_metadata(**overrides: object) -> AttentionMetadata:
@@ -18,7 +20,7 @@ def make_metadata(**overrides: object) -> AttentionMetadata:
         "query_start_locations": torch.tensor([0, 2, 3], dtype=torch.int64),
         "context_lengths": torch.tensor([2, 5], dtype=torch.int64),
         "block_table": torch.tensor(
-            [[0, PAD_BLOCK_ID], [2, 3]],
+            [[0, NULL_BLOCK_ID], [2, 3]],
             dtype=torch.int64,
         ),
         "slot_mapping": torch.tensor([0, 1, 12], dtype=torch.int64),
@@ -41,7 +43,7 @@ def test_metadata_stores_only_flattened_attention_inputs() -> None:
         "block_size",
     ]
     assert metadata.num_requests == 2
-    assert metadata.block_table.tolist() == [[0, PAD_BLOCK_ID], [2, 3]]
+    assert metadata.block_table.tolist() == [[0, NULL_BLOCK_ID], [2, 3]]
     assert metadata.block_size == 4
 
 

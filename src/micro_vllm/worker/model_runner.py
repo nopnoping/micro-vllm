@@ -11,7 +11,6 @@ from torch import nn
 from micro_vllm.attention.attention import (
     Attention,
     AttentionMetadata,
-    PAD_BLOCK_ID,
     map_cache_slots,
 )
 from micro_vllm.config import LLMConfig, ModelConfig
@@ -157,10 +156,7 @@ def build_slot_mapping(
             device=device,
         )
         block_table = torch.tensor(
-            [
-                PAD_BLOCK_ID if block_id is None else block_id
-                for block_id in request.block_table
-            ],
+            request.block_table,
             dtype=torch.int64,
             device=device,
         )
@@ -179,6 +175,7 @@ def build_slot_mapping(
 def build_block_table(
     plan: SchedulerOutput,
     *,
+    null_block_id: int,
     device: torch.device,
 ) -> torch.Tensor:
     """Pad physical block tables to one rectangular int64 tensor."""
@@ -189,17 +186,13 @@ def build_block_table(
     )
     block_table = torch.full(
         (len(plan.scheduled_requests), max_num_blocks),
-        PAD_BLOCK_ID,
+        null_block_id,
         dtype=torch.int64,
         device=device,
     )
     for row_index, request in enumerate(plan.scheduled_requests):
-        block_ids = [
-            PAD_BLOCK_ID if block_id is None else block_id
-            for block_id in request.block_table
-        ]
-        block_table[row_index, : len(block_ids)] = torch.tensor(
-            block_ids,
+        block_table[row_index, : len(request.block_table)] = torch.tensor(
+            request.block_table,
             dtype=torch.int64,
             device=device,
         )
@@ -385,7 +378,7 @@ class ModelRunner:
             )
             next_block_id += num_blocks
             remaining_tokens -= num_tokens
-        return SchedulerOutput(tuple(scheduled_requests)), next_block_id
+        return SchedulerOutput(tuple(scheduled_requests)), next_block_id + 1
 
     def _warmup_model(
         self,
@@ -396,7 +389,11 @@ class ModelRunner:
         if model is None:
             raise RuntimeError("model must be initialized before warmup")
 
-        block_table = build_block_table(plan, device=self._device)
+        block_table = build_block_table(
+            plan,
+            null_block_id=profile_cache.null_block_id,
+            device=self._device,
+        )
         slot_mapping = build_slot_mapping(
             plan,
             self._block_size,
@@ -447,8 +444,10 @@ class ModelRunner:
         num_blocks = available_memory_bytes // bytes_per_block
         if requested_num_blocks is not None:
             num_blocks = min(num_blocks, requested_num_blocks)
-        if num_blocks <= 0:
-            raise MemoryError("available GPU memory cannot fit one KV cache block")
+        if num_blocks < 2:
+            raise MemoryError(
+                "available GPU memory cannot fit data and null KV cache blocks"
+            )
         return num_blocks
 
     def shutdown(self) -> None:
@@ -514,7 +513,11 @@ class ModelRunner:
         model = self._model
         if model is None or self._physical_kv_cache is None:
             raise RuntimeError("model runner is not initialized")
-        block_table = build_block_table(plan, device=self._device)
+        block_table = build_block_table(
+            plan,
+            null_block_id=self._physical_kv_cache.null_block_id,
+            device=self._device,
+        )
         slot_mapping = build_slot_mapping(
             plan,
             self._block_size,

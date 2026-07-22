@@ -3,7 +3,6 @@
 from micro_vllm.attention.attention import (
     Attention,
     AttentionMetadata,
-    PAD_BLOCK_ID,
     map_cache_slots,
 )
 from micro_vllm.attention.operators.base import AttentionOperator
@@ -24,7 +23,6 @@ __all__ = (
     "AttentionSpec",
     "ChunkedLocalSpec",
     "FullAttentionSpec",
-    "PAD_BLOCK_ID",
     "ReferenceAttentionOperator",
     "SlidingWindowSpec",
     "map_cache_slots",

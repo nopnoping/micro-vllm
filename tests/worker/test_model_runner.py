@@ -5,11 +5,7 @@ from dataclasses import FrozenInstanceError, fields
 import pytest
 import torch
 
-from micro_vllm.attention.attention import (
-    Attention,
-    AttentionMetadata,
-    PAD_BLOCK_ID,
-)
+from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.attention.spec import FullAttentionSpec
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.config import CacheConfig
@@ -21,6 +17,8 @@ from micro_vllm.worker.model_runner import (
     flatten_model_input,
 )
 
+NULL_BLOCK_ID = 7
+
 
 def make_attention_metadata() -> AttentionMetadata:
     return AttentionMetadata(
@@ -29,7 +27,7 @@ def make_attention_metadata() -> AttentionMetadata:
         query_start_locations=torch.tensor([0, 2, 3], dtype=torch.int64),
         context_lengths=torch.tensor([2, 5], dtype=torch.int64),
         block_table=torch.tensor(
-            [[0, PAD_BLOCK_ID], [2, 3]],
+            [[0, NULL_BLOCK_ID], [2, 3]],
             dtype=torch.int64,
         ),
         slot_mapping=torch.tensor([0, 1, 12], dtype=torch.int64),
@@ -268,7 +266,7 @@ def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
         num_computed_tokens=7,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(0, 7),
+        block_table=(0, 6),
     )
     cache_config = CacheConfig(block_size=4, num_blocks=8)
 
@@ -278,7 +276,7 @@ def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
         device=torch.device("cpu"),
     )
 
-    assert slot_mapping.tolist() == [31]
+    assert slot_mapping.tolist() == [27]
     assert slot_mapping.item() < cache_config.num_blocks * cache_config.block_size
 
 
@@ -297,43 +295,46 @@ def test_block_table_pads_different_request_lengths() -> None:
         num_computed_tokens=4,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(3, 5, 7),
+        block_table=(3, 5, 6),
     )
 
     block_table = build_block_table(
         SchedulerOutput((first, second)),
+        null_block_id=NULL_BLOCK_ID,
         device=torch.device("cpu"),
     )
 
     assert block_table.tolist() == [
-        [2, PAD_BLOCK_ID, PAD_BLOCK_ID],
-        [3, 5, 7],
+        [2, NULL_BLOCK_ID, NULL_BLOCK_ID],
+        [3, 5, 6],
     ]
     assert block_table.dtype is torch.int64
     assert block_table.device == torch.device("cpu")
 
 
-def test_block_table_encodes_none_as_padding_sentinel() -> None:
+def test_block_table_preserves_explicit_null_mapping() -> None:
     request = ScheduledRequest(
         request_id="request-1",
         input_token_ids=(10,),
         num_computed_tokens=0,
         num_scheduled_tokens=1,
         requires_sampling=False,
-        block_table=(2, None),
+        block_table=(2, NULL_BLOCK_ID),
     )
 
     block_table = build_block_table(
         SchedulerOutput((request,)),
+        null_block_id=NULL_BLOCK_ID,
         device=torch.device("cpu"),
     )
 
-    assert block_table.tolist() == [[2, PAD_BLOCK_ID]]
+    assert block_table.tolist() == [[2, NULL_BLOCK_ID]]
 
 
 def test_empty_plan_builds_two_dimensional_empty_block_table() -> None:
     block_table = build_block_table(
         SchedulerOutput(()),
+        null_block_id=NULL_BLOCK_ID,
         device=torch.device("cpu"),
     )
 
@@ -361,7 +362,11 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
     plan = SchedulerOutput((first, second))
     cache_config = CacheConfig(block_size=4, num_blocks=8)
 
-    block_table = build_block_table(plan, device=torch.device("cpu"))
+    block_table = build_block_table(
+        plan,
+        null_block_id=NULL_BLOCK_ID,
+        device=torch.device("cpu"),
+    )
     slot_mapping = build_slot_mapping(
         plan,
         cache_config.block_size,
@@ -375,7 +380,7 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
         block_size=cache_config.block_size,
     )
 
-    assert block_table.tolist() == [[2, PAD_BLOCK_ID], [3, 5]]
+    assert block_table.tolist() == [[2, NULL_BLOCK_ID], [3, 5]]
     assert slot_mapping.tolist() == [8, 20]
     assert model_input.input_ids.device == block_table.device
     assert model_input.positions.device == block_table.device

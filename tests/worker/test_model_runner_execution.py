@@ -6,17 +6,15 @@ import pytest
 import torch
 from torch.nn import functional as F
 
-from micro_vllm.attention.attention import (
-    Attention,
-    AttentionMetadata,
-    PAD_BLOCK_ID,
-)
+from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.attention.spec import ChunkedLocalSpec, FullAttentionSpec
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 from micro_vllm.worker.model_runner import ModelRunner
+
+NULL_BLOCK_ID = 7
 
 
 class FakeModel(torch.nn.Module):
@@ -215,6 +213,18 @@ def test_model_runner_derives_gpu_block_count_from_available_bytes() -> None:
     ) == 20
 
 
+def test_gpu_capacity_must_fit_data_and_null_pages() -> None:
+    model = FakeModel()
+    runner = make_uninitialized_runner(lambda: model, num_blocks=None)
+    runner.initialize_model()
+    bytes_per_block = 2 * 2 * 2 * 1 * 4 * 4
+
+    with pytest.raises(MemoryError, match="data and null KV cache blocks"):
+        runner._determine_num_blocks(
+            available_memory_bytes=bytes_per_block,
+        )
+
+
 def test_cpu_kv_cache_initialization_requires_deterministic_capacity() -> None:
     model = FakeModel()
     runner = make_uninitialized_runner(
@@ -253,7 +263,7 @@ def make_request(
     *,
     num_computed_tokens: int,
     requires_sampling: bool,
-    block_table: tuple[int | None, ...],
+    block_table: tuple[int, ...],
 ) -> ScheduledRequest:
     return ScheduledRequest(
         request_id=request_id,
@@ -322,8 +332,8 @@ def test_mixed_batch_selects_sampling_rows_and_preserves_plan() -> None:
     assert model.metadata.query_start_locations.tolist() == [0, 1, 3, 5]
     assert model.metadata.context_lengths.tolist() == [3, 2, 5]
     assert model.metadata.block_table.tolist() == [
-        [6, 1, PAD_BLOCK_ID],
-        [4, PAD_BLOCK_ID, PAD_BLOCK_ID],
+        [6, 1, NULL_BLOCK_ID],
+        [4, NULL_BLOCK_ID, NULL_BLOCK_ID],
         [3, 5, 2],
     ]
     assert model.metadata.slot_mapping.tolist() == [2, 8, 9, 11, 4]

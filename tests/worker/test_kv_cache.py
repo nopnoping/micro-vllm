@@ -50,6 +50,7 @@ def test_cpu_cache_uses_model_cache_and_execution_configuration() -> None:
     first_layer = cache[0]
 
     assert len(cache) == 2
+    assert cache.null_block_id == 7
     assert first_layer.shape == torch.Size((2, 8, 4, 2, 16))
     assert first_layer.dtype is torch.float32
     assert first_layer.device == torch.device("cpu")
@@ -121,7 +122,6 @@ def test_logical_block_release_does_not_clear_physical_storage() -> None:
     allocation = manager.allocate_slots("request-1", 0, 1)
     assert allocation is not None
     physical_block_id = allocation.block_table[0]
-    assert physical_block_id is not None
     cache = PhysicalKVCache(config)
     cache[0][:, physical_block_id].fill_(7)
 

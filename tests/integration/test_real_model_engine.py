@@ -89,7 +89,7 @@ def make_real_engine(
         ),
         cache_config=CacheConfig(
             block_size=block_size,
-            num_blocks=num_blocks,
+            num_blocks=num_blocks + 1,
             enable_prefix_cache=enable_prefix_cache,
         ),
     )
@@ -137,9 +137,11 @@ def test_control_plane_uses_model_runner_cache_capacity() -> None:
     physical_kv_cache = model_runner._physical_kv_cache
     assert physical_kv_cache is not None
 
-    assert harness.worker.config.cache_config.num_blocks == 7
-    assert physical_kv_cache[0].shape[1] == 7
-    assert harness.cache_manager._block_pool.num_blocks == 7
+    assert harness.worker.config.cache_config.num_blocks == 8
+    assert physical_kv_cache[0].shape[1] == 8
+    assert harness.cache_manager._block_pool.num_blocks == 8
+    assert physical_kv_cache.null_block_id == 7
+    assert harness.cache_manager._block_pool.null_block_id == 7
 
 
 def test_real_model_token_moves_request_from_waiting_to_finished() -> None:

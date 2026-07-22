@@ -167,23 +167,29 @@ bytes_per_block =
 
 BlockPool 初始化时永久保留一个公共 null block：
 
-- null block 使用真实非负 block ID；
+- null block 使用最后一个真实 block ID，即 `num_blocks - 1`；
 - 不进入 free queue；
 - 不参与普通 refcount、hash、eviction 或重新分配；
 - 所有 group 已跳过的 logical block 都替换为该 ID；
 - rectangular block-table padding 也使用该 ID；
 - `num_free_blocks` 只统计可分配 block，不包含 null block。
 
+因此 `num_blocks` 至少为 `2`，并始终表示包含 null page 在内的物理 page 总数。
+
 BlockTable 因此统一保存 `int`，不再用 `None` 或负数表示 hole。attention mask
 保证 null block 对应的不可见位置不影响输出。
 
 ### 3.5 Prefix cache identity 和公共前缀
 
-Prefix cache key 显式包含 group ID：
+Prefix block hash 的 domain 显式包含 group ID：
 
 ```text
-CacheKey(group_id, chained_token_block_hash)
+hash(group_id, cache_namespace, parent_block_hash, token_block)
 ```
+
+`group_id` 不属于 Scheduler-facing API。KVCacheManager 根据 topology 创建每个
+group manager 时绑定对应 group ID，group manager 只在内部计算 prefix identity。
+Scheduler、Request 和 allocation 调用方均不传入或读取 group ID。
 
 相同 token prefix 在不同 group 中分别缓存和淘汰。一个物理 block 在任一时刻只
 属于一个 group/cache identity。
@@ -313,18 +319,19 @@ execute 数据流。
 
 ## 5. Phase 1：公共 null block 和 group-aware BlockPool
 
-- [ ] BlockPool 保留一个不进入 free queue 的 null block。
-- [ ] BlockTable 使用 null block ID 表示 skipped/hole，不再保存 `None`。
-- [ ] rectangular padding 使用 null block ID，不再使用负 block ID。
-- [ ] prefix cache index 使用 `(group_id, block_hash)` identity。
-- [ ] cached block reuse/eviction 保留 deterministic free ordering。
-- [ ] capacity preflight 同时计算 cached acquire 和 new blocks。
-- [ ] null block 不改变 refcount，不可被 free、cache 或 evict。
-- [ ] invariant test 覆盖 null、active、cached-free 和 reused block 生命周期。
+- [x] BlockPool 保留一个不进入 free queue 的 null block。
+- [x] BlockTable 使用 null block ID 表示 skipped/hole，不再保存 `None`。
+- [x] rectangular padding 使用 null block ID，不再使用负 block ID。
+- [x] prefix block hash domain 包含 `group_id`。
+- [x] cached block reuse/eviction 保留 deterministic free ordering。
+- [x] capacity preflight 同时计算 cached acquire 和 new blocks。
+- [x] null block 不改变 refcount，不可被 free、cache 或 evict。
+- [x] invariant test 覆盖 null、active、cached-free 和 reused block 生命周期。
 
 ## 6. Phase 2：per-group cache policy
 
 - [ ] 定义小型 `CacheGroupManager` interface，不把类型分支堆进 Scheduler。
+- [ ] group manager 构造时绑定 group ID，不由 Scheduler/API 调用方传入。
 - [ ] 实现 `FullCacheGroupManager`。
 - [ ] 实现 `SlidingWindowCacheGroupManager`。
 - [ ] 实现 `ChunkedLocalCacheGroupManager`。
@@ -482,7 +489,8 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 
 ## 17. 实现状态
 
-2026-07-22：完成第二轮技术方案 review、实现清单重写和 Phase 0。ModelRunner
-现在从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是唯一的
-layer/group 映射来源；本阶段没有修改 BlockPool、物理 cache 或 execute 数据流。
-按当前要求只完成本地静态检查，未执行 SSH 远端测试。
+2026-07-22：完成第二轮技术方案 review、实现清单重写、Phase 0 和 Phase 1。
+ModelRunner 从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是
+唯一的 layer/group 映射来源。BlockPool 的最后一个物理 page 现在永久作为公共
+null block，BlockTable 和 rectangular padding 只保存真实非负 block ID；prefix
+hash domain 已包含 group ID。按当前要求只完成本地静态检查，未执行 SSH 远端测试。

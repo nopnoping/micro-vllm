@@ -78,7 +78,7 @@ def test_original_token_list_does_not_change_plan_snapshot() -> None:
 
 
 def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
-    block_table = [0, None]
+    block_table = [0, 7]
     scheduled_request = ScheduledRequest(
         request_id="request-1",
         input_token_ids=(1,),
@@ -93,5 +93,5 @@ def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
     block_table[0] = 9
     block_table.append(2)
 
-    assert scheduled_request.block_table == (0, None)
+    assert scheduled_request.block_table == (0, 7)
     assert isinstance(scheduled_request.block_table, tuple)

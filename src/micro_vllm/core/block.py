@@ -20,17 +20,24 @@ class KVCacheBlock:
 class BlockPool:
     """Own physical block state and deterministic free-block ordering.
 
-    External mappings use integer IDs in ``[0, num_blocks)``. The pool keeps
-    each block's mutable refcount and hash together. Cached zero-reference
-    blocks remain reclaimable in the free queue until reused.
+    External mappings use integer IDs in ``[0, num_blocks)``. The final ID is
+    permanently reserved as a shared null block. The remaining blocks keep
+    mutable refcounts and hashes; cached zero-reference blocks remain
+    reclaimable in the free queue until reused.
     """
 
-    __slots__ = ("_blocks", "_cached_blocks", "_free_block_ids")
+    __slots__ = (
+        "_blocks",
+        "_cached_blocks",
+        "_free_block_ids",
+        "_null_block_id",
+    )
 
     def __init__(self, num_blocks: int) -> None:
         self._blocks = [KVCacheBlock(block_id) for block_id in range(num_blocks)]
         self._cached_blocks: dict[BlockHash, KVCacheBlock] = {}
-        self._free_block_ids = deque(range(num_blocks))
+        self._null_block_id = num_blocks - 1
+        self._free_block_ids = deque(range(self._null_block_id))
 
     @property
     def num_blocks(self) -> int:
@@ -43,6 +50,12 @@ class BlockPool:
         """Number of physical blocks that can currently be allocated."""
 
         return len(self._free_block_ids)
+
+    @property
+    def null_block_id(self) -> int:
+        """Physical block permanently reserved for null table entries."""
+
+        return self._null_block_id
 
     @property
     def free_block_ids(self) -> tuple[int, ...]:
@@ -148,15 +161,16 @@ class BlockPool:
 class BlockTable:
     """Maintain zero-based logical-to-physical block mappings.
 
-    Each list position is a logical block index. Its value is a physical block
-    ID, or ``None`` when that logical block has no physical mapping. The table
+    Each list position is a logical block index and always contains a physical
+    block ID. Unmapped positions point at the shared null block. The table
     neither validates IDs against a BlockPool nor changes block refcounts.
     """
 
-    __slots__ = ("_physical_block_ids",)
+    __slots__ = ("_null_block_id", "_physical_block_ids")
 
-    def __init__(self) -> None:
-        self._physical_block_ids: list[int | None] = []
+    def __init__(self, null_block_id: int) -> None:
+        self._null_block_id = null_block_id
+        self._physical_block_ids: list[int] = []
 
     @property
     def num_logical_blocks(self) -> int:
@@ -164,21 +178,21 @@ class BlockTable:
 
         return len(self._physical_block_ids)
 
-    def extend(self, physical_block_ids: Iterable[int | None]) -> None:
+    def extend(self, physical_block_ids: Iterable[int]) -> None:
         """Atomically append multiple physical mappings in input order."""
 
         self._physical_block_ids.extend(physical_block_ids)
 
-    def physical_block(self, logical_block_index: int) -> int | None:
-        """Return a physical mapping, or ``None`` when it is unmapped."""
+    def physical_block(self, logical_block_index: int) -> int:
+        """Return the physical mapping at one absolute logical index."""
 
         return self._physical_block_ids[logical_block_index]
 
     def replace(
         self,
         logical_block_index: int,
-        physical_block_id: int | None,
-    ) -> int | None:
+        physical_block_id: int,
+    ) -> int:
         """Replace one mapping and return its previous physical block ID."""
 
         previous_block_id = self._physical_block_ids[logical_block_index]
@@ -200,7 +214,9 @@ class BlockTable:
                 logical_block_index + 1 - self.num_logical_blocks
             )
             if num_missing_entries > 0:
-                self._physical_block_ids.extend([None] * num_missing_entries)
+                self._physical_block_ids.extend(
+                    [self._null_block_id] * num_missing_entries
+                )
             self._physical_block_ids[logical_block_index] = physical_block_id
 
     def release_before(
@@ -214,9 +230,9 @@ class BlockTable:
             min(first_retained_logical_block, self.num_logical_blocks)
         ):
             block_id = self._physical_block_ids[logical_block_index]
-            if block_id is not None:
+            if block_id != self._null_block_id:
                 released_block_ids.append(block_id)
-                self._physical_block_ids[logical_block_index] = None
+                self._physical_block_ids[logical_block_index] = self._null_block_id
         return tuple(released_block_ids)
 
     def clear(self) -> tuple[int, ...]:
@@ -225,12 +241,12 @@ class BlockTable:
         physical_block_ids = tuple(
             block_id
             for block_id in self._physical_block_ids
-            if block_id is not None
+            if block_id != self._null_block_id
         )
         self._physical_block_ids.clear()
         return physical_block_ids
 
-    def snapshot(self) -> tuple[int | None, ...]:
+    def snapshot(self) -> tuple[int, ...]:
         """Return an immutable snapshot of logical-to-physical mappings."""
 
         return tuple(self._physical_block_ids)
