@@ -373,6 +373,6 @@ def test_loaded_qwen3_runs_through_cuda_engine_fp16(
         prompt,
         max_tokens=2,
     )
-    assert physical_kv_cache.shape[-1] == 8
-    assert physical_kv_cache.device.type == "cuda"
-    assert physical_kv_cache.dtype is torch.float16
+    assert physical_kv_cache[0].shape[-1] == 8
+    assert physical_kv_cache[0].device.type == "cuda"
+    assert physical_kv_cache[0].dtype is torch.float16

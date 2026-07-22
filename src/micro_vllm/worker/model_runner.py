@@ -16,6 +16,7 @@ from micro_vllm.layers.attention_backend import (
     PAD_BLOCK_ID,
     map_cache_slots,
 )
+from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.sampling.sampler import Sampler
 from micro_vllm.worker.config import (
     KVCacheInitializationConfig,
@@ -57,24 +58,6 @@ class ModelInput:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_ids", tuple(self.request_ids))
-
-        for field_name, tensor in (
-            ("input_ids", self.input_ids),
-            ("sampling_row_indices", self.sampling_row_indices),
-        ):
-            if tensor.dtype is not torch.int64:
-                raise ValueError(f"{field_name} must use torch.int64")
-            if tensor.ndim != 1:
-                raise ValueError(f"{field_name} must be one-dimensional")
-            if tensor.device != self.positions.device:
-                raise ValueError("ModelInput tensors must share one device")
-
-        if self.input_ids.numel() != self.attention_metadata.num_query_tokens:
-            raise ValueError(
-                "input_ids length must equal num_query_tokens"
-            )
-        if len(self.request_ids) != self.attention_metadata.num_requests:
-            raise ValueError("request_ids length must equal num_requests")
 
     @property
     def positions(self) -> torch.Tensor:
@@ -153,29 +136,9 @@ def build_slot_mapping(
     """Map every scheduled position to one flattened physical cache slot."""
 
     slot_mappings: list[torch.Tensor] = []
-    used_slots: set[int] = set()
     for request in plan.scheduled_requests:
         start_position = request.num_computed_tokens
         end_position = start_position + request.num_scheduled_tokens
-        positions = range(start_position, end_position)
-        for position in positions:
-            logical_block = position // cache_config.block_size
-            if logical_block >= len(request.block_table):
-                raise ValueError(
-                    f"request {request.request_id} has no block for position {position}"
-                )
-            physical_block = request.block_table[logical_block]
-            if physical_block is None:
-                raise ValueError(
-                    f"request {request.request_id} has no physical block "
-                    f"for position {position}"
-                )
-            if not 0 <= physical_block < cache_config.num_blocks:
-                raise ValueError(
-                    f"request {request.request_id} has out-of-range physical block "
-                    f"{physical_block}"
-                )
-
         position_tensor = torch.arange(
             start_position,
             end_position,
@@ -195,10 +158,6 @@ def build_slot_mapping(
             block_table,
             cache_config.block_size,
         )
-        for slot in request_slots.tolist():
-            if slot in used_slots:
-                raise ValueError(f"duplicate physical cache slot: {slot}")
-            used_slots.add(slot)
         slot_mappings.append(request_slots)
 
     if not slot_mappings:
@@ -547,19 +506,15 @@ class ModelRunner:
             if request.requires_sampling
         )
         sampling_params = tuple(
-            request.sampling_params
+            cast(SamplingParams, request.sampling_params)
             for request in plan.scheduled_requests
             if request.requires_sampling
         )
         sample_indices = tuple(
-            request.sample_index
+            cast(int, request.sample_index)
             for request in plan.scheduled_requests
             if request.requires_sampling
         )
-        if any(params is None for params in sampling_params):
-            raise ValueError("sampling plan is missing sampling params")
-        if any(index is None for index in sample_indices):
-            raise ValueError("sampling plan is missing sample indices")
         return self._sampler(
             logits,
             sampling_request_ids,

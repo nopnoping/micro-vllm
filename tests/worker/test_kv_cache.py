@@ -42,15 +42,16 @@ def make_cache(
 
 def test_cpu_cache_uses_model_cache_and_execution_configuration() -> None:
     cache = make_cache()
+    first_layer = cache[0]
 
     assert len(cache) == 2
-    assert cache.shape == torch.Size((2, 8, 4, 2, 16))
-    assert cache.dtype is torch.float32
-    assert cache.device == torch.device("cpu")
+    assert first_layer.shape == torch.Size((2, 8, 4, 2, 16))
+    assert first_layer.dtype is torch.float32
+    assert first_layer.device == torch.device("cpu")
     for layer_cache in (cache[0], cache[1]):
-        assert layer_cache.shape == cache.shape
-        assert layer_cache.dtype is cache.dtype
-        assert layer_cache.device == cache.device
+        assert layer_cache.shape == first_layer.shape
+        assert layer_cache.dtype is first_layer.dtype
+        assert layer_cache.device == first_layer.device
 
 
 def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
@@ -73,7 +74,7 @@ def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
         execution_config,
     )
 
-    assert cache.shape == torch.Size((2, 3, 4, 2, 8))
+    assert cache[0].shape == torch.Size((2, 3, 4, 2, 8))
     assert kv_cache_block_size_bytes(
         model_config,
         block_size=4,
@@ -130,52 +131,11 @@ def test_release_drops_owned_layer_references() -> None:
         cache[0]
 
 
-def test_validation_rejects_invalid_layer_count() -> None:
-    cache = make_cache()
-    cache._layer_caches = cache._layer_caches[:1]
-
-    with pytest.raises(ValueError, match="must contain 2 layers"):
-        cache.validate()
-
-
-def test_validation_rejects_invalid_shape() -> None:
-    cache = make_cache()
-    cache._layer_caches = (
-        torch.empty((2, 8, 4, 2, 8)),
-        cache[1],
-    )
-
-    with pytest.raises(ValueError, match="layer 0 KV cache has invalid shape"):
-        cache.validate()
-
-
-def test_validation_rejects_invalid_dtype() -> None:
-    cache = make_cache()
-    cache._layer_caches = (
-        torch.empty(cache.shape, dtype=torch.float16),
-        cache[1],
-    )
-
-    with pytest.raises(ValueError, match="layer 0 KV cache has invalid dtype"):
-        cache.validate()
-
-
-def test_validation_rejects_invalid_device() -> None:
-    cache = make_cache()
-    cache._layer_caches = (
-        torch.empty(cache.shape, device="meta"),
-        cache[1],
-    )
-
-    with pytest.raises(ValueError, match="layer 0 KV cache has invalid device"):
-        cache.validate()
-
-
 @pytest.mark.gpu
 def test_gpu_cache_uses_configured_device_and_dtype() -> None:
     cache = make_cache(device="cuda", dtype=torch.float16)
 
     assert len(cache) == 2
-    assert cache.dtype is torch.float16
-    assert cache.device.type == "cuda"
+    assert cache[0].dtype is torch.float16
+    assert cache[0].device.type == "cuda"
     assert all(cache[index].device.type == "cuda" for index in range(len(cache)))

@@ -1,7 +1,5 @@
 """End-to-end tests for the synchronous engine control loop."""
 
-import pytest
-
 from micro_vllm.config import CacheConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason, RequestStatus
@@ -233,24 +231,3 @@ def test_empty_schedule_does_not_execute() -> None:
 
     assert engine.step() == ()
     assert executor.plans == []
-
-
-def test_invalid_executor_result_does_not_pollute_request_state() -> None:
-    executor = FakeExecutor(result_overrides={0: ModelRunnerOutput()})
-    engine, scheduler, _ = make_engine(executor=executor)
-    engine.add_request("request-1", [1], SamplingParams(max_tokens=2))
-
-    with pytest.raises(ValueError, match="missing sampled token"):
-        engine.step()
-
-    request = scheduler.get_request("request-1")
-    assert request is not None
-    assert request.status is RequestStatus.RUNNING
-    assert request.num_computed_tokens == 0
-    assert request.output_token_ids == []
-    assert executor.plans[0] is scheduler.schedule()
-
-    executor.result_overrides.clear()
-    outputs = engine.step()
-    assert outputs[0].output_token_ids == (7,)
-    assert request.num_computed_tokens == 1

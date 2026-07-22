@@ -179,6 +179,10 @@ class Qwen3Model(nn.Module):
             "num_key_value_heads",
             num_attention_heads,
         )
+        if num_attention_heads % num_key_value_heads != 0:
+            raise ValueError(
+                "num_attention_heads must be divisible by num_key_value_heads"
+            )
         head_dim = config.positive_int(
             "head_dim",
             hidden_size // num_attention_heads,

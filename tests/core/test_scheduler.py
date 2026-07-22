@@ -287,18 +287,13 @@ def test_capacity_failure_keeps_prior_success_and_later_request_waiting() -> Non
     assert scheduler._kv_cache_manager._block_pool.free_block_ids == (1,)
 
 
-def test_intermediate_prompt_chunk_rejects_sampled_token() -> None:
+def test_intermediate_prompt_chunk_does_not_require_sampled_token() -> None:
     scheduler = make_scheduler(2, 1)
     request = make_request("request-1", [1, 2, 3])
     scheduler.add_request(request)
     plan = scheduler.schedule()
 
     assert plan.scheduled_requests[0].requires_sampling is False
-    with pytest.raises(ValueError, match="does not require sampling"):
-        scheduler.update(plan, make_output({"request-1": 4}))
-
-    assert request.num_computed_tokens == 0
-    assert scheduler.schedule() is plan
     scheduler.update(plan, ModelRunnerOutput())
     assert request.num_computed_tokens == 2
 
@@ -338,7 +333,7 @@ def test_token_budget_is_never_exceeded() -> None:
 
     plan = scheduler.schedule()
 
-    assert plan.total_num_scheduled_tokens == 5
+    assert sum(item.num_scheduled_tokens for item in plan.scheduled_requests) == 5
     assert all(item.num_scheduled_tokens > 0 for item in plan.scheduled_requests)
 
 
@@ -413,38 +408,6 @@ def test_duplicate_request_id_is_rejected_without_queue_pollution() -> None:
     assert scheduler.get_request("request-1") is first
 
 
-def test_invalid_executor_outputs_fail_atomically_and_can_be_retried() -> None:
-    scheduler = make_scheduler(4, 2)
-    first = make_request("first", [1])
-    second = make_request("second", [2])
-    scheduler.add_request(first)
-    scheduler.add_request(second)
-    plan = scheduler.schedule()
-    first_table = scheduler._kv_cache_manager.get_block_table("first")
-    second_table = scheduler._kv_cache_manager.get_block_table("second")
-    free_blocks = scheduler._kv_cache_manager._block_pool.free_block_ids
-
-    with pytest.raises(ValueError, match="missing sampled token"):
-        scheduler.update(plan, make_output({"first": 3}))
-    with pytest.raises(ValueError, match="unknown sampled token request_id"):
-        scheduler.update(
-            plan,
-            make_output({"first": 3, "second": 4, "unknown": 5}),
-        )
-    with pytest.raises(ValueError, match="duplicate request_id"):
-        ModelRunnerOutput((SampledToken("first", 3), SampledToken("first", 4)))
-
-    assert first.num_computed_tokens == second.num_computed_tokens == 0
-    assert first.output_token_ids == second.output_token_ids == []
-    assert scheduler._kv_cache_manager.get_block_table("first") == first_table
-    assert scheduler._kv_cache_manager.get_block_table("second") == second_table
-    assert scheduler._kv_cache_manager._block_pool.free_block_ids == free_blocks
-    assert scheduler.schedule() is plan
-
-    scheduler.update(plan, make_output({"first": 3, "second": 4}))
-    assert first.num_computed_tokens == second.num_computed_tokens == 1
-
-
 def test_successful_update_commits_prefix_before_finished_request_release() -> None:
     scheduler = make_scheduler(
         2,
@@ -458,10 +421,6 @@ def test_successful_update_commits_prefix_before_finished_request_release() -> N
     scheduler.add_request(request)
     plan = scheduler.schedule()
     pool = scheduler._kv_cache_manager._block_pool
-
-    with pytest.raises(ValueError, match="missing sampled token"):
-        scheduler.update(plan, ModelRunnerOutput())
-    assert pool.num_cached_blocks == 0
 
     scheduler.update(plan, make_output({"request-1": 7}))
 

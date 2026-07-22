@@ -95,6 +95,10 @@ class LlamaModel(nn.Module):
             "num_key_value_heads",
             num_attention_heads,
         )
+        if num_attention_heads % num_key_value_heads != 0:
+            raise ValueError(
+                "num_attention_heads must be divisible by num_key_value_heads"
+            )
         rms_norm_eps = values.get("rms_norm_eps", 1e-6)
         rope_theta = values.get("rope_theta", 10_000.0)
         self._tie_word_embeddings = values.get("tie_word_embeddings", False)

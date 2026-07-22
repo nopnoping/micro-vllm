@@ -31,7 +31,7 @@ def test_embedding_weight_tying_follows_model_config(
     config = make_config(tie_word_embeddings=tie_word_embeddings)
     vocab_size = config.require_positive_int("vocab_size")
     hidden_size = config.require_positive_int("hidden_size")
-    tied = config.get("tie_word_embeddings", False)
+    tied = config.values.get("tie_word_embeddings", False)
     embedding = TokenEmbedding(vocab_size, hidden_size)
     lm_head = LMHead(
         hidden_size,

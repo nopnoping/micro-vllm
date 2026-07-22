@@ -419,33 +419,6 @@ def test_reference_attention_restores_low_precision_dtype() -> None:
     assert torch.equal(output, value)
 
 
-def test_reference_attention_rejects_incompatible_head_counts() -> None:
-    query = torch.empty((1, 3, 2))
-    key = torch.empty((1, 2, 2))
-    value = torch.empty_like(key)
-    layer_kv_cache = torch.empty((2, 1, 2, 2, 2))
-    metadata = AttentionMetadata(
-        query_positions=torch.tensor([0], dtype=torch.int64),
-        query_start_locations=torch.tensor([0, 1], dtype=torch.int64),
-        context_lengths=torch.tensor([1], dtype=torch.int64),
-        block_table=torch.tensor([[0]], dtype=torch.int64),
-        slot_mapping=torch.tensor([0], dtype=torch.int64),
-        block_size=2,
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="num_attention_heads must be divisible by num_key_value_heads",
-    ):
-        ReferenceAttentionBackend()(
-            query,
-            key,
-            value,
-            layer_kv_cache,
-            metadata,
-        )
-
-
 def test_single_token_self_attention_matches_dense_reference() -> None:
     query, key, value = make_attention_tensors(
         1,

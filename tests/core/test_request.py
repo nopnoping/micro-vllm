@@ -12,10 +12,6 @@ def make_request(
     *,
     request_id: str = "request-1",
     prompt_token_ids: list[int] | None = None,
-    output_token_ids: list[int] | None = None,
-    num_computed_tokens: int = 0,
-    status: RequestStatus = RequestStatus.WAITING,
-    finish_reason: FinishReason | None = None,
 ) -> Request:
     return Request(
         request_id=request_id,
@@ -23,41 +19,32 @@ def make_request(
         if prompt_token_ids is None
         else prompt_token_ids,
         sampling_params=SamplingParams(max_tokens=4, eos_token_id=0),
-        output_token_ids=[] if output_token_ids is None else output_token_ids,
-        num_computed_tokens=num_computed_tokens,
-        status=status,
-        finish_reason=finish_reason,
     )
 
 
 def test_initial_state_and_computed_properties() -> None:
     prompt_token_ids = [1, 2, 3]
-    output_token_ids = [4]
-    request = make_request(
-        prompt_token_ids=prompt_token_ids,
-        output_token_ids=output_token_ids,
-        num_computed_tokens=2,
-    )
+    request = make_request(prompt_token_ids=prompt_token_ids)
 
     prompt_token_ids.append(5)
-    output_token_ids.append(6)
 
     assert request.request_id == "request-1"
     assert request.prompt_token_ids == [1, 2, 3]
-    assert request.output_token_ids == [4]
+    assert request.output_token_ids == []
     assert request.num_prompt_tokens == 3
-    assert request.num_output_tokens == 1
-    assert request.num_known_tokens == 4
-    assert request.num_computed_tokens == 2
-    assert request.num_pending_tokens == 2
-    assert request.all_token_ids == (1, 2, 3, 4)
+    assert request.num_output_tokens == 0
+    assert request.num_known_tokens == 3
+    assert request.num_computed_tokens == 0
+    assert request.num_pending_tokens == 3
+    assert request.all_token_ids == (1, 2, 3)
     assert request.status is RequestStatus.WAITING
     assert request.finish_reason is None
     assert request.is_finished is False
 
 
 def test_all_token_ids_is_an_immutable_snapshot() -> None:
-    request = make_request(output_token_ids=[4])
+    request = make_request()
+    request.append_sampled_token(4)
 
     snapshot = request.all_token_ids
     request.output_token_ids.append(5)
@@ -116,7 +103,8 @@ def test_advance_computed_tokens_updates_pending_tokens() -> None:
 
 
 def test_preempt_and_resume_reset_only_computed_progress() -> None:
-    request = make_request(output_token_ids=[4], num_computed_tokens=3)
+    request = make_request()
+    request.append_sampled_token(4)
     request.resume(3)
 
     request.preempt()
@@ -132,16 +120,6 @@ def test_preempt_and_resume_reset_only_computed_progress() -> None:
     assert request.all_token_ids == (1, 2, 3, 4)
 
 
-@pytest.mark.parametrize("num_computed_tokens", [-1, 4])
-def test_initial_computed_tokens_must_be_within_known_tokens(
-    num_computed_tokens: int,
-) -> None:
-    with pytest.raises(
-        ValueError, match="between zero and num_known_tokens"
-    ):
-        make_request(num_computed_tokens=num_computed_tokens)
-
-
 @pytest.mark.parametrize("request_id", [""])
 def test_request_rejects_empty_request_id(request_id: str) -> None:
     with pytest.raises(ValueError, match="request_id must not be empty"):
@@ -153,12 +131,9 @@ def test_request_rejects_empty_prompt() -> None:
         make_request(prompt_token_ids=[])
 
 
-@pytest.mark.parametrize("field_name", ["prompt_token_ids", "output_token_ids"])
-def test_request_rejects_negative_token_ids(field_name: str) -> None:
-    values = {field_name: [-1]}
-
-    with pytest.raises(ValueError, match=rf"{field_name}\[0\]"):
-        make_request(**values)
+def test_request_rejects_negative_prompt_token_ids() -> None:
+    with pytest.raises(ValueError, match=r"prompt_token_ids\[0\]"):
+        make_request(prompt_token_ids=[-1])
 
 
 def test_legal_status_transitions() -> None:

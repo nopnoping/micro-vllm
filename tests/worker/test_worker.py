@@ -83,9 +83,9 @@ def test_worker_orchestrates_model_runner_lifecycle() -> None:
     assert not hasattr(worker, "_physical_kv_cache")
     physical_kv_cache = worker._model_runner._physical_kv_cache
     assert physical_kv_cache is not None
-    assert physical_kv_cache.shape == torch.Size((2, 8, 2, 1, 4))
-    assert physical_kv_cache.device == torch.device("cpu")
-    assert physical_kv_cache.dtype is torch.float32
+    assert physical_kv_cache[0].shape == torch.Size((2, 8, 2, 1, 4))
+    assert physical_kv_cache[0].device == torch.device("cpu")
+    assert physical_kv_cache[0].dtype is torch.float32
     assert worker.cache_config.num_blocks == 8
 
 

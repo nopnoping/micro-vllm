@@ -47,10 +47,10 @@ class Request:
     request_id: str
     prompt_token_ids: list[int]
     sampling_params: SamplingParams
-    output_token_ids: list[int] = field(default_factory=list)
-    num_computed_tokens: int = 0
-    status: RequestStatus = RequestStatus.WAITING
-    finish_reason: FinishReason | None = None
+    output_token_ids: list[int] = field(default_factory=list, init=False)
+    num_computed_tokens: int = field(default=0, init=False)
+    status: RequestStatus = field(default=RequestStatus.WAITING, init=False)
+    finish_reason: FinishReason | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if not self.request_id:
@@ -59,12 +59,10 @@ class Request:
         _validate_token_ids("prompt_token_ids", self.prompt_token_ids)
         if not self.prompt_token_ids:
             raise ValueError("prompt_token_ids must not be empty")
-        _validate_token_ids("output_token_ids", self.output_token_ids)
 
         # Own the mutable token lists so caller-side changes cannot bypass request
         # lifecycle operations.
         self.prompt_token_ids = list(self.prompt_token_ids)
-        self.output_token_ids = list(self.output_token_ids)
         if (
             not self.sampling_params.is_greedy
             and self.sampling_params.seed is None
@@ -72,11 +70,6 @@ class Request:
             self.sampling_params = replace(
                 self.sampling_params,
                 seed=secrets.randbits(63),
-            )
-
-        if not 0 <= self.num_computed_tokens <= self.num_known_tokens:
-            raise ValueError(
-                "num_computed_tokens must be between zero and num_known_tokens"
             )
 
     @property

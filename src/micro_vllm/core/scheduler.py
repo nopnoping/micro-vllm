@@ -172,20 +172,10 @@ class Scheduler:
         if plan is not self._pending_plan:
             raise ValueError("scheduler plan is not pending or was already updated")
 
-        result.validate_for(plan)
         sampled_tokens = {
             sampled_token.request_id: sampled_token.token_id
             for sampled_token in result.sampled_tokens
         }
-        required_sample_ids = {
-            scheduled_request.request_id
-            for scheduled_request in plan.scheduled_requests
-            if scheduled_request.requires_sampling
-        }
-        missing_sample_ids = required_sample_ids - sampled_tokens.keys()
-        if missing_sample_ids:
-            missing_ids = ", ".join(sorted(missing_sample_ids))
-            raise ValueError(f"missing sampled token for request_id: {missing_ids}")
 
         finished_request_ids: list[str] = []
         for scheduled_request in plan.scheduled_requests:

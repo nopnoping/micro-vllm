@@ -210,8 +210,8 @@ def test_loaded_checkpoint_runs_through_cuda_engine_fp16(
     )
     assert model_runner._available_kv_cache_memory_bytes is not None
     assert model_runner._available_kv_cache_memory_bytes > 0
-    assert physical_kv_cache.device.type == "cuda"
-    assert physical_kv_cache.dtype is torch.float16
+    assert physical_kv_cache[0].device.type == "cuda"
+    assert physical_kv_cache[0].dtype is torch.float16
 
 
 def test_loaded_full_and_chunked_prefill_match_transformers(

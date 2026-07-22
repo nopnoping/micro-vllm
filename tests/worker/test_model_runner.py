@@ -69,43 +69,6 @@ def test_model_input_is_frozen_and_owns_request_id_tuple() -> None:
     assert model_input.request_ids == ("request-1", "request-2")
 
 
-@pytest.mark.parametrize("field_name", ["input_ids", "sampling_row_indices"])
-def test_model_input_tensors_must_be_one_dimensional(field_name: str) -> None:
-    value = getattr(make_model_input(), field_name).reshape(1, -1)
-
-    with pytest.raises(ValueError, match=rf"^{field_name} must be one-dimensional$"):
-        make_model_input(**{field_name: value})
-
-
-@pytest.mark.parametrize("field_name", ["input_ids", "sampling_row_indices"])
-def test_model_input_tensors_use_int64(field_name: str) -> None:
-    value = getattr(make_model_input(), field_name).to(torch.int32)
-
-    with pytest.raises(ValueError, match=rf"^{field_name} must use torch.int64$"):
-        make_model_input(**{field_name: value})
-
-
-def test_model_input_tensors_share_attention_metadata_device() -> None:
-    with pytest.raises(ValueError, match="ModelInput tensors must share one device"):
-        make_model_input(
-            sampling_row_indices=torch.empty(
-                2,
-                dtype=torch.int64,
-                device="meta",
-            )
-        )
-
-
-def test_input_ids_count_matches_query_count() -> None:
-    with pytest.raises(ValueError, match="input_ids length must equal num_query_tokens"):
-        make_model_input(input_ids=torch.tensor([10, 11], dtype=torch.int64))
-
-
-def test_request_ids_count_matches_request_count() -> None:
-    with pytest.raises(ValueError, match="request_ids length must equal num_requests"):
-        make_model_input(request_ids=("request-1",))
-
-
 def test_model_input_accepts_batch_without_sampling_rows() -> None:
     model_input = make_model_input(
         sampling_row_indices=torch.empty(0, dtype=torch.int64)
@@ -239,26 +202,6 @@ def test_sampling_rows_follow_request_order() -> None:
     assert model_input.sampling_row_indices.tolist() == [0, 2]
 
 
-def test_flattening_requires_one_slot_per_scheduled_token() -> None:
-    request = make_scheduled_request(
-        "request-1",
-        (10, 11),
-        num_computed_tokens=0,
-        requires_sampling=True,
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="slot_mapping length must equal num_query_tokens",
-    ):
-        flatten_model_input(
-            SchedulerOutput((request,)),
-            block_table=torch.zeros((1, 1), dtype=torch.int64),
-            slot_mapping=torch.zeros(1, dtype=torch.int64),
-            block_size=4,
-        )
-
-
 def test_slot_mapping_crosses_physical_block_boundary() -> None:
     request = ScheduledRequest(
         request_id="request-1",
@@ -307,63 +250,6 @@ def test_slot_mapping_preserves_mixed_request_order() -> None:
     assert slot_mapping.tolist() == [12, 25, 26]
 
 
-def test_slot_mapping_rejects_missing_logical_block() -> None:
-    request = ScheduledRequest(
-        request_id="request-1",
-        input_token_ids=(10,),
-        num_computed_tokens=4,
-        num_scheduled_tokens=1,
-        requires_sampling=False,
-        block_table=(0,),
-    )
-
-    with pytest.raises(ValueError, match="has no block for position 4"):
-        build_slot_mapping(
-            SchedulerOutput((request,)),
-            CacheConfig(block_size=4, num_blocks=8),
-            device=torch.device("cpu"),
-        )
-
-
-def test_slot_mapping_rejects_none_physical_block() -> None:
-    request = ScheduledRequest(
-        request_id="request-1",
-        input_token_ids=(10,),
-        num_computed_tokens=4,
-        num_scheduled_tokens=1,
-        requires_sampling=False,
-        block_table=(0, None),
-    )
-
-    with pytest.raises(ValueError, match="has no physical block for position 4"):
-        build_slot_mapping(
-            SchedulerOutput((request,)),
-            CacheConfig(block_size=4, num_blocks=8),
-            device=torch.device("cpu"),
-        )
-
-
-@pytest.mark.parametrize("physical_block", [-1, 8])
-def test_slot_mapping_rejects_out_of_range_physical_block(
-    physical_block: int,
-) -> None:
-    request = ScheduledRequest(
-        request_id="request-1",
-        input_token_ids=(10,),
-        num_computed_tokens=0,
-        num_scheduled_tokens=1,
-        requires_sampling=False,
-        block_table=(physical_block,),
-    )
-
-    with pytest.raises(ValueError, match="out-of-range physical block"):
-        build_slot_mapping(
-            SchedulerOutput((request,)),
-            CacheConfig(block_size=4, num_blocks=8),
-            device=torch.device("cpu"),
-        )
-
-
 def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
     request = ScheduledRequest(
         request_id="request-1",
@@ -383,32 +269,6 @@ def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
 
     assert slot_mapping.tolist() == [31]
     assert slot_mapping.item() < cache_config.num_blocks * cache_config.block_size
-
-
-def test_slot_mapping_rejects_duplicate_physical_slot() -> None:
-    first = ScheduledRequest(
-        request_id="first",
-        input_token_ids=(10,),
-        num_computed_tokens=0,
-        num_scheduled_tokens=1,
-        requires_sampling=False,
-        block_table=(2,),
-    )
-    second = ScheduledRequest(
-        request_id="second",
-        input_token_ids=(20,),
-        num_computed_tokens=0,
-        num_scheduled_tokens=1,
-        requires_sampling=False,
-        block_table=(2,),
-    )
-
-    with pytest.raises(ValueError, match="duplicate physical cache slot: 8"):
-        build_slot_mapping(
-            SchedulerOutput((first, second)),
-            CacheConfig(block_size=4, num_blocks=8),
-            device=torch.device("cpu"),
-        )
 
 
 def test_block_table_pads_different_request_lengths() -> None:

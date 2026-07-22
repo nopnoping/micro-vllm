@@ -135,7 +135,7 @@ def test_control_plane_uses_model_runner_cache_capacity() -> None:
     assert physical_kv_cache is not None
 
     assert harness.worker.cache_config.num_blocks == 7
-    assert physical_kv_cache.shape[1] == 7
+    assert physical_kv_cache[0].shape[1] == 7
     assert harness.cache_manager._block_pool.num_blocks == 7
 
 

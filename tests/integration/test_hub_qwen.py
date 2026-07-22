@@ -210,7 +210,7 @@ def test_pinned_hub_qwen3_gpu_acceptance() -> None:
     assert next(loaded_model.parameters()).dtype is torch.float16
     physical_kv_cache = model_runner._physical_kv_cache
     assert physical_kv_cache is not None
-    assert physical_kv_cache.shape[-1] == 128
+    assert physical_kv_cache[0].shape[-1] == 128
 
     reference_model = Qwen3ForCausalLM.from_pretrained(
         MODEL_REPO_ID,

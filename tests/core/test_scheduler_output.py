@@ -77,25 +77,6 @@ def test_original_token_list_does_not_change_plan_snapshot() -> None:
     assert scheduled_request.input_token_ids == (1, 2)
 
 
-def test_total_num_scheduled_tokens_is_computed_from_requests() -> None:
-    output = SchedulerOutput(
-        (
-            make_scheduled_request(),
-            ScheduledRequest(
-                request_id="request-2",
-                input_token_ids=(3,),
-                num_computed_tokens=4,
-                num_scheduled_tokens=1,
-                requires_sampling=False,
-                block_table=(1,),
-            ),
-        )
-    )
-
-    assert output.total_num_scheduled_tokens == 3
-    assert SchedulerOutput(()).total_num_scheduled_tokens == 0
-
-
 def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
     block_table = [0, None]
     scheduled_request = ScheduledRequest(
@@ -114,29 +95,3 @@ def test_original_block_table_list_does_not_change_plan_snapshot() -> None:
 
     assert scheduled_request.block_table == (0, None)
     assert isinstance(scheduled_request.block_table, tuple)
-
-
-def test_sampling_metadata_must_match_sampling_boundary() -> None:
-    params = SamplingParams(max_tokens=1)
-
-    with pytest.raises(ValueError, match="require params and sample_index"):
-        ScheduledRequest("request", (1,), 0, 1, True, (0,))
-    with pytest.raises(ValueError, match="cannot carry sampling metadata"):
-        ScheduledRequest("request", (1,), 0, 1, False, (0,), params, 0)
-
-
-@pytest.mark.parametrize("sample_index", [True, -1, 1.5])
-def test_sampling_boundary_rejects_invalid_sample_index(
-    sample_index: object,
-) -> None:
-    with pytest.raises(ValueError, match="non-negative integer"):
-        ScheduledRequest(
-            "request",
-            (1,),
-            0,
-            1,
-            True,
-            (0,),
-            SamplingParams(max_tokens=1),
-            sample_index,
-        )

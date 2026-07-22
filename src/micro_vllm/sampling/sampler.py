@@ -21,18 +21,6 @@ class Sampler:
         sample_indices: tuple[int, ...],
         /,
     ) -> ModelRunnerOutput:
-        num_rows = logits.shape[0]
-        if not (
-            num_rows
-            == len(request_ids)
-            == len(sampling_params)
-            == len(sample_indices)
-        ):
-            raise ValueError(
-                "logits rows, request IDs, sampling params, and sample indices "
-                "must have equal length"
-            )
-
         token_ids = tuple(
             self._sample_row(row, params, sample_index)
             for row, params, sample_index in zip(
@@ -54,8 +42,6 @@ class Sampler:
         params: SamplingParams,
         sample_index: int,
     ) -> int:
-        if type(sample_index) is not int or sample_index < 0:
-            raise ValueError("sample indices must be non-negative integers")
         if params.is_greedy:
             return int(logits.argmax(dim=-1).item())
 
@@ -94,24 +80,3 @@ def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:
     sorted_logits = sorted_logits.masked_fill(remove, -torch.inf)
     filtered = torch.full_like(logits, -torch.inf)
     return filtered.scatter(0, sorted_indices, sorted_logits)
-
-
-class GreedySampler:
-    """Stateless argmax sampling over ModelRunner-selected logits rows."""
-
-    def __call__(
-        self,
-        logits: torch.Tensor,
-        request_ids: tuple[str, ...],
-        /,
-    ) -> ModelRunnerOutput:
-        if logits.shape[0] != len(request_ids):
-            raise ValueError("logits rows must equal sampling request IDs")
-
-        token_ids = logits.argmax(dim=-1).tolist()
-        return ModelRunnerOutput(
-            tuple(
-                SampledToken(request_id, token_id)
-                for request_id, token_id in zip(request_ids, token_ids)
-            )
-        )

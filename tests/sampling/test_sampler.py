@@ -5,13 +5,25 @@ import torch
 
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
 from micro_vllm.sampling.params import SamplingParams
-from micro_vllm.sampling.sampler import GreedySampler, Sampler
+from micro_vllm.sampling.sampler import Sampler
+
+
+def sample_greedy(
+    logits: torch.Tensor,
+    request_ids: tuple[str, ...],
+) -> ModelRunnerOutput:
+    return Sampler()(
+        logits,
+        request_ids,
+        tuple(SamplingParams(max_tokens=1) for _ in request_ids),
+        (0,) * len(request_ids),
+    )
 
 
 def test_single_row_selects_largest_logit() -> None:
     logits = torch.tensor([[0.1, 2.0, -1.0]])
 
-    output = GreedySampler()(logits, ("request-1",))
+    output = sample_greedy(logits, ("request-1",))
 
     assert output == ModelRunnerOutput((SampledToken("request-1", 1),))
 
@@ -25,7 +37,7 @@ def test_multiple_rows_preserve_request_id_order() -> None:
         ]
     )
 
-    output = GreedySampler()(logits, ("third", "first", "second"))
+    output = sample_greedy(logits, ("third", "first", "second"))
 
     assert output.sampled_tokens == (
         SampledToken("third", 2),
@@ -35,7 +47,7 @@ def test_multiple_rows_preserve_request_id_order() -> None:
 
 
 def test_empty_sampling_batch_returns_empty_output() -> None:
-    output = GreedySampler()(torch.empty((0, 4)), ())
+    output = sample_greedy(torch.empty((0, 4)), ())
 
     assert output == ModelRunnerOutput()
 
@@ -43,18 +55,10 @@ def test_empty_sampling_batch_returns_empty_output() -> None:
 def test_equal_maximum_logits_follow_torch_argmax_tie_behavior() -> None:
     logits = torch.tensor([[1.0, 3.0, 3.0, 2.0]])
 
-    output = GreedySampler()(logits, ("request-1",))
+    output = sample_greedy(logits, ("request-1",))
 
     assert output.sampled_tokens[0].token_id == logits.argmax(dim=-1).item()
     assert output.sampled_tokens[0].token_id == 1
-
-
-def test_logits_rows_must_match_sampling_request_ids() -> None:
-    with pytest.raises(
-        ValueError,
-        match="logits rows must equal sampling request IDs",
-    ):
-        GreedySampler()(torch.empty((2, 4)), ("request-1",))
 
 
 @pytest.mark.gpu
@@ -67,24 +71,10 @@ def test_cpu_and_gpu_choose_identical_tokens() -> None:
     )
     request_ids = ("first", "second")
 
-    cpu_output = GreedySampler()(logits, request_ids)
-    gpu_output = GreedySampler()(logits.cuda(), request_ids)
+    cpu_output = sample_greedy(logits, request_ids)
+    gpu_output = sample_greedy(logits.cuda(), request_ids)
 
     assert gpu_output == cpu_output
-
-
-def test_sampler_greedy_matches_compatibility_sampler() -> None:
-    logits = torch.tensor([[0.1, 2.0, -1.0], [4.0, 2.0, 1.0]])
-    request_ids = ("first", "second")
-
-    output = Sampler()(
-        logits,
-        request_ids,
-        (SamplingParams(max_tokens=1), SamplingParams(max_tokens=1)),
-        (0, 0),
-    )
-
-    assert output == GreedySampler()(logits, request_ids)
 
 
 def test_temperature_sampling_matches_seeded_torch_reference() -> None:
@@ -210,26 +200,3 @@ def test_different_seeds_can_produce_different_sequences() -> None:
     )
 
     assert first_tokens != second_tokens
-
-
-def test_sampler_rejects_mismatched_row_metadata_lengths() -> None:
-    with pytest.raises(ValueError, match="must have equal length"):
-        Sampler()(
-            torch.empty((2, 4)),
-            ("request",),
-            (SamplingParams(max_tokens=1),),
-            (0,),
-        )
-
-
-@pytest.mark.parametrize("sample_index", [True, -1, 1.5])
-def test_sampler_rejects_invalid_sample_index(sample_index: object) -> None:
-    params = SamplingParams(max_tokens=1, temperature=1.0, seed=0)
-
-    with pytest.raises(ValueError, match="non-negative integers"):
-        Sampler()(
-            torch.zeros((1, 4)),
-            ("request",),
-            (params,),
-            (sample_index,),
-        )

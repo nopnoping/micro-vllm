@@ -16,7 +16,7 @@ def test_model_config_preserves_generic_metadata() -> None:
 
     assert config.architectures == ("Unknown", "LlamaForCausalLM")
     assert config.require_positive_int("hidden_size") == 64
-    assert config.get("custom_metadata") == {"name": "value"}
+    assert config.values.get("custom_metadata") == {"name": "value"}
 
 
 def test_model_config_copies_and_exposes_read_only_values() -> None:
@@ -60,4 +60,4 @@ def test_model_config_typed_readers_apply_defaults() -> None:
     config = ModelConfig({"architectures": ["LlamaForCausalLM"]})
 
     assert config.positive_int("num_key_value_heads", 4) == 4
-    assert config.get("rope_theta", 10_000.0) == 10_000.0
+    assert config.values.get("rope_theta", 10_000.0) == 10_000.0

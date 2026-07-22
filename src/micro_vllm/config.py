@@ -32,9 +32,6 @@ class ModelConfig:
     def values(self) -> Mapping[str, object]:
         return self._values
 
-    def get(self, name: str, default: object = None) -> object:
-        return self._values.get(name, default)
-
     def require_positive_int(self, name: str) -> int:
         if name not in self._values:
             raise ValueError(f"missing required model config field {name!r}")

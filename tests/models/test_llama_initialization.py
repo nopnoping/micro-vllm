@@ -1,5 +1,7 @@
 """Tests for initializing Llama from the generic model config."""
 
+import pytest
+
 from micro_vllm.config import ModelConfig
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.llama import LlamaModel
@@ -47,3 +49,11 @@ def test_llama_uses_simple_defaults() -> None:
     assert model.layers[0].self_attn.rotary_embedding.base == 10_000.0
     assert model.norm.variance_epsilon == 1e-6
     assert model.embed_tokens.weight is not model.lm_head.weight
+
+
+def test_llama_rejects_incompatible_attention_head_counts() -> None:
+    with pytest.raises(
+        ValueError,
+        match="num_attention_heads must be divisible by num_key_value_heads",
+    ):
+        make_model(num_attention_heads=3, num_key_value_heads=2)

@@ -1,5 +1,7 @@
 """Tests for initializing Qwen3 from the generic model config."""
 
+import pytest
+
 from micro_vllm.config import ModelConfig
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.qwen import Qwen3Model
@@ -71,3 +73,11 @@ def test_qwen3_can_construct_projection_bias_when_config_requests_it() -> None:
     assert attention.k_proj.bias is not None
     assert attention.v_proj.bias is not None
     assert attention.o_proj.bias is not None
+
+
+def test_qwen3_rejects_incompatible_attention_head_counts() -> None:
+    with pytest.raises(
+        ValueError,
+        match="num_attention_heads must be divisible by num_key_value_heads",
+    ):
+        make_model(num_attention_heads=3, num_key_value_heads=2)

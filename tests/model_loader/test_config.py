@@ -27,8 +27,8 @@ def test_read_model_config_accepts_metadata(tmp_path: Path) -> None:
     config = read_model_config(config_path)
 
     assert config.architectures == ("LlamaForCausalLM",)
-    assert config.get("model_type") == "llama"
-    assert config.get("auto_map") == {"AutoModel": "remote.Model"}
+    assert config.values.get("model_type") == "llama"
+    assert config.values.get("auto_map") == {"AutoModel": "remote.Model"}
 
 
 def test_read_model_config_does_not_modify_file(tmp_path: Path) -> None:

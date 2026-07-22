@@ -107,9 +107,9 @@ def test_selected_hub_llama_is_public_and_supported() -> None:
 
     assert config["architectures"] == ["LlamaForCausalLM"]
     assert config["torch_dtype"] == MODEL_CHECKPOINT_DTYPE
-    assert config.get("rope_scaling") is None
+    assert config.values.get("rope_scaling") is None
     assert "sliding_window" not in config
-    assert config.get("attention_bias", False) is False
+    assert config.values.get("attention_bias", False) is False
     assert "auto_map" not in config
     assert _llama_parameter_count(config) == MODEL_PARAMETER_COUNT
     assert max(MODEL_PROMPT_TOKEN_IDS) < config["vocab_size"]
