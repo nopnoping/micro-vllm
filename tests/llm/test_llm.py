@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from micro_vllm import GenerationOutput, LLM, SamplingParams
+from micro_vllm import GenerationOutput, LLM, LLMConfig, SamplingParams
 from micro_vllm.core.request import FinishReason
 
 
@@ -43,15 +43,17 @@ def make_llm(
     max_model_len: int = 16,
 ) -> LLM:
     return LLM(
-        checkpoint_path,
-        tokenizer=tokenizer,
-        max_model_len=max_model_len,
-        max_num_batched_tokens=8,
-        max_num_seqs=2,
-        block_size=2,
-        max_num_blocks=16,
-        device="cpu",
-        dtype=torch.float32,
+        LLMConfig(
+            model=checkpoint_path,
+            tokenizer=tokenizer,
+            max_model_len=max_model_len,
+            max_num_batched_tokens=8,
+            max_num_seqs=2,
+            block_size=2,
+            max_num_blocks=16,
+            device="cpu",
+            dtype=torch.float32,
+        ),
     )
 
 

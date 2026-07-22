@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
+from typing import TYPE_CHECKING
+
+import torch
+
+if TYPE_CHECKING:
+    from micro_vllm.tokenizer import Tokenizer
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -84,3 +91,25 @@ class SchedulerConfig:
             value = getattr(self, field_name)
             if value <= 0:
                 raise ValueError(f"{field_name} must be greater than zero")
+
+
+@dataclass(frozen=True, slots=True)
+class LLMConfig:
+    """User-provided configuration for one synchronous offline LLM."""
+
+    model: str | Path
+    tokenizer: Tokenizer | None = None
+    tokenizer_name_or_path: str | Path | None = None
+    revision: str | None = None
+    cache_dir: str | Path | None = None
+    token: str | bool | None = None
+    local_files_only: bool = False
+    max_model_len: int = 2048
+    max_num_batched_tokens: int = 512
+    max_num_seqs: int = 8
+    block_size: int = 16
+    gpu_memory_utilization: float = 0.9
+    max_num_blocks: int | None = None
+    enable_prefix_cache: bool = False
+    device: torch.device | str = "cuda"
+    dtype: torch.dtype = torch.float16

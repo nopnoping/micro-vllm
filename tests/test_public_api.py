@@ -10,7 +10,7 @@ import micro_vllm.model_loader as model_loader
 import micro_vllm.models as models
 import micro_vllm.sampling as sampling
 import micro_vllm.worker as worker
-from micro_vllm.config import CacheConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
@@ -32,6 +32,7 @@ def test_top_level_exports_engine_entry_points() -> None:
         "Engine",
         "GenerationOutput",
         "LLM",
+        "LLMConfig",
         "ModelConfig",
         "RequestOutput",
         "SamplingParams",
@@ -41,6 +42,7 @@ def test_top_level_exports_engine_entry_points() -> None:
     assert micro_vllm.Engine is Engine
     assert micro_vllm.GenerationOutput is GenerationOutput
     assert micro_vllm.LLM is LLM
+    assert micro_vllm.LLMConfig is LLMConfig
     assert micro_vllm.ModelConfig is ModelConfig
     assert micro_vllm.RequestOutput is RequestOutput
     assert micro_vllm.SamplingParams is SamplingParams

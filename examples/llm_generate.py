@@ -6,7 +6,7 @@ Hugging Face cache.
 
 import torch
 
-from micro_vllm import LLM, SamplingParams
+from micro_vllm import LLM, LLMConfig, SamplingParams
 
 
 MODEL_ID = "Qwen/Qwen3-0.6B"
@@ -15,15 +15,17 @@ MODEL_REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
 
 def main() -> None:
     llm = LLM(
-        model=MODEL_ID,
-        revision=MODEL_REVISION,
-        device="cuda",
-        dtype=torch.float16,
-        max_model_len=256,
-        max_num_batched_tokens=64,
-        max_num_seqs=2,
-        block_size=16,
-        gpu_memory_utilization=0.8,
+        LLMConfig(
+            model=MODEL_ID,
+            revision=MODEL_REVISION,
+            device="cuda",
+            dtype=torch.float16,
+            max_model_len=256,
+            max_num_batched_tokens=64,
+            max_num_seqs=2,
+            block_size=16,
+            gpu_memory_utilization=0.8,
+        ),
     )
     try:
         outputs = llm.generate(

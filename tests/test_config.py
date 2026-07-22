@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from micro_vllm.config import CacheConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
 
 
 def test_cache_config_accepts_valid_configuration() -> None:
@@ -73,3 +73,14 @@ def test_scheduler_config_rejects_non_positive_limits(
 
     with pytest.raises(ValueError, match=rf"^{field_name} must be greater than zero$"):
         SchedulerConfig(**values)
+
+
+def test_llm_config_groups_user_configuration_and_is_frozen() -> None:
+    config = LLMConfig(model="org/model", device="cpu")
+
+    assert config.model == "org/model"
+    assert config.device == "cpu"
+    assert config.max_model_len == 2048
+    assert config.max_num_seqs == 8
+    with pytest.raises(FrozenInstanceError):
+        config.model = "other/model"

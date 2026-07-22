@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 import torch
 
-from micro_vllm.config import SchedulerConfig
+from micro_vllm.config import LLMConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason
 from micro_vllm.core.scheduler import Scheduler
@@ -18,7 +17,7 @@ from micro_vllm.executor.single_process import SingleProcessExecutor
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.model_loader import load_model
 from micro_vllm.sampling.params import SamplingParams
-from micro_vllm.tokenizer import Tokenizer, apply_tokenizer_eos, load_tokenizer
+from micro_vllm.tokenizer import apply_tokenizer_eos, load_tokenizer
 from micro_vllm.worker.config import (
     KVCacheInitializationConfig,
     ModelExecutionConfig,
@@ -56,63 +55,45 @@ class LLM:
         "_worker",
     )
 
-    def __init__(
-        self,
-        model: str | Path,
-        *,
-        tokenizer: Tokenizer | None = None,
-        tokenizer_name_or_path: str | Path | None = None,
-        revision: str | None = None,
-        cache_dir: str | Path | None = None,
-        token: str | bool | None = None,
-        local_files_only: bool = False,
-        max_model_len: int = 2048,
-        max_num_batched_tokens: int = 512,
-        max_num_seqs: int = 8,
-        block_size: int = 16,
-        gpu_memory_utilization: float = 0.9,
-        max_num_blocks: int | None = None,
-        enable_prefix_cache: bool = False,
-        device: torch.device | str = "cuda",
-        dtype: torch.dtype = torch.float16,
-    ) -> None:
+    def __init__(self, config: LLMConfig) -> None:
+        tokenizer = config.tokenizer
         if tokenizer is None:
             tokenizer = load_tokenizer(
-                model
-                if tokenizer_name_or_path is None
-                else tokenizer_name_or_path,
-                revision=revision,
-                cache_dir=cache_dir,
-                token=token,
-                local_files_only=local_files_only,
+                config.model
+                if config.tokenizer_name_or_path is None
+                else config.tokenizer_name_or_path,
+                revision=config.revision,
+                cache_dir=config.cache_dir,
+                token=config.token,
+                local_files_only=config.local_files_only,
             )
 
         scheduler_config = SchedulerConfig(
-            max_num_batched_tokens=max_num_batched_tokens,
-            max_num_seqs=max_num_seqs,
-            max_model_len=max_model_len,
+            max_num_batched_tokens=config.max_num_batched_tokens,
+            max_num_seqs=config.max_num_seqs,
+            max_model_len=config.max_model_len,
         )
 
         def initialize_model() -> torch.nn.Module:
             return load_model(
-                model,
+                config.model,
                 ReferenceAttentionBackend(),
-                revision=revision,
-                cache_dir=cache_dir,
-                token=token,
-                local_files_only=local_files_only,
+                revision=config.revision,
+                cache_dir=config.cache_dir,
+                token=config.token,
+                local_files_only=config.local_files_only,
             )
 
         worker = Worker(
             initialize_model,
             KVCacheInitializationConfig(
-                block_size=block_size,
-                gpu_memory_utilization=gpu_memory_utilization,
-                max_num_blocks=max_num_blocks,
-                enable_prefix_cache=enable_prefix_cache,
+                block_size=config.block_size,
+                gpu_memory_utilization=config.gpu_memory_utilization,
+                max_num_blocks=config.max_num_blocks,
+                enable_prefix_cache=config.enable_prefix_cache,
             ),
             scheduler_config,
-            ModelExecutionConfig(device=device, dtype=dtype),
+            ModelExecutionConfig(device=config.device, dtype=config.dtype),
         )
         scheduler = Scheduler(
             scheduler_config,
