@@ -1,4 +1,4 @@
-"""Tests for Llama RMS normalization."""
+"""Tests for reusable RMS normalization."""
 
 import pytest
 import torch

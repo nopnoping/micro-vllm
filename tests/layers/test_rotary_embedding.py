@@ -1,4 +1,4 @@
-"""Tests for standard Llama rotary embeddings."""
+"""Tests for reusable rotary embeddings."""
 
 import pytest
 import torch

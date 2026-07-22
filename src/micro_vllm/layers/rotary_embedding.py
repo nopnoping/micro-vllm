@@ -12,7 +12,7 @@ def rotate_half(hidden_states: torch.Tensor) -> torch.Tensor:
 
 
 class RotaryEmbedding(nn.Module):
-    """Standard Llama rotary embedding for flattened absolute positions."""
+    """Rotary embedding for flattened absolute positions."""
 
     def __init__(self, head_dim: int, base: float = 10_000.0) -> None:
         super().__init__()

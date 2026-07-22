@@ -1,4 +1,4 @@
-"""Tests for the dense Llama SwiGLU MLP."""
+"""Tests for the reusable dense SwiGLU MLP."""
 
 import torch
 from transformers import LlamaConfig

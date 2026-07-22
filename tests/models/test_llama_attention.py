@@ -1,9 +1,9 @@
-"""Tests for model-facing Llama attention composition."""
+"""Tests for Llama-specific attention composition."""
 
 import torch
 
-from micro_vllm.layers.attention import LlamaAttention
 from micro_vllm.layers.attention_backend import AttentionMetadata
+from micro_vllm.models.llama import LlamaAttention
 
 
 class RecordingBackend:

@@ -1,6 +1,5 @@
 """Reusable model layers and execution backends."""
 
-from micro_vllm.layers.attention import LlamaAttention
 from micro_vllm.layers.attention_backend import (
     AttentionBackend,
     AttentionMetadata,
@@ -20,7 +19,6 @@ __all__ = (
     "AttentionMetadata",
     "LMHead",
     "Linear",
-    "LlamaAttention",
     "PAD_BLOCK_ID",
     "RMSNorm",
     "ReferenceAttentionBackend",

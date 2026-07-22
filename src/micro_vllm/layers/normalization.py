@@ -5,7 +5,7 @@ from torch import nn
 
 
 class RMSNorm(nn.Module):
-    """Llama RMSNorm with variance accumulation in float32."""
+    """Root mean square normalization accumulated in float32."""
 
     def __init__(self, hidden_size: int, eps: float = 1e-6) -> None:
         super().__init__()
