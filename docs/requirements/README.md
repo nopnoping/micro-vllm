@@ -16,7 +16,8 @@ micro-vLLM 是一个用于学习和实验 LLM 推理系统的精简实现。项�
 - **统一 token 模型**：Scheduler 不区分 prefill 队列和 decode 队列，只关心请求的已知 token、已计算 token以及本轮计划计算的 token 数。
 - **控制面与执行面分离**：Scheduler 产生不可变的 `SchedulerOutput`，Executor 和 ModelRunner 只执行计划，不自行改变调度状态。
 - **逻辑缓存与物理缓存分离**：Engine 侧管理 block ID、引用计数和 block table，Worker 侧持有实际 KV tensor。
-- **规格与机制分离**：当前 Attention Backend 负责计算；V1.5 再引入 `AttentionSpec` 描述多 attention 类型的可见范围和缓存需求。
+- **规格与机制分离**：`AttentionSpec` 描述 full、sliding-window 和 chunked-local
+  可见范围；`AttentionOperator` 只负责 tensor 计算，cache policy 位于 KV domain。
 - **模型来源与模型语义分离**：`model_loader` 解析本地目录或 Hub、读取 config 和 checkpoint；`models` 解释架构字段、组装模型并将 tensor stream 加载到参数。
 - **单一权威状态**：请求进度以 `num_computed_tokens` 为唯一权威，不维护容易不一致的 prefill/decode phase 状态。
 - **最小代表性实现**：每类能力优先实现一个 reference backend 和一个有实际意义的 optimized backend，不建设 backend zoo。
@@ -55,13 +56,17 @@ V1 的 Scheduler 与 Executor 之间只传递执行所需的不可变快照：
 
 ```python
 @dataclass(frozen=True)
+class CacheGroupBlockTable:
+    block_ids: tuple[int, ...]
+
+@dataclass(frozen=True)
 class ScheduledRequest:
     request_id: str
     input_token_ids: tuple[int, ...]
     num_computed_tokens: int
     num_scheduled_tokens: int
     requires_sampling: bool
-    block_table: tuple[int | None, ...]
+    block_tables: tuple[CacheGroupBlockTable, ...]
 
 @dataclass(frozen=True)
 class SchedulerOutput:
@@ -70,7 +75,8 @@ class SchedulerOutput:
 ```
 
 逻辑 block 分配、释放、prefix commit 和 Request 状态仍由 Scheduler/KVCacheManager
-拥有，不作为设备执行命令重复编码。多 KV cache group 在 V1.5 通过扩展执行快照表达。
+拥有，不作为设备执行命令重复编码。`block_tables` 按 ModelRunner 派生的 cache
+topology 顺序排列；Scheduler 不解释 group spec 或 group ID。
 
 ### 3.3 ModelRunnerOutput
 
@@ -112,6 +118,25 @@ Engine 只依赖 `execute()`。V1 的 `SingleProcessExecutor` 额外提供显式
   checkpoint parameter name 和参数布局。
 - `model_loader` 不导入具体模型，也不解释 Llama/Qwen 的字段或参数名称。
 
+### 3.6 多 Attention KV Cache
+
+- 模型只按 layer 顺序暴露 `layer_attentions`；ModelRunner 是从 per-layer spec 派生
+  `KVCacheTopology` 的唯一边界。
+- 相同 spec value 的 layer 组成一个 group，`layer_indices` 是唯一 layer/group 映射。
+- 每个 request/group 有独立 absolute-index block table，但所有 group 共享一个
+  BlockPool、block-ID namespace 和公共 null block。
+- `KVCacheManager` 对各 group 求 cache hit fixed point，并原子完成跨 group allocation；
+  Scheduler 只读取公共 prefix length 和 allocation 成败。
+- PhysicalKVCache 按最大 group layer 数分配 buffers；不同 group 的同一
+  group-layer index 共用 buffer 地址，通过互斥 block ID 隔离物理 page。
+
+### 3.7 Structured Trace
+
+`LLMConfig.trace_sink` 默认为 `None`。配置 callback 后，runtime 发出不可变的
+`KVCacheLayoutTrace` 和 `KVCacheStepTrace`：前者描述物理 page 布局、dtype 和总字节，
+后者按 group 描述 spec、layers、release 后的 table 和释放数量。trace 是只读输出，
+不向 Scheduler 暴露 cache group 知识；关闭时不构造事件对象。
+
 ## 4. 版本路线
 
 | 版本 | 主题 | 新增的系统维度 | 需求文档 |
@@ -146,6 +171,7 @@ Engine 只依赖 `execute()`。V1 的 `SingleProcessExecutor` 额外提供显式
 
 ### 6.2 可观察性
 
+- [x] V1.5 提供可关闭的 KV cache layout 和 per-group commit structured trace。
 - [ ] 每个 engine step 可输出结构化 trace。
 - [ ] trace 至少包含 token budget、request allocation、block 变化和终止原因。
 - [ ] 分布式版本记录 collective 类型、参与 group 和传输 tensor shape。

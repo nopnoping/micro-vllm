@@ -1,5 +1,7 @@
 """Tests for Worker resource ownership and model execution."""
 
+from collections.abc import Callable
+
 import pytest
 import torch
 
@@ -12,6 +14,7 @@ from micro_vllm.core.scheduler_output import (
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
+from micro_vllm.trace import KVCacheLayoutTrace, TraceEvent
 from micro_vllm.worker.worker import Worker
 
 
@@ -36,6 +39,7 @@ def make_worker(
     model: LlamaModel | None = None,
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
+    trace_sink: Callable[[TraceEvent], None] | None = None,
 ) -> Worker:
     if model is None:
         model = LlamaModel(make_model_config())
@@ -53,6 +57,7 @@ def make_worker(
                 max_num_seqs=2,
                 max_model_len=32,
             ),
+            trace_sink=trace_sink,
         ),
     )
 
@@ -100,6 +105,23 @@ def test_worker_orchestrates_model_runner_lifecycle() -> None:
     assert physical_kv_cache[0].device == torch.device("cpu")
     assert physical_kv_cache[0].dtype is torch.float32
     assert worker.config.cache_config.num_blocks == 8
+
+
+def test_worker_traces_initialized_physical_cache_layout() -> None:
+    events: list[TraceEvent] = []
+
+    make_worker(trace_sink=events.append)
+
+    assert events == [
+        KVCacheLayoutTrace(
+            page_layer_count=2,
+            physical_buffer_count=2,
+            num_blocks=8,
+            block_size=2,
+            dtype="torch.float32",
+            total_bytes=1024,
+        )
+    ]
 
 
 def test_worker_returns_model_runner_output_unchanged() -> None:

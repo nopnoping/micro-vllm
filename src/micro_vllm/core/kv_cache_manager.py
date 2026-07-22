@@ -16,6 +16,12 @@ from micro_vllm.core.kv_cache_spec import (
     build_kv_cache_topology,
 )
 from micro_vllm.core.scheduler_output import CacheGroupBlockTable
+from micro_vllm.trace import (
+    KVCacheGroupTrace,
+    KVCacheStepTrace,
+    TraceSink,
+    snapshot_attention_spec,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +48,7 @@ class KVCacheManager:
         "_block_tables",
         "_group_managers",
         "_layout",
+        "_trace_sink",
     )
 
     def __init__(
@@ -61,6 +68,7 @@ class KVCacheManager:
 
         block_pool = BlockPool(layout.num_blocks)
         self._layout = layout
+        self._trace_sink: TraceSink | None = llm_config.trace_sink
         self._block_pool = block_pool
         self._group_managers = tuple(
             create_cache_group_manager(
@@ -222,19 +230,47 @@ class KVCacheManager:
         """Commit prefix identities, then release policy-skipped blocks."""
 
         tokens = tuple(token_ids)
-        for manager, block_table in zip(
-            self._group_managers,
-            self._require_block_tables(request_id),
-            strict=True,
+        group_traces: list[KVCacheGroupTrace] | None = (
+            [] if self._trace_sink is not None else None
+        )
+        for group_index, (group_spec, manager, block_table) in enumerate(
+            zip(
+                self._layout.groups,
+                self._group_managers,
+                self._require_block_tables(request_id),
+                strict=True,
+            )
         ):
             manager.cache_computed_blocks(
                 block_table,
                 tokens,
                 num_computed_tokens,
             )
-            manager.remove_skipped_blocks(
+            released_block_ids = manager.remove_skipped_blocks(
                 block_table,
                 num_computed_tokens,
+            )
+            if group_traces is not None:
+                group_traces.append(
+                    KVCacheGroupTrace(
+                        group_index=group_index,
+                        attention_spec=snapshot_attention_spec(
+                            group_spec.attention_spec
+                        ),
+                        layer_indices=group_spec.layer_indices,
+                        block_table=block_table.snapshot(),
+                        released_block_count=len(released_block_ids),
+                    )
+                )
+
+        trace_sink = self._trace_sink
+        if trace_sink is not None:
+            trace_sink(
+                KVCacheStepTrace(
+                    request_id=request_id,
+                    num_computed_tokens=num_computed_tokens,
+                    groups=tuple(cast(list[KVCacheGroupTrace], group_traces)),
+                )
             )
 
     def free_request_blocks(self, request_id: str) -> None:

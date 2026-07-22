@@ -440,12 +440,12 @@ T4 Engine 执行，不依赖验收时的外网。
 
 - [x] 现有 Llama/Qwen full-only 数值结果不变。
 - [x] 现有 prefix cache、preemption、block reuse 和 loaded-model 对拍不回归。
-- [ ] structured trace 按 group 报告 spec、layers、block table 和 release 数量。
-- [ ] trace 报告 page_layer_count、physical buffers、dtype 和总字节。
-- [ ] 更新 `docs/requirements/v1-core-engine.md`。
-- [ ] 更新 requirements README 的稳定 contract。
-- [ ] 记录 full、SW、chunked 和 hybrid 的最小数据流示例。
-- [ ] 完成非 model、tiny model、GPU eager 和固定公开模型回归。
+- [x] structured trace 按 group 报告 spec、layers、block table 和 release 数量。
+- [x] trace 报告 page_layer_count、physical buffers、dtype 和总字节。
+- [x] 更新 `docs/requirements/v1-core-engine.md`。
+- [x] 更新 requirements README 的稳定 contract。
+- [x] 记录 full、SW、chunked 和 hybrid 的最小数据流示例。
+- [x] 完成非 model、tiny model、GPU eager 和固定公开模型回归。
 
 ## 13. 测试分层
 
@@ -505,30 +505,30 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 
 ## 16. 完成标准
 
-- [ ] ModelRunner 是 model layer 声明到 cache topology 的唯一转换边界。
-- [ ] Scheduler 不包含 Full/SW/Chunked 分支。
-- [ ] 所有 group 共享一个 BlockPool 和一个 null block。
-- [ ] group-aware prefix hit 通过 fixed-point 得到真正公共 boundary。
-- [ ] 多 group allocation 失败不会留下部分状态。
-- [ ] PhysicalKVCache buffer 数等于最大 group layer 数。
-- [ ] 不同 group 的相同 group-layer index 使用同一 buffer 地址和不同 block ID。
-- [ ] bounded group 可回收旧 block，full group 保留完整历史。
-- [ ] full、SW、chunked 和 hybrid 都有 deterministic correctness reference。
-- [ ] finish/abort/preempt/shutdown 后无 block/tensor 泄漏。
-- [ ] Llama、Qwen、Mistral 和现有 Engine 行为通过回归。
+- [x] ModelRunner 是 model layer 声明到 cache topology 的唯一转换边界。
+- [x] Scheduler 不包含 Full/SW/Chunked 分支。
+- [x] 所有 group 共享一个 BlockPool 和一个 null block。
+- [x] group-aware prefix hit 通过 fixed-point 得到真正公共 boundary。
+- [x] 多 group allocation 失败不会留下部分状态。
+- [x] PhysicalKVCache buffer 数等于最大 group layer 数。
+- [x] 不同 group 的相同 group-layer index 使用同一 buffer 地址和不同 block ID。
+- [x] bounded group 可回收旧 block，full group 保留完整历史。
+- [x] full、SW、chunked 和 hybrid 都有 deterministic correctness reference。
+- [x] finish/abort/preempt/shutdown 后无 block/tensor 泄漏。
+- [x] Llama、Qwen、Mistral 和现有 Engine 行为通过回归。
 
 ## 17. 实现状态
 
 2026-07-22：完成第二轮技术方案 review、实现清单重写，以及 Phase 0 至
-Phase 7。
+Phase 8。
 ModelRunner 从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是
 唯一的 layer/group 映射来源。BlockPool 的最后一个物理 page 现在永久作为公共
 null block，BlockTable 和 rectangular padding 只保存真实非负 block ID；prefix
 hash domain 已包含 group ID。Full、SlidingWindow 和 ChunkedLocal group policy
 已使用同一个 BlockPool 实现。KVCacheManager 现在负责 fixed-point common hit、
 跨 group 原子 allocation、step commit/release 和完整 request lifecycle；
-Scheduler 不再持有 cache namespace 或 cached block ID。按当前要求只完成本地
-静态检查。PhysicalKVCache 按 `page_layer_count` 分配共享 buffers，ModelRunner
+Scheduler 不再持有 cache namespace 或 cached block ID。PhysicalKVCache 按
+`page_layer_count` 分配共享 buffers，ModelRunner
 冻结 layout 并按 group-layer index 展开 layer 地址，Worker 将同一 layout 暴露给
 控制面。SchedulerOutput 现在携带 immutable per-group block snapshots，
 ModelRunner 为每个 group 构造 block table、slot mapping 和 metadata，再按
@@ -538,4 +538,9 @@ visibility metadata 对拍 full/chunked prefill、decode、mixed batch、release
 physical-page reuse。远端 hybrid 定向验收为 `10 passed`，Phase 0–6 定向
 回归为 `157 passed`。Phase 7 新增纯 SlidingWindow Mistral 模型、标准
 safetensors 加载和 T4 离线验收；Mistral 定向回归为 `24 passed`，
-完整测试集为 `510 passed, 7 skipped`。
+完整测试集为 `510 passed, 7 skipped`。Phase 8 新增默认关闭的 immutable
+structured trace：正式物理 cache 初始化报告 layout/dtype/bytes，成功 step commit
+按 group 报告 spec/layers/release 后 table 和释放数量；关闭时不构造事件或 table
+snapshot。稳定 contract、四类最小数据流和 V1.5 完成状态已同步到 requirements
+文档。最终 T4 默认回归为 `512 passed, 7 skipped`；显式启用固定 Mistral
+checkpoint 的加载、离线 cache 和 GPU Engine 验收为 `5 passed`。

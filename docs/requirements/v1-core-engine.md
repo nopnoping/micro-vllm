@@ -22,7 +22,7 @@ V1 必须回答以下问题：
 | V1.2 | 单类型 full-attention 逻辑 Paged KV Cache、prefix cache、preemption/recompute | 主体已完成 |
 | V1.3 | Physical KV Cache、reference full attention、Tiny Llama execution、ModelRunner、Worker、SingleProcessExecutor | 已完成 |
 | V1.4 | Model Loader、真实 Llama/Qwen checkpoint、完整 sampling 和离线 API | 已完成 |
-| V1.5 | sliding window、chunked-local、多 KV cache group、Mistral/hybrid model | 当前阶段 |
+| V1.5 | sliding window、chunked-local、多 KV cache group、Mistral/hybrid model | 已完成 |
 | V1.6 | optimized attention、CUDA Graph/compile、benchmark 和性能收尾 | 待实现 |
 
 ## 3. V1.1：Request 与 Engine Control Loop
@@ -94,9 +94,10 @@ V1 必须回答以下问题：
 - [ ] 支持配置单 request 最大 prefill chunk。
 - [ ] 支持简单 request priority。
 
-## 5. V1.2：单类型逻辑 Paged KV Cache
+## 5. V1.2：单类型逻辑 Paged KV Cache（已完成）
 
-本阶段只支持一个 full-attention cache group。Engine 侧管理 logical/physical block ID，不持有真实 K/V tensor。
+V1.2 建立了一个 full-attention cache group 的基线。V1.5 已将它泛化为多 cache
+group；Engine 侧仍只管理 logical/physical block ID，不持有真实 K/V tensor。
 
 ### CacheConfig
 
@@ -126,7 +127,7 @@ V1 必须回答以下问题：
 
 - [x] KVCacheManager 为每个 request 维护独立 logical-to-physical block table。
 - [x] 支持追加、替换、查询 mapping 和完整释放。
-- [x] 支持 `None` 表示 unmapped logical block。
+- [x] V1.2 使用 `None` 表示 unmapped logical block；V1.5 统一改为公共 null block ID。
 - [x] snapshot 不暴露可修改内部 list。
 - [x] BlockTable 不直接修改 BlockPool refcount。
 - [x] 在 ModelRunner 中建立唯一的 token position → logical block → physical slot helper。
@@ -184,7 +185,8 @@ V1 必须回答以下问题：
 
 ### Physical KV Cache
 
-- [x] ModelRunner 为每个 decoder layer 创建 physical KV cache tensor。
+- [x] V1.3 为每个 decoder layer 创建 physical KV cache tensor；V1.5 按最长 cache
+      group 的 layer 数分配共享 page buffers。
 - [x] KV tensor 的 block dimension 与 CacheConfig physical block ID 一一对应。
 - [x] tensor shape 表达 K/V、block、block offset、KV heads 和 head dim。
 - [x] physical cache dtype/device 由 `ModelConfig.device/dtype` 决定。
@@ -392,6 +394,7 @@ ModelInitializer
 
 - [x] 加载真实 Llama-family dense checkpoint。
 - [x] 加载真实 Qwen3 dense checkpoint。
+- [x] 加载真实 Mistral-family sliding-window checkpoint。
 - [x] Llama 和 Qwen greedy 输出与 Transformers 逐 token 对拍。
 - [x] 至少两个真实小型模型族完成端到端生成。
 - [x] 本地标准 HF-format GQA Llama checkpoint 经 ModelRunner initializer 加载并完成
@@ -404,6 +407,10 @@ ModelInitializer
       对拍、4-token greedy decode 和强制 chunked prefill。
 - [x] 固定公开 Qwen3-0.6B commit 支持首次下载、完全离线 cache 重载、显式
       128 head dimension 的 T4 FP16 logits 对拍、4-token greedy decode 和 chunked prefill。
+- [x] 固定公开 `sanchit-gandhi/tiny-random-MistralForCausalLM-1-layer`
+      revision `53f378eafc3840b0a33e33ea5137e5978ffe4434` 支持标准 Hub cache
+      离线重载，并在 T4 上以 FP16/reference eager、16-token model length 和
+      64 个 physical pages 完成 Engine 验收。
 
 ### Sampling 和离线 API
 
@@ -423,7 +430,7 @@ ModelInitializer
 - [x] 不实现 structured/guided decoding。
 - [x] 不实现用户自定义 logits processor。
 
-## 8. V1.5：多 Attention 类型与多 KV Cache Group（当前阶段）
+## 8. V1.5：多 Attention 类型与多 KV Cache Group（已完成）
 
 实现顺序、抽象边界和验收项见
 [技术清单](../implementation/v1-multi-attention-kv-cache-todo.md)。
@@ -437,32 +444,60 @@ ModelInitializer
 
 ### AttentionSpec
 
-- [ ] 仅在 control plane/cache 需要读取 attention 结构时引入不可变 `AttentionSpec` contract。
-- [ ] 实现 `FullAttentionSpec`。
-- [ ] 实现 `SlidingWindowSpec(window_size)`。
-- [ ] 实现 `ChunkedLocalSpec(chunk_size)`。
-- [ ] 明确定义每种 spec 的 query-key 可见范围。
-- [ ] 每个 attention layer 声明自己的 spec，不由 Scheduler 推断模型类型。
-- [ ] cache manager 与 attention mask 使用同一份 spec 参数。
+- [x] 仅在 control plane/cache 需要读取 attention 结构时引入不可变 `AttentionSpec` contract。
+- [x] 实现 `FullAttentionSpec`。
+- [x] 实现 `SlidingWindowSpec(window_size)`。
+- [x] 实现 `ChunkedLocalSpec(chunk_size)`。
+- [x] 明确定义每种 spec 的 query-key 可见范围。
+- [x] 每个 attention layer 声明自己的 spec，不由 Scheduler 推断模型类型。
+- [x] cache manager 与 attention mask 使用同一份 spec 参数。
 
 ### 多 Cache Group
 
-- [ ] 相同 spec 的 layer 组成一个 KVCacheGroup。
-- [ ] 每个 request 为每个 cache group 拥有独立 block table。
-- [ ] 所有 cache group 从同一个全局 BlockPool 分配 block ID。
-- [ ] SchedulerOutput 能表达多个 group 的 block table。
-- [ ] full group 保留完整历史。
-- [ ] sliding/local group 可以回收不可见的旧 block。
-- [ ] `group_id` 进入 cache/hash identity，但 block ID 生命周期由共享 pool 管理。
+- [x] 相同 spec 的 layer 组成一个 KVCacheGroup。
+- [x] 每个 request 为每个 cache group 拥有独立 block table。
+- [x] 所有 cache group 从同一个全局 BlockPool 分配 block ID。
+- [x] SchedulerOutput 能表达多个 group 的 block table。
+- [x] full group 保留完整历史。
+- [x] sliding/local group 可以回收不可见的旧 block。
+- [x] `group_id` 进入 cache/hash identity，但 block ID 生命周期由共享 pool 管理。
+- [x] 所有 group 共享一个公共 null block，skipped entry 和 rectangular padding
+      均使用它。
+- [x] PhysicalKVCache 只分配 `page_layer_count=max(group layer count)` 个 buffers，
+      不同 group 的同一 group-layer index 共享地址但使用不同 block ID。
 
 ### Reference correctness
 
-- [ ] sliding window attention 与显式 dense mask 对拍。
-- [ ] chunked-local attention 与显式 dense mask 对拍。
-- [ ] full + local hybrid tiny model 正确执行。
-- [ ] 使用 Mistral 或等价模型验证 sliding window。
-- [ ] 使用 synthetic tiny model 验证 full + chunked-local hybrid。
-- [ ] 不同 block size、window/chunk size 下结果一致。
+- [x] sliding window attention 与显式 dense mask 对拍。
+- [x] chunked-local attention 与显式 dense mask 对拍。
+- [x] full + local hybrid tiny model 正确执行。
+- [x] 使用 Mistral 验证 sliding window。
+- [x] 使用 synthetic tiny model 验证 full + chunked-local hybrid。
+- [x] 不同 block size、window/chunk size 下结果一致。
+
+### 最小数据流
+
+| 模型形态 | topology 与逻辑 table | commit/release | ModelRunner execute |
+|---|---|---|---|
+| Full-only | 所有 layer 合为一个 full group；request 只有一个 table | prefix commit 后始终保留全部历史 | 构造一份 full metadata，按 layer index 绑定全部 page buffers |
+| Sliding-only | 相同 window 的 layer 合为一个 group；table 保留 absolute logical index | 完整落到 window 左侧的 block 替换为公共 null block并释放 | 构造一份 sliding metadata，只读取 `context_start(position)` 之后的 key |
+| Chunked-only | 相同 chunk size 的 layer 合为一个 group；已完成 chunk 的位置保留为 null | 进入新 chunk 后释放之前完整 chunk 的 block | 构造一份 chunked metadata，只读取当前 aligned chunk |
+| Hybrid | 每种 spec 一个 table；所有 table 从同一个 BlockPool 获取互斥 block ID | KVCacheManager 分别 commit/release，Scheduler 只看到公共 prefix 和整体 allocation 结果 | 每 group 构造 metadata；通过 `layer_indices` 展开，同一 group-layer index 复用物理 buffer |
+
+四条路径都使用同一个 `schedule -> execute -> update` 控制流。prefix lookup 在每个
+group 上按候选 boundary 计算并迭代到共同 fixed point；Scheduler 不接收 group ID、
+AttentionSpec 或 release boundary。
+
+### V1.5 Trace contract
+
+`LLMConfig.trace_sink` 是可选 callback，默认为 `None`。开启后发出 frozen event：
+
+- ModelRunner 完成正式 cache allocation 后发出一次 `KVCacheLayoutTrace`，包含
+  `page_layer_count`、physical buffer 数、block 参数、dtype 和总字节数；
+- 每个成功 `Scheduler.update()` 的 request commit 发出一次 `KVCacheStepTrace`；其中
+  每个 group 记录 spec、layer indices、release 后的 block table 和本轮释放数量；
+- trace 只观察 KV domain 的输出，不参与 Scheduler 决策，也不接受外部 group ID；
+- 关闭时不构造 event 或 block-table trace snapshot，热路径只保留一次空值判断。
 
 ## 9. V1.6：Optimized Backend 与性能收尾
 
@@ -505,20 +540,23 @@ ModelInitializer
 
 ### 待补测试
 
-- [ ] sliding/chunked-local attention 与 dense reference 对拍。
+- [x] sliding/chunked-local attention 与 dense reference 对拍。
 - [x] Qwen 外部 checkpoint 端到端加载测试。
-- [ ] Mistral 外部 checkpoint 端到端加载测试。
+- [x] Mistral 外部 checkpoint 端到端加载测试。
 - [x] 固定公开 Llama/Qwen checkpoint 的 tokenizer-backed `LLM.generate()` 文本闭环验收。
 
 ### Trace 和指标
 
+- [x] V1.5 cache commit 按 group 记录 spec、layers、release 后 table 和释放数量。
+- [x] V1.5 physical cache 初始化记录 page width、buffer 数、dtype 和总字节数。
+- [x] detailed trace 可通过 `LLMConfig.trace_sink=None` 关闭，关闭时不构造事件。
 - [ ] 每一步记录 token budget 和已使用 budget。
 - [ ] 记录每 request scheduled token 数和未调度原因。
 - [ ] 记录 admission、preemption、resume 和 finish。
 - [ ] 记录 block allocate/free/share 和 refcount 变化。
 - [ ] 记录 prefix hit block/token 数。
 - [ ] 记录 mixed batch 中 prefill/decode token 构成。
-- [ ] 记录 physical KV cache shape、dtype、字节数和 utilization。
+- [ ] 在已有 dtype/总字节 trace 上继续记录完整 shape 和 utilization。
 - [ ] 记录 request throughput、output token throughput、TTFT 和 ITL。
 
 ## 11. V1 明确不包含
@@ -544,7 +582,7 @@ ModelInitializer
 - [x] KV 空间不足时能抢占并最终正确完成随机 tiny Llama 请求，无 block 泄漏。
 - [x] prefix cache on/off 的随机 tiny Llama 输出一致。
 - [x] full attention 有独立 reference correctness test。
-- [ ] sliding window 和 chunked-local 有独立 reference correctness test。
+- [x] sliding window 和 chunked-local 有独立 reference correctness test。
 - [ ] reference 与 optimized attention 通过数值对拍。
 - [ ] 核心对象职责、不变量和一次完整 request trace 已文档化。
 - [ ] benchmark 记录 throughput、TTFT、ITL、显存和 KV utilization。

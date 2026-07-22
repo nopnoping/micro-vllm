@@ -1,5 +1,6 @@
 """Tests for multi-group logical KV-cache coordination."""
 
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -21,6 +22,12 @@ from micro_vllm.core.kv_cache_spec import (
     build_kv_cache_topology,
 )
 from micro_vllm.core.scheduler_output import CacheGroupBlockTable
+from micro_vllm.trace import (
+    AttentionSpecTrace,
+    KVCacheGroupTrace,
+    KVCacheStepTrace,
+    TraceEvent,
+)
 
 
 def make_manager(
@@ -30,6 +37,7 @@ def make_manager(
     enable_prefix_cache: bool = False,
     attention_specs: tuple[AttentionSpec, ...] = (FullAttentionSpec(),),
     cache_namespace: str = "model-a",
+    trace_sink: Callable[[TraceEvent], None] | None = None,
 ) -> KVCacheManager:
     config = LLMConfig(
         model_config=ModelConfig(model="unused"),
@@ -38,6 +46,7 @@ def make_manager(
             num_blocks=num_blocks,
             enable_prefix_cache=enable_prefix_cache,
         ),
+        trace_sink=trace_sink,
     )
     layout = KVCacheLayout(
         block_size=block_size,
@@ -396,6 +405,51 @@ def test_commit_step_releases_only_the_bounded_group_history() -> None:
         manager._block_pool.ref_count(block_id)
         for block_id in sliding_block_ids
     ) == (0, 0, 1)
+
+
+def test_commit_step_traces_each_group_after_release() -> None:
+    events: list[TraceEvent] = []
+    manager = make_manager(
+        block_size=2,
+        num_blocks=8,
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(3)),
+        trace_sink=events.append,
+    )
+    manager.register_request("request-1")
+    allocation = manager.allocate_slots("request-1", 0, 6)
+    assert allocation is not None
+
+    manager.commit_step("request-1", (1, 2, 3, 4, 5, 6), 6)
+
+    null_block_id = manager._block_pool.null_block_id
+    assert events == [
+        KVCacheStepTrace(
+            request_id="request-1",
+            num_computed_tokens=6,
+            groups=(
+                KVCacheGroupTrace(
+                    group_index=0,
+                    attention_spec=AttentionSpecTrace(
+                        "FullAttentionSpec",
+                        (),
+                    ),
+                    layer_indices=(0,),
+                    block_table=(0, 1, 2),
+                    released_block_count=0,
+                ),
+                KVCacheGroupTrace(
+                    group_index=1,
+                    attention_spec=AttentionSpecTrace(
+                        "SlidingWindowSpec",
+                        (("window_size", 3),),
+                    ),
+                    layer_indices=(1,),
+                    block_table=(null_block_id, null_block_id, 5),
+                    released_block_count=2,
+                ),
+            ),
+        )
+    ]
 
 
 def test_free_request_blocks_releases_every_group_for_recompute() -> None:

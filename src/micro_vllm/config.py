@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from micro_vllm.trace import TraceSink
+
 if TYPE_CHECKING:
     from micro_vllm.tokenizer import Tokenizer
 
@@ -137,3 +139,4 @@ class LLMConfig:
         )
     )
     cache_config: CacheConfig = field(default_factory=CacheConfig)
+    trace_sink: TraceSink | None = None

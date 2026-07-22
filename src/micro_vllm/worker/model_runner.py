@@ -27,6 +27,7 @@ from micro_vllm.core.scheduler_output import (
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.sampling.sampler import Sampler
+from micro_vllm.trace import KVCacheLayoutTrace
 from micro_vllm.worker.kv_cache import (
     PhysicalKVCache,
     kv_cache_block_size_bytes,
@@ -301,6 +302,24 @@ class ModelRunner:
         self._kv_cache_layout = layout
         self._physical_kv_cache = physical_kv_cache
         self._available_kv_cache_memory_bytes = available_memory_bytes
+        trace_sink = self._config.trace_sink
+        if trace_sink is not None:
+            trace_sink(
+                KVCacheLayoutTrace(
+                    page_layer_count=layout.page_layer_count,
+                    physical_buffer_count=len(physical_kv_cache),
+                    num_blocks=layout.num_blocks,
+                    block_size=layout.block_size,
+                    dtype=str(self._dtype),
+                    total_bytes=(
+                        kv_cache_block_size_bytes(
+                            self._config,
+                            layout.topology,
+                        )
+                        * layout.num_blocks
+                    ),
+                )
+            )
 
     @property
     def kv_cache_layout(self) -> KVCacheLayout:
