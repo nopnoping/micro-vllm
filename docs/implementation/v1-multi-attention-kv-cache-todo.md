@@ -411,20 +411,35 @@ SchedulerOutput/ModelRunner 数据 contract 统一为有序 group snapshots。
 
 ## 11. Phase 7：Mistral-family 集成
 
-- [ ] 完成 `models/mistral.py`，不在 Loader/Runner/Scheduler 添加 Mistral 分支。
-- [ ] 从 ModelConfig 读取结构参数和 sliding-window size。
-- [ ] 每个 decoder layer 暴露正确的 SlidingWindowSpec。
-- [ ] 复用已有 RMSNorm、RoPE、SwiGLU、Embedding/LMHead 和 Linear。
-- [ ] 实现 checkpoint name mapping、tied weights 和 registry 映射。
-- [ ] 使用 tiny Transformers Mistral checkpoint 对拍参数、hidden 和 logits。
-- [ ] 验证 full prefill、chunked prefill、decode、window 回收和 reuse。
-- [ ] 选定固定公开 checkpoint，记录 repo、revision、dtype 和 T4 memory budget。
-- [ ] 公开 checkpoint 支持标准 Hub cache 离线重载。
+- [x] 完成 `models/mistral.py`，不在 Loader/Runner/Scheduler 添加 Mistral 分支。
+- [x] 从 ModelConfig 读取结构参数和 sliding-window size。
+- [x] 每个 decoder layer 暴露正确的 SlidingWindowSpec。
+- [x] 复用已有 RMSNorm、RoPE、SwiGLU、Embedding/LMHead 和 Linear。
+- [x] 实现 checkpoint name mapping、tied weights 和 registry 映射。
+- [x] 使用 tiny Transformers Mistral checkpoint 对拍参数、hidden 和 logits。
+- [x] 验证 full prefill、chunked prefill、decode、window 回收和 reuse。
+- [x] 选定固定公开 checkpoint，记录 repo、revision、dtype 和 T4 memory budget。
+- [x] 公开 checkpoint 支持标准 Hub cache 离线重载。
+
+固定公开验收配置：
+
+```text
+repo: sanchit-gandhi/tiny-random-MistralForCausalLM-1-layer
+revision: 53f378eafc3840b0a33e33ea5137e5978ffe4434
+device: Tesla T4 15360 MiB
+dtype/operator: float16 / reference eager
+scheduler: max_num_batched_tokens=8, max_num_seqs=1, max_model_len=16
+kv cache: block_size=4, num_blocks=64 (including the shared null page)
+```
+
+测试先把固定 revision 的 `config.json` 和 `model.safetensors` 放入标准
+Hugging Face snapshot cache，再用 `local_files_only=True` 完成两次独立加载和
+T4 Engine 执行，不依赖验收时的外网。
 
 ## 12. Phase 8：回归、可观察性和文档
 
-- [ ] 现有 Llama/Qwen full-only 数值结果不变。
-- [ ] 现有 prefix cache、preemption、block reuse 和 loaded-model 对拍不回归。
+- [x] 现有 Llama/Qwen full-only 数值结果不变。
+- [x] 现有 prefix cache、preemption、block reuse 和 loaded-model 对拍不回归。
 - [ ] structured trace 按 group 报告 spec、layers、block table 和 release 数量。
 - [ ] trace 报告 page_layer_count、physical buffers、dtype 和总字节。
 - [ ] 更新 `docs/requirements/v1-core-engine.md`。
@@ -505,7 +520,7 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 ## 17. 实现状态
 
 2026-07-22：完成第二轮技术方案 review、实现清单重写，以及 Phase 0 至
-Phase 6。
+Phase 7。
 ModelRunner 从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是
 唯一的 layer/group 映射来源。BlockPool 的最后一个物理 page 现在永久作为公共
 null block，BlockTable 和 rectangular padding 只保存真实非负 block ID；prefix
@@ -521,4 +536,6 @@ ModelRunner 为每个 group 构造 block table、slot mapping 和 metadata，再
 full + sliding-window test-only tiny model，用连续 per-layer KV tensor 和显式
 visibility metadata 对拍 full/chunked prefill、decode、mixed batch、release 和
 physical-page reuse。远端 hybrid 定向验收为 `10 passed`，Phase 0–6 定向
-回归为 `157 passed`，完整测试集为 `499 passed, 5 skipped`。
+回归为 `157 passed`。Phase 7 新增纯 SlidingWindow Mistral 模型、标准
+safetensors 加载和 T4 离线验收；Mistral 定向回归为 `24 passed`，
+完整测试集为 `510 passed, 7 skipped`。

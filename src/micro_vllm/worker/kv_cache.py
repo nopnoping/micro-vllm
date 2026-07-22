@@ -93,7 +93,7 @@ def _model_head_dim(model_config: ModelConfig) -> int:
     num_attention_heads = model_config.require_positive_int(
         "num_attention_heads"
     )
-    if "head_dim" in model_config.values:
+    if model_config.values.get("head_dim") is not None:
         return model_config.require_positive_int("head_dim")
     if hidden_size % num_attention_heads != 0:
         raise ValueError("hidden_size must be divisible by num_attention_heads")

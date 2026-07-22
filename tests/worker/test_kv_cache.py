@@ -106,6 +106,39 @@ def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
     )
 
 
+def test_null_model_head_dimension_uses_hidden_size_fallback() -> None:
+    config = LLMConfig(
+        model_config=ModelConfig(
+            model="unused",
+            metadata={
+                "architectures": ["MistralForCausalLM"],
+                "hidden_size": 16,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "head_dim": None,
+            },
+            device="cpu",
+            dtype=torch.float32,
+        ),
+        cache_config=CacheConfig(block_size=4, num_blocks=3),
+    )
+    layout = KVCacheLayout(
+        block_size=4,
+        num_blocks=3,
+        topology=build_kv_cache_topology(
+            (FullAttentionSpec(), FullAttentionSpec())
+        ),
+    )
+
+    cache = PhysicalKVCache(config, layout)
+
+    assert cache[0].shape == torch.Size((2, 3, 4, 2, 4))
+    assert (
+        kv_cache_block_size_bytes(config, layout.topology)
+        == 2 * 2 * 4 * 2 * 4 * 4
+    )
+
+
 def test_cache_uses_max_group_layers_instead_of_total_model_layers() -> None:
     model_config = make_model_config()
     model_config.set_metadata(

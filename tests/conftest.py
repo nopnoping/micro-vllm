@@ -10,6 +10,8 @@ import torch
 from transformers import (
     LlamaConfig,
     LlamaForCausalLM,
+    MistralConfig,
+    MistralForCausalLM,
     Qwen3Config,
     Qwen3ForCausalLM,
 )
@@ -18,6 +20,7 @@ from transformers import (
 _MODEL_TEST_ENV = "MICRO_VLLM_TEST_MODEL"
 _TINY_LLAMA_SEED = 0
 _TINY_QWEN3_SEED = 1
+_TINY_MISTRAL_SEED = 2
 
 
 @pytest.fixture
@@ -77,6 +80,39 @@ def tiny_hf_qwen3_checkpoint(
     with torch.random.fork_rng():
         torch.manual_seed(_TINY_QWEN3_SEED)
         reference_model = Qwen3ForCausalLM(config).eval()
+    reference_model.save_pretrained(
+        checkpoint_path,
+        safe_serialization=True,
+    )
+    return reference_model, checkpoint_path
+
+
+@pytest.fixture
+def tiny_hf_mistral_checkpoint(
+    tmp_path: Path,
+) -> tuple[MistralForCausalLM, Path]:
+    """Create one deterministic, single-file HF Mistral checkpoint."""
+
+    checkpoint_path = tmp_path / "tiny-mistral"
+    config = MistralConfig(
+        architectures=["MistralForCausalLM"],
+        vocab_size=32,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=32,
+        sliding_window=4,
+        rms_norm_eps=1e-5,
+        rope_theta=10_000.0,
+        hidden_act="silu",
+        tie_word_embeddings=False,
+        attention_dropout=0.0,
+    )
+    with torch.random.fork_rng():
+        torch.manual_seed(_TINY_MISTRAL_SEED)
+        reference_model = MistralForCausalLM(config).eval()
     reference_model.save_pretrained(
         checkpoint_path,
         safe_serialization=True,
