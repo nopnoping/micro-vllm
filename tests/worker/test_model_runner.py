@@ -7,8 +7,11 @@ import torch
 
 from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.attention.spec import FullAttentionSpec, SlidingWindowSpec
-from micro_vllm.config import CacheConfig
-from micro_vllm.core.kv_cache_spec import build_kv_cache_topology
+from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig
+from micro_vllm.core.kv_cache_spec import (
+    KVCacheTopology,
+    build_kv_cache_topology,
+)
 from micro_vllm.core.scheduler_output import (
     CacheGroupBlockTable,
     ScheduledRequest,
@@ -17,12 +20,93 @@ from micro_vllm.core.scheduler_output import (
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.model_runner import (
     ModelInput,
-    build_block_table,
-    build_slot_mapping,
-    flatten_model_input,
+    ModelRunner,
 )
 
 NULL_BLOCK_ID = 7
+
+
+class _InputModel:
+    def __init__(self, layer_attentions: tuple[Attention, ...]) -> None:
+        self.layer_attentions = layer_attentions
+
+
+def make_input_runner(
+    layer_attentions: tuple[Attention, ...],
+    block_size: int,
+    device: torch.device,
+) -> ModelRunner:
+    runner = ModelRunner(
+        torch.nn.Module,
+        LLMConfig(
+            model_config=ModelConfig(model="unused", device=device),
+            cache_config=CacheConfig(
+                block_size=block_size,
+                num_blocks=8,
+            ),
+        ),
+    )
+    runner._model = _InputModel(layer_attentions)
+    runner._kv_cache_topology = build_kv_cache_topology(
+        tuple(attention.spec for attention in layer_attentions)
+    )
+    return runner
+
+
+def flatten_model_input(
+    plan: SchedulerOutput,
+    *,
+    topology: KVCacheTopology,
+    layer_attentions: tuple[Attention, ...],
+    block_tables: tuple[torch.Tensor, ...],
+    slot_mappings: tuple[torch.Tensor, ...],
+    block_size: int,
+) -> ModelInput:
+    runner = make_input_runner(
+        layer_attentions,
+        block_size,
+        block_tables[0].device,
+    )
+    runner._kv_cache_topology = topology
+    return runner._flatten_model_input(
+        plan,
+        block_tables=block_tables,
+        slot_mappings=slot_mappings,
+    )
+
+
+def build_slot_mapping(
+    plan: SchedulerOutput,
+    cache_group_index: int,
+    block_size: int,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    attention = Attention(FullAttentionSpec(), "reference")
+    return make_input_runner(
+        (attention,),
+        block_size,
+        device,
+    )._build_slot_mapping(plan, cache_group_index)
+
+
+def build_block_table(
+    plan: SchedulerOutput,
+    cache_group_index: int,
+    *,
+    null_block_id: int,
+    device: torch.device,
+) -> torch.Tensor:
+    attention = Attention(FullAttentionSpec(), "reference")
+    return make_input_runner(
+        (attention,),
+        block_size=4,
+        device=device,
+    )._build_block_table(
+        plan,
+        cache_group_index,
+        null_block_id=null_block_id,
+    )
 
 
 def make_attention_metadata() -> AttentionMetadata:
