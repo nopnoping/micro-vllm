@@ -1,29 +1,14 @@
-"""Device-independent scheduling and logical KV-cache state."""
+"""Stable device-independent request and scheduling contracts."""
 
-from micro_vllm.core.kv_cache_spec import (
-    KVCacheGroupSpec,
-    KVCacheLayout,
-    KVCacheTopology,
-    build_kv_cache_topology,
-)
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
-from micro_vllm.core.scheduler_output import (
-    CacheGroupBlockTable,
-    ScheduledRequest,
-    SchedulerOutput,
-)
+from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 
 __all__ = (
-    "CacheGroupBlockTable",
     "FinishReason",
-    "KVCacheGroupSpec",
-    "KVCacheLayout",
-    "KVCacheTopology",
     "Request",
     "RequestStatus",
     "ScheduledRequest",
     "Scheduler",
     "SchedulerOutput",
-    "build_kv_cache_topology",
 )

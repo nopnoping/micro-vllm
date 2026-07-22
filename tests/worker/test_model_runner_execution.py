@@ -257,6 +257,24 @@ def test_layer_binding_reuses_group_layer_index_buffer_addresses() -> None:
     runner.initialize_model()
     runner.initialize_kv_cache()
 
+    runner.execute(
+        SchedulerOutput(
+            (
+                ScheduledRequest(
+                    request_id="request-1",
+                    input_token_ids=(1,),
+                    num_computed_tokens=0,
+                    num_scheduled_tokens=1,
+                    requires_sampling=False,
+                    block_tables=(
+                        CacheGroupBlockTable((0,)),
+                        CacheGroupBlockTable((1,)),
+                    ),
+                ),
+            )
+        )
+    )
+
     cache = runner._physical_kv_cache
     assert cache is not None
     assert runner.kv_cache_layout.page_layer_count == 2
@@ -273,12 +291,10 @@ def test_layer_binding_reuses_group_layer_index_buffer_addresses() -> None:
     assert model.layer_attention_metadata[3] is chunked_metadata
     assert chunked_metadata is not full_metadata
     assert full_metadata.query_positions is chunked_metadata.query_positions
-    assert (
-        full_metadata.block_table.tolist()
-        != chunked_metadata.block_table.tolist()
-    )
-    assert full_metadata.slot_mapping.tolist() == list(range(8))
-    assert chunked_metadata.slot_mapping.tolist() == list(range(8, 16))
+    assert full_metadata.block_table.tolist() == [[0]]
+    assert chunked_metadata.block_table.tolist() == [[1]]
+    assert full_metadata.slot_mapping.tolist() == [0]
+    assert chunked_metadata.slot_mapping.tolist() == [2]
 
 
 def test_gpu_capacity_must_fit_data_and_null_pages() -> None:

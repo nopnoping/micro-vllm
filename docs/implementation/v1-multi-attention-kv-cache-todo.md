@@ -397,17 +397,17 @@ SchedulerOutput/ModelRunner 数据 contract 统一为有序 group snapshots。
 
 ## 10. Phase 6：hybrid correctness 和生命周期验收
 
-- [ ] 构造 test-only full + chunked-local tiny model。
-- [ ] 构造 test-only full + sliding-window tiny model。
-- [ ] 一次 full prefill 与多次 chunked prefill 的最终 hidden/logits 一致。
-- [ ] prefill + decode 与显式 dense per-layer mask reference 对拍。
-- [ ] mixed request batch 与逐 request 独立执行一致。
-- [ ] common-prefix fixed point 覆盖 candidate 下降后 SW/chunk hit 改变的场景。
-- [ ] local group 释放旧 block 时 full group 保留完整历史。
-- [ ] released table entries 全部指向同一个 null block。
-- [ ] reused physical block 不产生 stale KV 污染。
-- [ ] 任一 group 容量失败不会留下部分 reservation。
-- [ ] finish/abort/preempt 后所有真实 block refcount 归零。
+- [x] 构造 test-only full + chunked-local tiny model。
+- [x] 构造 test-only full + sliding-window tiny model。
+- [x] 一次 full prefill 与多次 chunked prefill 的最终 hidden/logits 一致。
+- [x] prefill + decode 与显式 dense per-layer mask reference 对拍。
+- [x] mixed request batch 与逐 request 独立执行一致。
+- [x] common-prefix fixed point 覆盖 candidate 下降后 SW/chunk hit 改变的场景。
+- [x] local group 释放旧 block 时 full group 保留完整历史。
+- [x] released table entries 全部指向同一个 null block。
+- [x] reused physical block 不产生 stale KV 污染。
+- [x] 任一 group 容量失败不会留下部分 reservation。
+- [x] finish/abort/preempt 后所有真实 block refcount 归零。
 
 ## 11. Phase 7：Mistral-family 集成
 
@@ -505,7 +505,7 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 ## 17. 实现状态
 
 2026-07-22：完成第二轮技术方案 review、实现清单重写，以及 Phase 0 至
-Phase 5。
+Phase 6。
 ModelRunner 从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是
 唯一的 layer/group 映射来源。BlockPool 的最后一个物理 page 现在永久作为公共
 null block，BlockTable 和 rectangular padding 只保存真实非负 block ID；prefix
@@ -517,4 +517,8 @@ Scheduler 不再持有 cache namespace 或 cached block ID。按当前要求只�
 冻结 layout 并按 group-layer index 展开 layer 地址，Worker 将同一 layout 暴露给
 控制面。SchedulerOutput 现在携带 immutable per-group block snapshots，
 ModelRunner 为每个 group 构造 block table、slot mapping 和 metadata，再按
-`layer_indices` 展开给模型层。未执行 SSH 远端测试。
+`layer_indices` 展开给模型层。Phase 6 新增 full + chunked-local 和
+full + sliding-window test-only tiny model，用连续 per-layer KV tensor 和显式
+visibility metadata 对拍 full/chunked prefill、decode、mixed batch、release 和
+physical-page reuse。远端 hybrid 定向验收为 `10 passed`，Phase 0–6 定向
+回归为 `157 passed`，完整测试集为 `499 passed, 5 skipped`。
