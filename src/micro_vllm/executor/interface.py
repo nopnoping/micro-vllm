@@ -31,3 +31,8 @@ class Executor(Protocol):
         """Execute one immutable scheduler plan."""
 
         ...
+
+    def shutdown(self) -> None:
+        """Release resources owned by the executor."""
+
+        ...
