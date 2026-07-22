@@ -197,11 +197,15 @@ Scheduler、Request 和 allocation 调用方均不传入或读取 group ID。
 每种 group manager 实现：
 
 ```python
-find_longest_cache_hit(block_hashes, max_length)
-get_num_blocks_to_allocate(...)
+find_longest_cache_hit(token_ids, max_length)
+get_new_block_indices(block_table, num_computed_tokens, num_scheduled_tokens)
 cache_computed_blocks(...)
 remove_skipped_blocks(...)
 ```
+
+这些都是 KVCacheManager 内部接口。group manager 持有 topology 绑定的 group ID，
+引用公共 BlockPool，但不创建或拥有独立 capacity。hit snapshot 只保存公共 token
+boundary 和一份 absolute cached/null block table，不重复保存 cached block ID 列表。
 
 各类型 hit 规则：
 
@@ -330,17 +334,18 @@ execute 数据流。
 
 ## 6. Phase 2：per-group cache policy
 
-- [ ] 定义小型 `CacheGroupManager` interface，不把类型分支堆进 Scheduler。
-- [ ] group manager 构造时绑定 group ID，不由 Scheduler/API 调用方传入。
-- [ ] 实现 `FullCacheGroupManager`。
-- [ ] 实现 `SlidingWindowCacheGroupManager`。
-- [ ] 实现 `ChunkedLocalCacheGroupManager`。
-- [ ] Full prefix 从左到右遇 miss 停止。
-- [ ] SW prefix 从候选 boundary 向左验证连续 window blocks。
-- [ ] Chunked prefix 将完成 chunk 视为 null，只验证当前 chunk。
-- [ ] 三种 manager 分别实现 allocation range 和 skipped-token rule。
-- [ ] cache hit 返回当前候选 boundary 对应的完整 cached/null snapshot。
-- [ ] 不同 group manager 共享同一个 BlockPool，不拥有独立 capacity。
+- [x] 定义小型 `CacheGroupManager` interface，不把类型分支堆进 Scheduler。
+- [x] group manager 构造时绑定 group ID，不由 Scheduler/API 调用方传入。
+- [x] 实现 `FullCacheGroupManager`。
+- [x] 实现 `SlidingWindowCacheGroupManager`。
+- [x] 实现 `ChunkedLocalCacheGroupManager`。
+- [x] Full prefix 从左到右遇 miss 停止。
+- [x] SW prefix 从候选 boundary 向左验证连续 window blocks。
+- [x] Chunked prefix 将完成 chunk 视为 null，只验证当前 chunk。
+- [x] manager 返回 scheduled range 缺失的 absolute logical block indices。
+- [x] 三种 manager 分别实现 skipped-token/release rule。
+- [x] cache hit 返回当前候选 boundary 对应的完整 cached/null snapshot。
+- [x] 不同 group manager 共享同一个 BlockPool，不拥有独立 capacity。
 
 ## 7. Phase 3：KVCacheManager coordinator 和 Scheduler facade
 
@@ -489,8 +494,10 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 
 ## 17. 实现状态
 
-2026-07-22：完成第二轮技术方案 review、实现清单重写、Phase 0 和 Phase 1。
+2026-07-22：完成第二轮技术方案 review、实现清单重写、Phase 0、Phase 1 和
+Phase 2。
 ModelRunner 从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是
 唯一的 layer/group 映射来源。BlockPool 的最后一个物理 page 现在永久作为公共
 null block，BlockTable 和 rectangular padding 只保存真实非负 block ID；prefix
-hash domain 已包含 group ID。按当前要求只完成本地静态检查，未执行 SSH 远端测试。
+hash domain 已包含 group ID。Full、SlidingWindow 和 ChunkedLocal group policy
+已使用同一个 BlockPool 实现。按当前要求只完成本地静态检查，未执行 SSH 远端测试。
