@@ -1,9 +1,8 @@
-"""Tests for direct, revision-pinned Hugging Face loading."""
+"""Tests for Hugging Face snapshot loading."""
 
 import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -14,7 +13,7 @@ from micro_vllm.model_loader import load_model
 from micro_vllm.config import ModelConfig
 
 
-def test_load_model_pins_config_and_weights_to_one_hf_commit(
+def test_load_model_delegates_snapshot_resolution_to_hugging_face(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -24,15 +23,7 @@ def test_load_model_pins_config_and_weights_to_one_hf_commit(
         encoding="utf-8",
     )
     events: list[str] = []
-    calls: dict[str, dict[str, object]] = {}
-
-    class FakeApi:
-        def model_info(self, repo_id, *, revision, token):
-            events.append("info")
-            assert repo_id == "org/model"
-            assert revision == "branch"
-            assert token == "token"
-            return SimpleNamespace(sha="commit-sha")
+    snapshot_call: dict[str, object] = {}
 
     class FakeCheckpoint:
         def __init__(self, model_path: str | Path) -> None:
@@ -64,22 +55,11 @@ def test_load_model_pins_config_and_weights_to_one_hf_commit(
         def eval(self) -> None:
             events.append("eval")
 
-    def fake_hf_hub_download(**kwargs):
-        events.append("config")
-        calls["config"] = kwargs
-        return str(config_path)
-
     def fake_snapshot_download(**kwargs):
         events.append("snapshot")
-        calls["snapshot"] = kwargs
+        snapshot_call.update(kwargs)
         return str(tmp_path)
 
-    monkeypatch.setattr(loader_module, "HfApi", FakeApi)
-    monkeypatch.setattr(
-        loader_module,
-        "hf_hub_download",
-        fake_hf_hub_download,
-    )
     monkeypatch.setattr(
         loader_module,
         "snapshot_download",
@@ -108,57 +88,21 @@ def test_load_model_pins_config_and_weights_to_one_hf_commit(
     assert isinstance(model, FakeModel)
     assert model.weights[0][0] == "model.weight"
     assert events == [
-        "info",
-        "config",
-        "build",
         "snapshot",
+        "build",
         "checkpoint",
         "load",
         "tensor",
         "eval",
     ]
-    for kwargs in calls.values():
-        assert kwargs["revision"] == "commit-sha"
-        assert kwargs["cache_dir"] == tmp_path / "cache"
-        assert kwargs["token"] == "token"
-        assert kwargs["local_files_only"] is True
-    assert calls["snapshot"]["allow_patterns"] == [
+    assert snapshot_call["repo_id"] == "org/model"
+    assert snapshot_call["revision"] == "branch"
+    assert snapshot_call["cache_dir"] == tmp_path / "cache"
+    assert snapshot_call["token"] == "token"
+    assert snapshot_call["local_files_only"] is True
+    assert snapshot_call["allow_patterns"] == [
         "config.json",
         "model.safetensors",
         "model.safetensors.index.json",
         "model-*.safetensors",
     ]
-
-
-def test_pinned_commit_does_not_require_online_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    commit_hash = "d9128824c0c80111be21424e68086f52413fb413"
-
-    class UnexpectedApi:
-        def __init__(self) -> None:
-            raise AssertionError("pinned commit must not query model metadata")
-
-    monkeypatch.setattr(loader_module, "HfApi", UnexpectedApi)
-
-    assert loader_module._resolve_hf_commit(
-        "org/model",
-        commit_hash,
-        None,
-    ) == commit_hash
-
-
-def test_hub_metadata_error_is_not_reclassified(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FailingApi:
-        def model_info(self, repo_id, *, revision, token):
-            raise ConnectionError(f"network unavailable for {repo_id}@{revision}")
-
-    monkeypatch.setattr(loader_module, "HfApi", FailingApi)
-
-    with pytest.raises(
-        ConnectionError,
-        match="network unavailable for org/model@main",
-    ):
-        loader_module._resolve_hf_commit("org/model", "main", None)

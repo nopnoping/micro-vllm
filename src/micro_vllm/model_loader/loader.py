@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 import torch
-from huggingface_hub import HfApi, hf_hub_download, snapshot_download
+from huggingface_hub import snapshot_download
 from torch import nn
 
 from micro_vllm.layers.attention_backend import AttentionBackend
@@ -37,26 +36,26 @@ def load_model(
 ) -> nn.Module:
     """Load one registered model from a local directory or Hugging Face Hub."""
     local_path = _resolve_local_model_path(model_name_or_path)
-    repo_id: str | None = None
-    commit_hash: str | None = None
 
     if local_path is not None:
         source_label = str(local_path)
-        config = _read_model_config(local_path / "config.json")
+        checkpoint_path = local_path
     else:
         assert isinstance(model_name_or_path, str)
         repo_id = _resolve_hf_repo_id(model_name_or_path)
-        commit_hash = _resolve_hf_commit(repo_id, revision, token)
-        source_label = f"{repo_id}@{commit_hash}"
-        config_path = hf_hub_download(
-            repo_id=repo_id,
-            filename="config.json",
-            revision=commit_hash,
-            cache_dir=cache_dir,
-            token=token,
-            local_files_only=local_files_only,
+        source_label = repo_id if revision is None else f"{repo_id}@{revision}"
+        checkpoint_path = Path(
+            snapshot_download(
+                repo_id=repo_id,
+                revision=revision,
+                cache_dir=cache_dir,
+                token=token,
+                local_files_only=local_files_only,
+                allow_patterns=list(_CHECKPOINT_PATTERNS),
+            )
         )
-        config = _read_model_config(config_path)
+
+    config = _read_model_config(checkpoint_path / "config.json")
 
     model_class = get_model_class(config, source_label=source_label)
     try:
@@ -66,22 +65,6 @@ def load_model(
         raise ValueError(
             f"invalid model config from {source_label}: {error}"
         ) from error
-
-    if local_path is not None:
-        checkpoint_path = local_path
-    else:
-        assert repo_id is not None
-        assert commit_hash is not None
-        checkpoint_path = Path(
-            snapshot_download(
-                repo_id=repo_id,
-                revision=commit_hash,
-                cache_dir=cache_dir,
-                token=token,
-                local_files_only=local_files_only,
-                allow_patterns=list(_CHECKPOINT_PATTERNS),
-            )
-        )
 
     try:
         model.load_weights(SafetensorsCheckpoint(checkpoint_path).iter_tensors())
@@ -120,23 +103,6 @@ def _validate_local_model_path(model_path: Path) -> Path:
 
 def _resolve_hf_repo_id(model_name: str) -> str:
     return _MODEL_ALIASES.get(model_name.casefold(), model_name)
-
-
-def _resolve_hf_commit(
-    repo_id: str,
-    revision: str | None,
-    token: str | bool | None,
-) -> str:
-    if revision is not None and re.fullmatch(r"[0-9a-f]{40}", revision):
-        return revision
-    model_info = HfApi().model_info(
-        repo_id,
-        revision=revision,
-        token=token,
-    )
-    if not model_info.sha:
-        raise ValueError(f"Hugging Face model has no resolved commit: {repo_id}")
-    return model_info.sha
 
 
 def _read_model_config(config_path: str | Path) -> ModelConfig:

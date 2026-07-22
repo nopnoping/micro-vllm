@@ -10,14 +10,12 @@ from micro_vllm import LLM, LLMConfig, SamplingParams
 
 
 MODEL_ID = "Qwen/Qwen3-0.6B"
-MODEL_REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
 
 
 def main() -> None:
     llm = LLM(
         LLMConfig(
             model=MODEL_ID,
-            revision=MODEL_REVISION,
             device="cuda",
             dtype=torch.float16,
             max_model_len=256,
