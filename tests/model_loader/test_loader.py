@@ -8,12 +8,10 @@ import torch
 from safetensors.torch import save_file
 
 import micro_vllm.model_loader.base as base_module
-from micro_vllm.attention.base import Attention
-from micro_vllm.attention.full.attention import FullAttention
-from micro_vllm.attention.full.reference import (
-    ReferenceFullAttentionOperator,
+from micro_vllm.attention.attention import Attention
+from micro_vllm.attention.operators.reference import (
+    ReferenceAttentionOperator,
 )
-from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.model_loader import load_model
 from micro_vllm.model_loader.base import ModelLoader
@@ -40,7 +38,7 @@ def write_local_model(
         encoding="utf-8",
     )
     config = ModelConfig(model="unused", metadata=raw_config)
-    reference = LlamaModel(config, create_attention("reference"))
+    reference = LlamaModel(config)
     tensors = {
         (
             parameter_name
@@ -70,23 +68,12 @@ def test_model_loader_template_controls_loading_order(
         encoding="utf-8",
     )
     events: list[str] = []
-    attention = create_attention("reference")
-
-    def create_recording_attention(name: str) -> Attention:
-        events.append("attention")
-        assert name == "recording"
-        return attention
 
     class FakeModel(torch.nn.Module):
-        def __init__(
-            self,
-            config: ModelConfig,
-            received_attention: Attention,
-        ) -> None:
+        def __init__(self, config: ModelConfig) -> None:
             super().__init__()
             events.append("construct")
             assert config.architectures == ("FakeModel",)
-            assert received_attention is attention
 
         def eval(self) -> torch.nn.Module:
             events.append("eval")
@@ -108,12 +95,6 @@ def test_model_loader_template_controls_loading_order(
         "get_model_class",
         lambda config, *, source_label: FakeModel,
     )
-    monkeypatch.setattr(
-        base_module,
-        "create_attention",
-        create_recording_attention,
-    )
-
     model = RecordingLoader().load_model(
         LLMConfig(
             model_config=ModelConfig(
@@ -126,7 +107,6 @@ def test_model_loader_template_controls_loading_order(
     assert isinstance(model, FakeModel)
     assert events == [
         "download",
-        "attention",
         "construct",
         "load_weights",
         "eval",
@@ -144,10 +124,10 @@ def test_load_model_resolves_constructs_and_populates_local_llama(
     assert config.model_config.values == model_config.values
     assert model.config is config.model_config
     assert model.training is False
-    assert isinstance(model.attention, FullAttention)
+    assert isinstance(model.attention, Attention)
     assert isinstance(
         model.attention.operator,
-        ReferenceFullAttentionOperator,
+        ReferenceAttentionOperator,
     )
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
 

@@ -47,8 +47,8 @@ attention 和 ModelRunner 生命周期；Qwen 专属 config 与参数语义只�
 - `model_loader` 继续只解析来源、固定 revision、遍历 tensor 并调用模型
   `load_weights()`，不识别 Qwen parameter 名称。
 - registry 只新增静态 `Qwen3ForCausalLM -> Qwen3Model` mapping。
-- RMSNorm、RoPE、SwiGLU、Embedding、LM head 和 reference full-attention
-  operator 复用。
+- RMSNorm、RoPE、SwiGLU、Embedding、LM head 和 reference attention operator
+  复用。
 - Qwen3 attention 单独表达显式 head dimension、无 bias projections 和 per-head Q/K
   RMSNorm；不把模型判断扩散到 Scheduler、Worker 或通用 config。
 - Qwen3 模型负责 `model.*` checkpoint name、tied `lm_head.weight` 和自身参数复制语义。

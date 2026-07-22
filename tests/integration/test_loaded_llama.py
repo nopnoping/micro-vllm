@@ -10,8 +10,7 @@ from safetensors import safe_open
 import torch
 from transformers import LlamaForCausalLM
 
-from micro_vllm.attention.base import map_cache_slots
-from micro_vllm.attention.full.metadata import FullAttentionMetadata
+from micro_vllm.attention.attention import AttentionMetadata, map_cache_slots
 from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.model_loader import load_model
 from micro_vllm.models.llama import LlamaModel
@@ -105,7 +104,10 @@ def test_load_model_restores_every_untied_parameter(
 
     assert isinstance(loaded_model, LlamaModel)
     assert loaded_model.training is False
-    assert all(parameter.device.type == "cpu" for parameter in loaded_model.parameters())
+    assert all(
+        parameter.device.type == "cpu"
+        for parameter in loaded_model.parameters()
+    )
     assert all(
         parameter.dtype == torch.get_default_dtype()
         for parameter in loaded_model.parameters()
@@ -287,11 +289,12 @@ def _make_attention_metadata(
     positions: torch.Tensor,
     *,
     device: torch.device | str,
-) -> FullAttentionMetadata:
+) -> AttentionMetadata:
     block_size = 2
     physical_blocks = torch.tensor([2, 0], dtype=torch.int64, device=device)
-    return FullAttentionMetadata(
+    return AttentionMetadata(
         query_positions=positions,
+        query_context_start_positions=torch.zeros_like(positions),
         query_start_locations=torch.tensor([0, 4], dtype=torch.int64, device=device),
         context_lengths=torch.tensor([4], dtype=torch.int64, device=device),
         block_table=physical_blocks.unsqueeze(0),

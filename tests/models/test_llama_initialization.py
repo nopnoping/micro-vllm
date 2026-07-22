@@ -2,7 +2,6 @@
 
 import pytest
 
-from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.llama import LlamaModel
 
@@ -17,10 +16,7 @@ def make_model(**overrides: object) -> LlamaModel:
         "num_attention_heads": 4,
     }
     values.update(overrides)
-    return LlamaModel(
-        ModelConfig(model="unused", metadata=values),
-        create_attention("reference"),
-    )
+    return LlamaModel(ModelConfig(model="unused", metadata=values))
 
 
 def test_llama_initializes_from_generic_config() -> None:

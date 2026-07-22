@@ -7,7 +7,7 @@ from collections.abc import Iterable
 import torch
 from torch import nn
 
-from micro_vllm.attention.base import Attention, AttentionMetadata
+from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.config import ModelConfig
 from micro_vllm.layers.embedding import LMHead, TokenEmbedding
 from micro_vllm.layers.linear import Linear
@@ -161,7 +161,6 @@ class Qwen3Model(nn.Module):
     def __init__(
         self,
         config: ModelConfig,
-        attention: Attention,
     ) -> None:
         super().__init__()
         values = config.values
@@ -189,6 +188,7 @@ class Qwen3Model(nn.Module):
         attention_bias = values.get("attention_bias", False)
         self._tie_word_embeddings = values.get("tie_word_embeddings", False)
 
+        attention = Attention(config.attention_operator)
         self.config = config
         self.attention = attention
         self.embed_tokens = TokenEmbedding(vocab_size, hidden_size)

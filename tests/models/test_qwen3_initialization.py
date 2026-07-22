@@ -2,7 +2,6 @@
 
 import pytest
 
-from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.qwen import Qwen3Model
 
@@ -19,10 +18,7 @@ def make_model(**overrides: object) -> Qwen3Model:
         "head_dim": 24,
     }
     values.update(overrides)
-    return Qwen3Model(
-        ModelConfig(model="unused", metadata=values),
-        create_attention("reference"),
-    )
+    return Qwen3Model(ModelConfig(model="unused", metadata=values))
 
 
 def test_qwen3_initializes_explicit_head_dimension_and_qk_norm() -> None:

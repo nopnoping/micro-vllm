@@ -1,36 +1,14 @@
-"""Tests for full-attention semantics and operator composition."""
+"""Tests for attention metadata construction and operator delegation."""
 
 import torch
 
-from micro_vllm.attention.full.attention import FullAttention
-from micro_vllm.attention.full.metadata import FullAttentionMetadata
-from micro_vllm.attention.full.operator import FullAttentionOperator
+from micro_vllm.attention.attention import Attention, AttentionMetadata
+from micro_vllm.attention.operators.base import AttentionOperator
 
 
-class RecordingOperator(FullAttentionOperator):
+class RecordingOperator(AttentionOperator):
     def __init__(self) -> None:
-        self.built_metadata = False
-        self.metadata: FullAttentionMetadata | None = None
-
-    def build_metadata(
-        self,
-        *,
-        query_positions: torch.Tensor,
-        query_start_locations: torch.Tensor,
-        context_lengths: torch.Tensor,
-        block_table: torch.Tensor,
-        slot_mapping: torch.Tensor,
-        block_size: int,
-    ) -> FullAttentionMetadata:
-        self.built_metadata = True
-        return super().build_metadata(
-            query_positions=query_positions,
-            query_start_locations=query_start_locations,
-            context_lengths=context_lengths,
-            block_table=block_table,
-            slot_mapping=slot_mapping,
-            block_size=block_size,
-        )
+        self.metadata: AttentionMetadata | None = None
 
     def forward(
         self,
@@ -38,16 +16,17 @@ class RecordingOperator(FullAttentionOperator):
         key: torch.Tensor,
         value: torch.Tensor,
         layer_kv_cache: torch.Tensor,
-        metadata: FullAttentionMetadata,
+        metadata: AttentionMetadata,
         /,
     ) -> torch.Tensor:
         self.metadata = metadata
         return query
 
 
-def test_full_attention_builds_metadata_and_delegates_to_operator() -> None:
+def test_attention_builds_metadata_and_delegates_to_operator() -> None:
     operator = RecordingOperator()
-    attention = FullAttention(operator)
+    attention = Attention("reference")
+    attention.operator = operator
     query_positions = torch.tensor([0, 1], dtype=torch.int64)
     query_start_locations = torch.tensor([0, 2], dtype=torch.int64)
     context_lengths = torch.tensor([2], dtype=torch.int64)
@@ -74,9 +53,11 @@ def test_full_attention_builds_metadata_and_delegates_to_operator() -> None:
         metadata,
     )
 
-    assert isinstance(metadata, FullAttentionMetadata)
-    assert operator.built_metadata is True
     assert metadata.query_positions is query_positions
+    assert torch.equal(
+        metadata.query_context_start_positions,
+        torch.zeros_like(query_positions),
+    )
     assert metadata.query_start_locations is query_start_locations
     assert metadata.context_lengths is context_lengths
     assert metadata.block_table is block_table

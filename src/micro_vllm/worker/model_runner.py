@@ -8,7 +8,7 @@ from typing import Protocol, cast
 import torch
 from torch import nn
 
-from micro_vllm.attention.base import (
+from micro_vllm.attention.attention import (
     Attention,
     AttentionMetadata,
     PAD_BLOCK_ID,
@@ -98,25 +98,33 @@ def flatten_model_input(
             sampling_row_indices.append(len(input_ids) - 1)
 
     device = block_table.device
-    metadata = attention.build_metadata(
-        query_positions=torch.tensor(positions, dtype=torch.int64, device=device),
-        query_start_locations=torch.tensor(
-            query_start_locations,
-            dtype=torch.int64,
-            device=device,
-        ),
-        context_lengths=torch.tensor(
-            context_lengths,
-            dtype=torch.int64,
-            device=device,
-        ),
+    query_positions = torch.tensor(
+        positions,
+        dtype=torch.int64,
+        device=device,
+    )
+    query_start_locations_tensor = torch.tensor(
+        query_start_locations,
+        dtype=torch.int64,
+        device=device,
+    )
+    context_lengths_tensor = torch.tensor(
+        context_lengths,
+        dtype=torch.int64,
+        device=device,
+    )
+    attention_metadata = attention.build_metadata(
+        query_positions=query_positions,
+        query_start_locations=query_start_locations_tensor,
+        context_lengths=context_lengths_tensor,
         block_table=block_table,
         slot_mapping=slot_mapping,
         block_size=block_size,
     )
+
     return ModelInput(
         input_ids=torch.tensor(input_ids, dtype=torch.int64, device=device),
-        attention_metadata=metadata,
+        attention_metadata=attention_metadata,
         request_ids=tuple(request_ids),
         sampling_row_indices=torch.tensor(
             sampling_row_indices,

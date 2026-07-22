@@ -3,7 +3,6 @@
 import pytest
 import torch
 
-from micro_vllm.attention.registry import create_attention
 from micro_vllm.config import ModelConfig
 from micro_vllm.models.qwen import Qwen3Model
 
@@ -25,7 +24,7 @@ def make_model(*, tied: bool = True) -> Qwen3Model:
             "attention_bias": False,
         },
     )
-    return Qwen3Model(config, create_attention("reference"))
+    return Qwen3Model(config)
 
 
 def checkpoint_tensors(

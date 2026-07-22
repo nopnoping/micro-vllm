@@ -10,8 +10,7 @@ import pytest
 import torch
 from transformers import Qwen3ForCausalLM
 
-from micro_vllm.attention.base import map_cache_slots
-from micro_vllm.attention.full.metadata import FullAttentionMetadata
+from micro_vllm.attention.attention import AttentionMetadata, map_cache_slots
 from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.model_loader import load_model
 from micro_vllm.models.qwen import Qwen3Model
@@ -176,11 +175,12 @@ def _make_attention_metadata(
     positions: torch.Tensor,
     *,
     device: torch.device | str,
-) -> FullAttentionMetadata:
+) -> AttentionMetadata:
     block_size = 2
     physical_blocks = torch.tensor([2, 0], dtype=torch.int64, device=device)
-    return FullAttentionMetadata(
+    return AttentionMetadata(
         query_positions=positions,
+        query_context_start_positions=torch.zeros_like(positions),
         query_start_locations=torch.tensor(
             [0, 4],
             dtype=torch.int64,

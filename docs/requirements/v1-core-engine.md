@@ -207,7 +207,7 @@ V1 必须回答以下问题：
 - [x] decode 读取完整 full-attention context。
 - [x] 支持 MHA、GQA 和 MQA。
 - [x] softmax 使用数值稳定 dtype。
-- [x] reference full-attention operator 不访问 Scheduler、Request 或
+- [x] reference attention operator 不访问 Scheduler、Request 或
   KVCacheManager。
 - [x] full prefill、chunked prefill 和 decode 与 dense causal reference 对拍。
 

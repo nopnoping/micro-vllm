@@ -2,13 +2,12 @@
 
 import torch
 
-from micro_vllm.attention.full.attention import FullAttention
-from micro_vllm.attention.full.metadata import FullAttentionMetadata
-from micro_vllm.attention.full.operator import FullAttentionOperator
+from micro_vllm.attention.attention import Attention, AttentionMetadata
+from micro_vllm.attention.operators.base import AttentionOperator
 from micro_vllm.models.llama import LlamaAttention
 
 
-class RecordingOperator(FullAttentionOperator):
+class RecordingOperator(AttentionOperator):
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
 
@@ -18,16 +17,17 @@ class RecordingOperator(FullAttentionOperator):
         key: torch.Tensor,
         value: torch.Tensor,
         layer_kv_cache: torch.Tensor,
-        metadata: FullAttentionMetadata,
+        metadata: AttentionMetadata,
         /,
     ) -> torch.Tensor:
         self.calls.append((query, key, value, layer_kv_cache, metadata))
         return query
 
 
-def make_metadata() -> FullAttentionMetadata:
-    return FullAttentionMetadata(
+def make_metadata() -> AttentionMetadata:
+    return AttentionMetadata(
         query_positions=torch.tensor([0, 1, 2], dtype=torch.int64),
+        query_context_start_positions=torch.zeros(3, dtype=torch.int64),
         query_start_locations=torch.tensor([0, 3], dtype=torch.int64),
         context_lengths=torch.tensor([3], dtype=torch.int64),
         block_table=torch.tensor([[0]], dtype=torch.int64),
@@ -38,12 +38,14 @@ def make_metadata() -> FullAttentionMetadata:
 
 def test_llama_attention_projects_rotates_and_invokes_attention() -> None:
     operator = RecordingOperator()
+    attention_impl = Attention("reference")
+    attention_impl.operator = operator
     attention = LlamaAttention(
         hidden_size=8,
         num_attention_heads=2,
         num_key_value_heads=1,
         rope_theta=10_000.0,
-        attention=FullAttention(operator),
+        attention=attention_impl,
     )
     hidden_states = torch.linspace(-1.0, 1.0, steps=3 * 8).reshape(3, 8)
     positions = torch.tensor([0, 1, 2], dtype=torch.int64)
