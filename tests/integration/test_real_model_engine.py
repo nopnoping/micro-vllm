@@ -134,13 +134,13 @@ def test_control_plane_uses_model_runner_cache_capacity() -> None:
     harness = make_real_engine(num_blocks=7)
     model_runner = harness.worker._model_runner
     assert model_runner is not None
-    physical_kv_cache = model_runner._physical_kv_cache
-    assert physical_kv_cache is not None
+    kv_cache_buffers = model_runner._kv_cache_buffers
+    assert kv_cache_buffers is not None
 
     assert harness.worker.config.cache_config.num_blocks == 8
-    assert physical_kv_cache[0].shape[1] == 8
+    assert kv_cache_buffers[0].shape[1] == 8
     assert harness.cache_manager._block_pool.num_blocks == 8
-    assert physical_kv_cache.null_block_id == 7
+    assert model_runner.kv_cache_layout.num_blocks - 1 == 7
     assert harness.cache_manager._block_pool.null_block_id == 7
 
 

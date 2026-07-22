@@ -127,8 +127,8 @@ Engine 只依赖 `execute()`。V1 的 `SingleProcessExecutor` 额外提供显式
   BlockPool、block-ID namespace 和公共 null block。
 - `KVCacheManager` 对各 group 求 cache hit fixed point，并原子完成跨 group allocation；
   Scheduler 只读取公共 prefix length 和 allocation 成败。
-- PhysicalKVCache 按最大 group layer 数分配 buffers；不同 group 的同一
-  group-layer index 共用 buffer 地址，通过互斥 block ID 隔离物理 page。
+- ModelRunner 按最大 group layer 数直接分配 KV cache buffers；不同 group 的
+  同一 group-layer index 共用 buffer 地址，通过互斥 block ID 隔离物理 page。
 
 ### 3.7 Structured Trace
 

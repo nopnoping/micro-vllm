@@ -462,8 +462,8 @@ ModelInitializer
 - [x] `group_id` 进入 cache/hash identity，但 block ID 生命周期由共享 pool 管理。
 - [x] 所有 group 共享一个公共 null block，skipped entry 和 rectangular padding
       均使用它。
-- [x] PhysicalKVCache 只分配 `page_layer_count=max(group layer count)` 个 buffers，
-      不同 group 的同一 group-layer index 共享地址但使用不同 block ID。
+- [x] ModelRunner 只分配 `page_layer_count=max(group layer count)` 个 KV cache
+      buffers，不同 group 的同一 group-layer index 共享地址但使用不同 block ID。
 
 ### Reference correctness
 

@@ -199,7 +199,7 @@ def test_shutdown_is_idempotent_and_releases_model_runner(
 
     assert llm._worker._model_runner is None
     assert model_runner._model is None
-    assert model_runner._physical_kv_cache is None
+    assert model_runner._kv_cache_buffers is None
     with pytest.raises(RuntimeError, match="LLM is shut down"):
         llm.generate("prompt", SamplingParams(max_tokens=1))
 

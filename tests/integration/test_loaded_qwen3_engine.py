@@ -379,13 +379,13 @@ def test_loaded_qwen3_runs_through_cuda_engine_fp16(
     output = run_to_completion(harness)["cuda-loaded"]
     model_runner = harness.worker._model_runner
     assert model_runner is not None
-    physical_kv_cache = model_runner._physical_kv_cache
-    assert physical_kv_cache is not None
+    kv_cache_buffers = model_runner._kv_cache_buffers
+    assert kv_cache_buffers is not None
     assert output.output_token_ids == reference_greedy_tokens(
         reference_model,
         prompt,
         max_tokens=2,
     )
-    assert physical_kv_cache[0].shape[-1] == 8
-    assert physical_kv_cache[0].device.type == "cuda"
-    assert physical_kv_cache[0].dtype is torch.float16
+    assert kv_cache_buffers[0].shape[-1] == 8
+    assert kv_cache_buffers[0].device.type == "cuda"
+    assert kv_cache_buffers[0].dtype is torch.float16

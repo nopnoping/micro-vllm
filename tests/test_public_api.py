@@ -26,7 +26,6 @@ from micro_vllm.llm import GenerationOutput, LLM
 from micro_vllm.model_loader import load_model
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.sampling.sampler import Sampler
-from micro_vllm.worker.kv_cache import PhysicalKVCache
 
 
 def test_top_level_exports_engine_entry_points() -> None:
@@ -85,9 +84,8 @@ def test_engine_executor_and_sampling_exports_are_explicit() -> None:
 
 def test_model_and_worker_exports_are_explicit() -> None:
     assert models.__all__ == ()
-    assert worker.__all__ == ("PhysicalKVCache",)
+    assert worker.__all__ == ()
     assert not hasattr(models, "ModelConfig")
-    assert worker.PhysicalKVCache is PhysicalKVCache
 
 
 def test_model_loader_exports_only_load_model() -> None:

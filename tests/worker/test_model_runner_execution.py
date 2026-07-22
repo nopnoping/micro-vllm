@@ -15,7 +15,6 @@ from micro_vllm.core.scheduler_output import (
     SchedulerOutput,
 )
 from micro_vllm.sampling.params import SamplingParams
-from micro_vllm.worker.kv_cache import PhysicalKVCache
 from micro_vllm.worker.model_runner import ModelRunner
 
 NULL_BLOCK_ID = 7
@@ -72,7 +71,7 @@ def make_model_config() -> ModelConfig:
     )
 
 
-def make_runner() -> tuple[ModelRunner, FakeModel, PhysicalKVCache]:
+def make_runner() -> tuple[ModelRunner, FakeModel, tuple[torch.Tensor, ...]]:
     model = FakeModel()
     cache_config = CacheConfig(block_size=2, num_blocks=8)
     runner = ModelRunner(
@@ -95,7 +94,7 @@ def make_runner() -> tuple[ModelRunner, FakeModel, PhysicalKVCache]:
     assert runner._config.model_config is model.config
     runner.initialize_kv_cache()
     assert cache_config.num_blocks == 8
-    cache = runner._physical_kv_cache
+    cache = runner._kv_cache_buffers
     assert cache is not None
     model.forward_inputs.clear()
     model.logit_inputs.clear()
@@ -164,7 +163,7 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     )
 
     runner.initialize_kv_cache()
-    cache = runner._physical_kv_cache
+    cache = runner._kv_cache_buffers
     assert cache_config.num_blocks == 8
     assert cache is not None
     layout = runner.kv_cache_layout
@@ -178,12 +177,11 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
         runner.initialize_kv_cache()
 
     runner.shutdown()
-    assert len(cache) == 0
     assert runner._model is None
     assert runner._model_initializer is None
     assert runner._kv_cache_layout is None
     assert runner._kv_cache_topology is None
-    assert runner._physical_kv_cache is None
+    assert runner._kv_cache_buffers is None
 
 
 def test_model_runner_derives_topology_from_layer_attentions() -> None:
@@ -275,7 +273,7 @@ def test_layer_binding_reuses_group_layer_index_buffer_addresses() -> None:
         )
     )
 
-    cache = runner._physical_kv_cache
+    cache = runner._kv_cache_buffers
     assert cache is not None
     assert runner.kv_cache_layout.page_layer_count == 2
     assert len(cache) == 2
