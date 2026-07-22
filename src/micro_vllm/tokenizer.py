@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
+from micro_vllm.config import LLMConfig
 from micro_vllm.sampling.params import SamplingParams
 
 
@@ -55,27 +55,25 @@ class TransformersTokenizer:
         )
 
 
-def load_tokenizer(
-    model_name_or_path: str | Path,
-    *,
-    revision: str | None = None,
-    cache_dir: str | Path | None = None,
-    token: str | bool | None = None,
-    local_files_only: bool = False,
-) -> TransformersTokenizer:
+def load_tokenizer(config: LLMConfig) -> TransformersTokenizer:
     """Load a standard HF tokenizer without executing remote code."""
 
+    model_name_or_path = (
+        config.model
+        if config.tokenizer_name_or_path is None
+        else config.tokenizer_name_or_path
+    )
     source = (
         str(model_name_or_path)
-        if isinstance(model_name_or_path, Path)
+        if not isinstance(model_name_or_path, str)
         else model_name_or_path
     )
     tokenizer = AutoTokenizer.from_pretrained(
         source,
-        revision=revision,
-        cache_dir=cache_dir,
-        token=token,
-        local_files_only=local_files_only,
+        revision=config.revision,
+        cache_dir=config.cache_dir,
+        token=config.token,
+        local_files_only=config.local_files_only,
         trust_remote_code=False,
         use_fast=True,
     )

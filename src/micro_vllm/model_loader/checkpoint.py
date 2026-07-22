@@ -21,34 +21,38 @@ class _CheckpointShard:
     weight_names: tuple[str, ...] | None
 
 
-def iter_safetensors_tensors(
-    model_path: Path,
-) -> Iterator[tuple[str, torch.Tensor]]:
-    """Yield checkpoint tensors while opening one shard at a time."""
-    for shard in _discover_checkpoint(model_path):
-        try:
-            with safe_open(
-                shard.path,
-                framework="pt",
-                device="cpu",
-            ) as checkpoint:
-                weight_names = shard.weight_names
-                if weight_names is None:
-                    weight_names = tuple(sorted(checkpoint.keys()))
-                    if not weight_names:
-                        raise ValueError(
-                            f"safetensors checkpoint is empty: {shard.path}"
-                        )
-                for weight_name in weight_names:
-                    yield weight_name, checkpoint.get_tensor(weight_name)
-        except FileNotFoundError as error:
-            raise FileNotFoundError(
-                f"checkpoint shard does not exist: {shard.path}"
-            ) from error
-        except SafetensorError as error:
-            raise ValueError(
-                f"failed to read safetensors shard: {shard.path}"
-            ) from error
+@dataclass(frozen=True, slots=True)
+class SafetensorsCheckpoint:
+    """A local safetensors checkpoint that streams its tensors."""
+
+    model_path: Path
+
+    def iter_tensors(self) -> Iterator[tuple[str, torch.Tensor]]:
+        """Yield checkpoint tensors while opening one shard at a time."""
+        for shard in _discover_checkpoint(self.model_path):
+            try:
+                with safe_open(
+                    shard.path,
+                    framework="pt",
+                    device="cpu",
+                ) as checkpoint:
+                    weight_names = shard.weight_names
+                    if weight_names is None:
+                        weight_names = tuple(sorted(checkpoint.keys()))
+                        if not weight_names:
+                            raise ValueError(
+                                f"safetensors checkpoint is empty: {shard.path}"
+                            )
+                    for weight_name in weight_names:
+                        yield weight_name, checkpoint.get_tensor(weight_name)
+            except FileNotFoundError as error:
+                raise FileNotFoundError(
+                    f"checkpoint shard does not exist: {shard.path}"
+                ) from error
+            except SafetensorError as error:
+                raise ValueError(
+                    f"failed to read safetensors shard: {shard.path}"
+                ) from error
 
 
 def _discover_checkpoint(model_path: Path) -> tuple[_CheckpointShard, ...]:

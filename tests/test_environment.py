@@ -2,7 +2,7 @@ import pytest
 import torch
 import transformers
 
-from micro_vllm.worker.config import ModelExecutionConfig
+from micro_vllm.config import LLMConfig
 
 
 def test_model_execution_dependencies_are_importable() -> None:
@@ -13,7 +13,11 @@ def test_model_execution_dependencies_are_importable() -> None:
 @pytest.mark.gpu
 def test_cuda_executes_tensor_operations() -> None:
     assert torch.cuda.is_available(), "gpu tests require a visible CUDA device"
-    config = ModelExecutionConfig(device="cuda", dtype=torch.float16)
+    config = LLMConfig(
+        model="unused",
+        device="cuda",
+        dtype=torch.float16,
+    )
 
     left = torch.tensor(
         [[1.0, 2.0]],

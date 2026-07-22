@@ -6,7 +6,13 @@ Hugging Face cache.
 
 import torch
 
-from micro_vllm import LLM, LLMConfig, SamplingParams
+from micro_vllm import (
+    CacheConfig,
+    LLM,
+    LLMConfig,
+    SamplingParams,
+    SchedulerConfig,
+)
 
 
 MODEL_ID = "Qwen/Qwen3-0.6B"
@@ -18,11 +24,15 @@ def main() -> None:
             model=MODEL_ID,
             device="cuda",
             dtype=torch.float16,
-            max_model_len=256,
-            max_num_batched_tokens=64,
-            max_num_seqs=2,
-            block_size=16,
-            gpu_memory_utilization=0.8,
+            scheduler_config=SchedulerConfig(
+                max_model_len=256,
+                max_num_batched_tokens=64,
+                max_num_seqs=2,
+            ),
+            cache_config=CacheConfig(
+                block_size=16,
+                gpu_memory_utilization=0.8,
+            ),
         ),
     )
     try:

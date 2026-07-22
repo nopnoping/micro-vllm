@@ -2,13 +2,13 @@
 
 import gc
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, cast
 
 import torch
 from torch import nn
 
-from micro_vllm.config import CacheConfig, ModelConfig, SchedulerConfig
+from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.layers.attention_backend import (
@@ -18,10 +18,6 @@ from micro_vllm.layers.attention_backend import (
 )
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.sampling.sampler import Sampler
-from micro_vllm.worker.config import (
-    KVCacheInitializationConfig,
-    ModelExecutionConfig,
-)
 from micro_vllm.worker.kv_cache import (
     PhysicalKVCache,
     kv_cache_block_size_bytes,
@@ -129,7 +125,7 @@ def flatten_model_input(
 
 def build_slot_mapping(
     plan: SchedulerOutput,
-    cache_config: CacheConfig,
+    block_size: int,
     *,
     device: torch.device,
 ) -> torch.Tensor:
@@ -156,7 +152,7 @@ def build_slot_mapping(
         request_slots = map_cache_slots(
             position_tensor,
             block_table,
-            cache_config.block_size,
+            block_size,
         )
         slot_mappings.append(request_slots)
 
@@ -201,36 +197,28 @@ class ModelRunner:
     __slots__ = (
         "_available_kv_cache_memory_bytes",
         "_block_size",
-        "_cache_initialization_config",
-        "_cache_config",
+        "_config",
         "_device",
         "_dtype",
-        "_execution_config",
         "_model",
         "_model_initializer",
         "_peak_activation_memory_bytes",
         "_physical_kv_cache",
         "_sampler",
-        "_scheduler_config",
     )
 
     def __init__(
         self,
         model_initializer: ModelInitializer,
-        cache_initialization_config: KVCacheInitializationConfig,
-        scheduler_config: SchedulerConfig,
-        execution_config: ModelExecutionConfig,
+        config: LLMConfig,
     ) -> None:
         self._model_initializer: ModelInitializer | None = model_initializer
         self._model: _RunnerModel | None = None
         self._physical_kv_cache: PhysicalKVCache | None = None
-        self._cache_initialization_config = cache_initialization_config
-        self._scheduler_config = scheduler_config
-        self._execution_config = execution_config
-        self._device = execution_config.device
-        self._dtype = execution_config.dtype
-        self._block_size = cache_initialization_config.block_size
-        self._cache_config: CacheConfig | None = None
+        self._config = config
+        self._device = torch.device(config.device)
+        self._dtype = config.dtype
+        self._block_size = config.cache_config.block_size
         self._available_kv_cache_memory_bytes: int | None = None
         self._peak_activation_memory_bytes = 0
         self._sampler = Sampler()
@@ -252,7 +240,7 @@ class ModelRunner:
         self._model_initializer = None
         return model_config
 
-    def initialize_kv_cache(self) -> CacheConfig:
+    def initialize_kv_cache(self) -> None:
         """Warm up the model, derive capacity, and allocate physical KV tensors."""
 
         model = self._model
@@ -266,22 +254,13 @@ class ModelRunner:
             model.config,
             available_memory_bytes=available_memory_bytes,
         )
-        cache_config = CacheConfig(
-            block_size=self._block_size,
-            num_blocks=num_blocks,
-            enable_prefix_cache=(
-                self._cache_initialization_config.enable_prefix_cache
-            ),
-        )
+        self._config.cache_config.num_blocks = num_blocks
         physical_kv_cache = PhysicalKVCache(
-            cache_config,
+            self._config,
             model.config,
-            self._execution_config,
         )
         self._physical_kv_cache = physical_kv_cache
-        self._cache_config = cache_config
         self._available_kv_cache_memory_bytes = available_memory_bytes
-        return cache_config
 
     def _profile_model_memory(self) -> int | None:
         model = self._model
@@ -289,16 +268,14 @@ class ModelRunner:
             raise RuntimeError("model must be initialized before profiling")
 
         profile_plan, num_profile_blocks = self._make_warmup_plan(model.config)
-        profile_cache_config = CacheConfig(
-            block_size=self._block_size,
-            num_blocks=num_profile_blocks,
+        profile_config = replace(
+            self._config,
+            cache_config=replace(
+                self._config.cache_config,
+                num_blocks=num_profile_blocks,
+            ),
         )
-        profile_cache = PhysicalKVCache(
-            profile_cache_config,
-            model.config,
-            self._execution_config,
-        )
-
+        profile_cache = PhysicalKVCache(profile_config, model.config)
         is_cuda = self._device.type == "cuda"
         baseline_allocated_bytes = 0
         if is_cuda:
@@ -311,7 +288,6 @@ class ModelRunner:
             self._warmup_model(
                 profile_plan,
                 profile_cache,
-                profile_cache_config,
             )
             if is_cuda:
                 torch.cuda.synchronize(self._device)
@@ -324,7 +300,6 @@ class ModelRunner:
                 )
         finally:
             profile_cache.release()
-            del profile_cache
             gc.collect()
             if is_cuda:
                 torch.cuda.empty_cache()
@@ -339,7 +314,7 @@ class ModelRunner:
         )
         requested_memory_bytes = int(
             total_memory_bytes
-            * self._cache_initialization_config.gpu_memory_utilization
+            * self._config.cache_config.gpu_memory_utilization
         )
         non_kv_cache_memory_bytes = total_memory_bytes - free_memory_bytes
         available_memory_bytes = (
@@ -357,21 +332,22 @@ class ModelRunner:
         self,
         model_config: ModelConfig,
     ) -> tuple[SchedulerOutput, int]:
+        scheduler_config = self._config.scheduler_config
         max_position_embeddings = model_config.positive_int(
             "max_position_embeddings",
-            self._scheduler_config.max_model_len,
+            scheduler_config.max_model_len,
         )
         max_tokens_per_request = min(
-            self._scheduler_config.max_model_len,
+            scheduler_config.max_model_len,
             max_position_embeddings,
         )
         remaining_tokens = min(
-            self._scheduler_config.max_num_batched_tokens,
-            max_tokens_per_request * self._scheduler_config.max_num_seqs,
+            scheduler_config.max_num_batched_tokens,
+            max_tokens_per_request * scheduler_config.max_num_seqs,
         )
         scheduled_requests: list[ScheduledRequest] = []
         next_block_id = 0
-        for request_index in range(self._scheduler_config.max_num_seqs):
+        for request_index in range(scheduler_config.max_num_seqs):
             if remaining_tokens == 0:
                 break
             num_tokens = min(remaining_tokens, max_tokens_per_request)
@@ -398,7 +374,6 @@ class ModelRunner:
         self,
         plan: SchedulerOutput,
         profile_cache: PhysicalKVCache,
-        profile_cache_config: CacheConfig,
     ) -> None:
         model = self._model
         if model is None:
@@ -407,7 +382,7 @@ class ModelRunner:
         block_table = build_block_table(plan, device=self._device)
         slot_mapping = build_slot_mapping(
             plan,
-            profile_cache_config,
+            self._block_size,
             device=self._device,
         )
         model_input = flatten_model_input(
@@ -442,23 +417,22 @@ class ModelRunner:
         *,
         available_memory_bytes: int | None,
     ) -> int:
-        max_num_blocks = self._cache_initialization_config.max_num_blocks
+        requested_num_blocks = self._config.cache_config.num_blocks
         if available_memory_bytes is None:
-            if max_num_blocks is None:
+            if requested_num_blocks is None:
                 raise ValueError(
-                    "CPU execution requires max_num_blocks because GPU memory "
+                    "CPU execution requires num_blocks because GPU memory "
                     "profiling is unavailable"
                 )
-            return max_num_blocks
+            return requested_num_blocks
 
         bytes_per_block = kv_cache_block_size_bytes(
+            self._config,
             model_config,
-            block_size=self._block_size,
-            dtype=self._dtype,
         )
         num_blocks = available_memory_bytes // bytes_per_block
-        if max_num_blocks is not None:
-            num_blocks = min(num_blocks, max_num_blocks)
+        if requested_num_blocks is not None:
+            num_blocks = min(num_blocks, requested_num_blocks)
         if num_blocks <= 0:
             raise MemoryError("available GPU memory cannot fit one KV cache block")
         return num_blocks
@@ -470,7 +444,6 @@ class ModelRunner:
         if physical_kv_cache is not None:
             physical_kv_cache.release()
         self._physical_kv_cache = None
-        self._cache_config = None
         self._model = None
         self._model_initializer = None
 
@@ -523,13 +496,12 @@ class ModelRunner:
         )
 
     def _build_model_input(self, plan: SchedulerOutput) -> ModelInput:
-        cache_config = self._cache_config
-        if cache_config is None:
+        if self._physical_kv_cache is None:
             raise RuntimeError("model runner is not initialized")
         block_table = build_block_table(plan, device=self._device)
         slot_mapping = build_slot_mapping(
             plan,
-            cache_config,
+            self._block_size,
             device=self._device,
         )
         return flatten_model_input(

@@ -3,16 +3,12 @@
 import pytest
 import torch
 
-from micro_vllm.config import ModelConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput, SampledToken
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
-from micro_vllm.worker.config import (
-    KVCacheInitializationConfig,
-    ModelExecutionConfig,
-)
 from micro_vllm.worker.worker import Worker
 
 
@@ -41,13 +37,17 @@ def make_worker(
         model = LlamaModel(make_model_config(), ReferenceAttentionBackend())
     return Worker(
         lambda: model,
-        KVCacheInitializationConfig(block_size=2, max_num_blocks=8),
-        SchedulerConfig(
-            max_num_batched_tokens=8,
-            max_num_seqs=2,
-            max_model_len=32,
+        LLMConfig(
+            model="unused",
+            cache_config=CacheConfig(block_size=2, num_blocks=8),
+            scheduler_config=SchedulerConfig(
+                max_num_batched_tokens=8,
+                max_num_seqs=2,
+                max_model_len=32,
+            ),
+            device=device,
+            dtype=dtype,
         ),
-        ModelExecutionConfig(device=device, dtype=dtype),
     )
 
 
@@ -75,6 +75,7 @@ def test_worker_orchestrates_model_runner_lifecycle() -> None:
 
     assert not hasattr(worker, "_model")
     assert worker._model_runner is not None
+    assert worker._model_runner._config is worker.config
     assert worker._model_runner._model is model
     assert worker._model_runner._available_kv_cache_memory_bytes is None
     assert model.training is False
@@ -86,7 +87,7 @@ def test_worker_orchestrates_model_runner_lifecycle() -> None:
     assert physical_kv_cache[0].shape == torch.Size((2, 8, 2, 1, 4))
     assert physical_kv_cache[0].device == torch.device("cpu")
     assert physical_kv_cache[0].dtype is torch.float32
-    assert worker.cache_config.num_blocks == 8
+    assert worker.config.cache_config.num_blocks == 8
 
 
 def test_worker_returns_model_runner_output_unchanged() -> None:
@@ -157,7 +158,7 @@ def test_gpu_worker_executes_reference_model() -> None:
     assert worker._model_runner._available_kv_cache_memory_bytes is not None
     assert worker._model_runner._available_kv_cache_memory_bytes > 0
     assert worker._model_runner._peak_activation_memory_bytes >= 0
-    assert worker.cache_config.num_blocks == 8
+    assert worker.config.cache_config.num_blocks == 8
     assert next(model.parameters()).device.type == "cuda"
     assert next(model.parameters()).dtype is torch.float16
     assert len(output.sampled_tokens) == 1

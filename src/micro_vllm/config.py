@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -54,27 +54,32 @@ class ModelConfig:
         return value
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class CacheConfig:
-    """Device-independent logical KV-cache configuration.
+    """KV-cache configuration shared across initialization and execution.
 
-    Prefix caching has no separate capacity limit. Cached zero-reference
-    blocks remain reclaimable by the block pool and lose their hash mapping
-    automatically when their physical storage is reused.
+    Before initialization, ``num_blocks`` optionally limits GPU capacity and
+    provides the deterministic CPU capacity. The model runner replaces it with
+    the actual allocated capacity during initialization.
     """
 
-    block_size: int
-    num_blocks: int
+    block_size: int = 16
+    gpu_memory_utilization: float = 0.9
+    num_blocks: int | None = None
     enable_prefix_cache: bool = False
 
     def __post_init__(self) -> None:
-        for field_name in ("block_size", "num_blocks"):
-            value = getattr(self, field_name)
-            if value <= 0:
-                raise ValueError(f"{field_name} must be greater than zero")
+        if self.block_size <= 0:
+            raise ValueError("block_size must be greater than zero")
+        if not 0 < self.gpu_memory_utilization <= 1:
+            raise ValueError(
+                "gpu_memory_utilization must be greater than zero and at most one"
+            )
+        if self.num_blocks is not None and self.num_blocks <= 0:
+            raise ValueError("num_blocks must be greater than zero")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class SchedulerConfig:
     """Device-independent limits enforced by the scheduler."""
 
@@ -93,7 +98,7 @@ class SchedulerConfig:
                 raise ValueError(f"{field_name} must be greater than zero")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class LLMConfig:
     """User-provided configuration for one synchronous offline LLM."""
 
@@ -104,12 +109,22 @@ class LLMConfig:
     cache_dir: str | Path | None = None
     token: str | bool | None = None
     local_files_only: bool = False
-    max_model_len: int = 2048
-    max_num_batched_tokens: int = 512
-    max_num_seqs: int = 8
-    block_size: int = 16
-    gpu_memory_utilization: float = 0.9
-    max_num_blocks: int | None = None
-    enable_prefix_cache: bool = False
+    attention_backend: str = "reference"
+    scheduler_config: SchedulerConfig = field(
+        default_factory=lambda: SchedulerConfig(
+            max_num_batched_tokens=512,
+            max_num_seqs=8,
+            max_model_len=2048,
+        )
+    )
+    cache_config: CacheConfig = field(default_factory=CacheConfig)
     device: torch.device | str = "cuda"
     dtype: torch.dtype = torch.float16
+
+    def __post_init__(self) -> None:
+        if torch.device(self.device).type not in {"cpu", "cuda"}:
+            raise ValueError("device must be 'cpu' or 'cuda'")
+        if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+            raise ValueError(
+                "dtype must be float32, float16, or bfloat16"
+            )

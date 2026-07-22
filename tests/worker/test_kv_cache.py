@@ -3,10 +3,8 @@
 import pytest
 import torch
 
-from micro_vllm.config import CacheConfig
+from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
-from micro_vllm.config import ModelConfig
-from micro_vllm.worker.config import ModelExecutionConfig
 from micro_vllm.worker.kv_cache import (
     PhysicalKVCache,
     kv_cache_block_size_bytes,
@@ -34,9 +32,13 @@ def make_cache(
     dtype: torch.dtype = torch.float32,
 ) -> PhysicalKVCache:
     return PhysicalKVCache(
-        CacheConfig(block_size=4, num_blocks=8),
+        LLMConfig(
+            model="unused",
+            cache_config=CacheConfig(block_size=4, num_blocks=8),
+            device=device,
+            dtype=dtype,
+        ),
         make_model_config(),
-        ModelExecutionConfig(device=device, dtype=dtype),
     )
 
 
@@ -65,20 +67,22 @@ def test_cache_shape_and_bytes_use_explicit_model_head_dimension() -> None:
             "head_dim": 8,
         }
     )
-    cache_config = CacheConfig(block_size=4, num_blocks=3)
-    execution_config = ModelExecutionConfig(dtype=torch.float32)
+    config = LLMConfig(
+        model="unused",
+        cache_config=CacheConfig(block_size=4, num_blocks=3),
+        device="cpu",
+        dtype=torch.float32,
+    )
 
     cache = PhysicalKVCache(
-        cache_config,
+        config,
         model_config,
-        execution_config,
     )
 
     assert cache[0].shape == torch.Size((2, 3, 4, 2, 8))
     assert kv_cache_block_size_bytes(
+        config,
         model_config,
-        block_size=4,
-        dtype=torch.float32,
     ) == 2 * 2 * 4 * 2 * 8 * 4
 
 
@@ -102,17 +106,21 @@ def test_layers_do_not_share_storage() -> None:
 
 
 def test_logical_block_release_does_not_clear_physical_storage() -> None:
-    cache_config = CacheConfig(block_size=4, num_blocks=8)
-    manager = KVCacheManager(cache_config)
+    config = LLMConfig(
+        model="unused",
+        cache_config=CacheConfig(block_size=4, num_blocks=8),
+        device="cpu",
+        dtype=torch.float32,
+    )
+    manager = KVCacheManager(config)
     manager.register_request("request-1")
     allocation = manager.allocate_slots("request-1", 0, 1)
     assert allocation is not None
     physical_block_id = allocation.block_table[0]
     assert physical_block_id is not None
     cache = PhysicalKVCache(
-        cache_config,
+        config,
         make_model_config(),
-        ModelExecutionConfig(),
     )
     cache[0][:, physical_block_id].fill_(7)
 

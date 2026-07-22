@@ -9,7 +9,7 @@ import pytest
 import torch
 from transformers import LlamaForCausalLM
 
-from micro_vllm.config import SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason
 from micro_vllm.core.scheduler import Scheduler
@@ -18,14 +18,9 @@ from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.executor.single_process import SingleProcessExecutor
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.model_loader import load_model
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
-from micro_vllm.worker.config import (
-    KVCacheInitializationConfig,
-    ModelExecutionConfig,
-)
 from micro_vllm.worker.worker import Worker
 
 
@@ -66,31 +61,32 @@ def make_loaded_engine(
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
 ) -> LoadedEngineHarness:
-    scheduler_config = SchedulerConfig(
-        max_num_batched_tokens=token_budget,
-        max_num_seqs=sequence_budget,
-        max_model_len=max_model_len,
+    config = LLMConfig(
+        model=checkpoint_path,
+        scheduler_config=SchedulerConfig(
+            max_num_batched_tokens=token_budget,
+            max_num_seqs=sequence_budget,
+            max_model_len=max_model_len,
+        ),
+        cache_config=CacheConfig(
+            block_size=block_size,
+            num_blocks=num_blocks,
+            enable_prefix_cache=enable_prefix_cache,
+        ),
+        device=device,
+        dtype=dtype,
     )
     load_calls: list[Path] = []
 
     def initialize_model() -> LlamaModel:
         load_calls.append(checkpoint_path)
-        model = load_model(checkpoint_path, ReferenceAttentionBackend())
+        model = load_model(config)
         assert isinstance(model, LlamaModel)
         return model
 
-    worker = Worker(
-        initialize_model,
-        KVCacheInitializationConfig(
-            block_size=block_size,
-            max_num_blocks=num_blocks,
-            enable_prefix_cache=enable_prefix_cache,
-        ),
-        scheduler_config,
-        ModelExecutionConfig(device=device, dtype=dtype),
-    )
-    cache_manager = KVCacheManager(worker.cache_config)
-    scheduler = Scheduler(scheduler_config, cache_manager)
+    worker = Worker(initialize_model, config)
+    cache_manager = KVCacheManager(config)
+    scheduler = Scheduler(config, cache_manager)
     executor = RecordingSingleProcessExecutor(worker)
     return LoadedEngineHarness(
         engine=Engine(scheduler, executor),

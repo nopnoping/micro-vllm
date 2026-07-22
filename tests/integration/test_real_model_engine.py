@@ -5,7 +5,12 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from micro_vllm.config import ModelConfig, SchedulerConfig
+from micro_vllm.config import (
+    CacheConfig,
+    LLMConfig,
+    ModelConfig,
+    SchedulerConfig,
+)
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
@@ -17,10 +22,6 @@ from micro_vllm.executor.single_process import SingleProcessExecutor
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
-from micro_vllm.worker.config import (
-    KVCacheInitializationConfig,
-    ModelExecutionConfig,
-)
 from micro_vllm.worker.worker import Worker
 
 
@@ -75,27 +76,27 @@ def make_real_engine(
     enable_prefix_cache: bool = False,
 ) -> RealEngineHarness:
     torch.manual_seed(0)
-    scheduler_config = SchedulerConfig(
-        max_num_batched_tokens=token_budget,
-        max_num_seqs=sequence_budget,
-        max_model_len=max_model_len,
+    config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(
+            max_num_batched_tokens=token_budget,
+            max_num_seqs=sequence_budget,
+            max_model_len=max_model_len,
+        ),
+        cache_config=CacheConfig(
+            block_size=block_size,
+            num_blocks=num_blocks,
+            enable_prefix_cache=enable_prefix_cache,
+        ),
+        device="cpu",
+        dtype=torch.float32,
     )
     worker = Worker(
         lambda: LlamaModel(make_model_config(), ReferenceAttentionBackend()),
-        KVCacheInitializationConfig(
-            block_size=block_size,
-            max_num_blocks=num_blocks,
-            enable_prefix_cache=enable_prefix_cache,
-        ),
-        scheduler_config,
-        ModelExecutionConfig(),
+        config,
     )
-    cache_config = worker.cache_config
-    cache_manager = KVCacheManager(cache_config)
-    scheduler = Scheduler(
-        scheduler_config,
-        cache_manager,
-    )
+    cache_manager = KVCacheManager(config)
+    scheduler = Scheduler(config, cache_manager)
     executor = RecordingSingleProcessExecutor(worker)
     return RealEngineHarness(
         engine=Engine(scheduler, executor),
@@ -134,7 +135,7 @@ def test_control_plane_uses_model_runner_cache_capacity() -> None:
     physical_kv_cache = model_runner._physical_kv_cache
     assert physical_kv_cache is not None
 
-    assert harness.worker.cache_config.num_blocks == 7
+    assert harness.worker.config.cache_config.num_blocks == 7
     assert physical_kv_cache[0].shape[1] == 7
     assert harness.cache_manager._block_pool.num_blocks == 7
 

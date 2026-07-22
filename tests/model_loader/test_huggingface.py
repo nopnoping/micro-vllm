@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 import torch
 
-import micro_vllm.model_loader.loader as loader_module
-from micro_vllm.config import ModelConfig
+import micro_vllm.model_loader.base as base_module
+import micro_vllm.model_loader.default as default_module
+from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.model_loader import load_model
 
@@ -25,13 +26,14 @@ def test_load_model_delegates_snapshot_resolution_to_hugging_face(
     events: list[str] = []
     snapshot_call: dict[str, object] = {}
 
-    def fake_iter_safetensors_tensors(
-        model_path: Path,
-    ) -> Iterator[tuple[str, torch.Tensor]]:
-        events.append("checkpoint")
-        assert model_path == tmp_path
-        events.append("tensor")
-        yield "model.weight", torch.tensor([1.0])
+    class FakeCheckpoint:
+        def __init__(self, model_path: Path) -> None:
+            events.append("checkpoint")
+            assert model_path == tmp_path
+
+        def iter_tensors(self) -> Iterator[tuple[str, torch.Tensor]]:
+            events.append("tensor")
+            yield "model.weight", torch.tensor([1.0])
 
     class FakeModel:
         def __init__(
@@ -60,28 +62,29 @@ def test_load_model_delegates_snapshot_resolution_to_hugging_face(
         return str(tmp_path)
 
     monkeypatch.setattr(
-        loader_module,
+        default_module,
         "snapshot_download",
         fake_snapshot_download,
     )
     monkeypatch.setattr(
-        loader_module,
-        "iter_safetensors_tensors",
-        fake_iter_safetensors_tensors,
+        default_module,
+        "SafetensorsCheckpoint",
+        FakeCheckpoint,
     )
     monkeypatch.setattr(
-        loader_module,
+        base_module,
         "get_model_class",
         lambda config, *, source_label: FakeModel,
     )
 
     model = load_model(
-        "org/model",
-        ReferenceAttentionBackend(),
-        revision="branch",
-        cache_dir=tmp_path / "cache",
-        token="token",
-        local_files_only=True,
+        LLMConfig(
+            model="org/model",
+            revision="branch",
+            cache_dir=tmp_path / "cache",
+            token="token",
+            local_files_only=True,
+        )
     )
 
     assert isinstance(model, FakeModel)

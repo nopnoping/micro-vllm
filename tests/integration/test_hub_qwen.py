@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import json
+from dataclasses import replace
 from pathlib import Path
 import resource
 import time
@@ -13,21 +14,16 @@ import torch
 from huggingface_hub import HfApi, hf_hub_download
 from transformers import Qwen3ForCausalLM
 
-from micro_vllm.config import SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.core.scheduler_output import SchedulerOutput
 from micro_vllm.engine.engine import Engine
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.executor.single_process import SingleProcessExecutor
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.model_loader import load_model
 from micro_vllm.models.qwen import Qwen3Model
 from micro_vllm.sampling.params import SamplingParams
-from micro_vllm.worker.config import (
-    KVCacheInitializationConfig,
-    ModelExecutionConfig,
-)
 from micro_vllm.worker.worker import Worker
 
 
@@ -141,9 +137,7 @@ def test_pinned_hub_qwen3_gpu_acceptance() -> None:
     torch.cuda.reset_peak_memory_stats()
     online_load_started = time.perf_counter()
     online_model = load_model(
-        MODEL_REPO_ID,
-        ReferenceAttentionBackend(),
-        revision=MODEL_REVISION,
+        LLMConfig(model=MODEL_REPO_ID, revision=MODEL_REVISION)
     )
     online_load_seconds = time.perf_counter() - online_load_started
     assert isinstance(online_model, Qwen3Model)
@@ -172,35 +166,33 @@ def test_pinned_hub_qwen3_gpu_acceptance() -> None:
     del online_model
     gc.collect()
 
-    scheduler_config = SchedulerConfig(
-        max_num_batched_tokens=8,
-        max_num_seqs=1,
-        max_model_len=64,
+    config = LLMConfig(
+        model=MODEL_REPO_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+        scheduler_config=SchedulerConfig(
+            max_num_batched_tokens=8,
+            max_num_seqs=1,
+            max_model_len=64,
+        ),
+        cache_config=CacheConfig(
+            block_size=16,
+            gpu_memory_utilization=0.9,
+            num_blocks=64,
+        ),
+        device="cuda",
+        dtype=torch.float16,
     )
     cached_load_seconds: list[float] = []
 
     def initialize_cached_model() -> Qwen3Model:
         started = time.perf_counter()
-        model = load_model(
-            MODEL_REPO_ID,
-            ReferenceAttentionBackend(),
-            revision=MODEL_REVISION,
-            local_files_only=True,
-        )
+        model = load_model(config)
         cached_load_seconds.append(time.perf_counter() - started)
         assert isinstance(model, Qwen3Model)
         return model
 
-    worker = Worker(
-        initialize_cached_model,
-        KVCacheInitializationConfig(
-            block_size=16,
-            gpu_memory_utilization=0.9,
-            max_num_blocks=64,
-        ),
-        scheduler_config,
-        ModelExecutionConfig(device="cuda", dtype=torch.float16),
-    )
+    worker = Worker(initialize_cached_model, config)
     assert len(cached_load_seconds) == 1
     model_runner = worker._model_runner
     assert model_runner is not None
@@ -280,7 +272,7 @@ def test_pinned_hub_qwen3_gpu_acceptance() -> None:
         "available_kv_cache_memory_bytes": (
             model_runner._available_kv_cache_memory_bytes
         ),
-        "allocated_kv_blocks": worker.cache_config.num_blocks,
+        "allocated_kv_blocks": worker.config.cache_config.num_blocks,
         "sampling_logits_max_absolute_error": logits_max_absolute_error,
     }
     print("HUB_QWEN3_ACCEPTANCE " + json.dumps(metrics, sort_keys=True))
@@ -317,13 +309,17 @@ def _run_engine(
     token_budget: int,
     max_tokens: int,
 ) -> tuple[tuple[int, ...], list[SchedulerOutput]]:
-    scheduler = Scheduler(
-        SchedulerConfig(
+    config = replace(
+        worker.config,
+        scheduler_config=SchedulerConfig(
             max_num_batched_tokens=token_budget,
             max_num_seqs=1,
             max_model_len=64,
         ),
-        KVCacheManager(worker.cache_config),
+    )
+    scheduler = Scheduler(
+        config,
+        KVCacheManager(config),
     )
     executor = RecordingSingleProcessExecutor(worker)
     engine = Engine(scheduler, executor)

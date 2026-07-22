@@ -2,7 +2,7 @@
 
 from collections import deque
 
-from micro_vllm.config import SchedulerConfig
+from micro_vllm.config import LLMConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
@@ -14,7 +14,7 @@ class Scheduler:
 
     def __init__(
         self,
-        config: SchedulerConfig,
+        config: LLMConfig,
         kv_cache_manager: KVCacheManager,
         *,
         cache_namespace: str = "default",
@@ -30,9 +30,10 @@ class Scheduler:
     def add_request(self, request: Request) -> None:
         """Append a new waiting request to the admission queue."""
 
+        scheduler_config = self._config.scheduler_config
         if request.status is not RequestStatus.WAITING:
             raise ValueError("request must be in WAITING status")
-        if request.num_prompt_tokens >= self._config.max_model_len:
+        if request.num_prompt_tokens >= scheduler_config.max_model_len:
             raise ValueError("prompt length must be less than max_model_len")
         if request.request_id in self._requests:
             raise ValueError(f"duplicate request_id: {request.request_id}")
@@ -77,7 +78,8 @@ class Scheduler:
         if self._pending_plan is not None:
             return self._pending_plan
 
-        remaining_token_budget = self._config.max_num_batched_tokens
+        scheduler_config = self._config.scheduler_config
+        remaining_token_budget = scheduler_config.max_num_batched_tokens
         scheduled_requests: list[ScheduledRequest] = []
         preempted_request_ids: list[str] = []
         cache_capacity_exhausted = False
@@ -85,13 +87,13 @@ class Scheduler:
         for request in self._running:
             if (
                 remaining_token_budget == 0
-                or len(scheduled_requests) == self._config.max_num_seqs
+                or len(scheduled_requests) == scheduler_config.max_num_seqs
             ):
                 break
             num_scheduled_tokens = min(
                 request.num_pending_tokens,
                 remaining_token_budget,
-                self._config.max_model_len - request.num_computed_tokens,
+                scheduler_config.max_model_len - request.num_computed_tokens,
             )
             scheduled_request = self._allocate_scheduled_request(
                 request,
@@ -126,7 +128,7 @@ class Scheduler:
             self._waiting
             and not cache_capacity_exhausted
             and remaining_token_budget > 0
-            and len(self._running) < self._config.max_num_seqs
+            and len(self._running) < scheduler_config.max_num_seqs
         ):
             request = self._waiting[0]
             hit_block_ids, num_hit_tokens = self._kv_cache_manager.find_prefix_hit(
@@ -137,7 +139,7 @@ class Scheduler:
             num_scheduled_tokens = min(
                 request.num_known_tokens - num_hit_tokens,
                 remaining_token_budget,
-                self._config.max_model_len - num_hit_tokens,
+                scheduler_config.max_model_len - num_hit_tokens,
             )
             scheduled_request = self._allocate_scheduled_request(
                 request,
@@ -172,6 +174,7 @@ class Scheduler:
         if plan is not self._pending_plan:
             raise ValueError("scheduler plan is not pending or was already updated")
 
+        scheduler_config = self._config.scheduler_config
         sampled_tokens = {
             sampled_token.request_id: sampled_token.token_id
             for sampled_token in result.sampled_tokens
@@ -196,7 +199,10 @@ class Scheduler:
                     finish_reason = FinishReason.EOS
                 elif request.num_output_tokens >= params.max_tokens:
                     finish_reason = FinishReason.LENGTH
-                elif request.num_known_tokens == self._config.max_model_len:
+                elif (
+                    request.num_known_tokens
+                    == scheduler_config.max_model_len
+                ):
                     finish_reason = FinishReason.MODEL_LENGTH
                 if finish_reason is not None:
                     request.finish(finish_reason)

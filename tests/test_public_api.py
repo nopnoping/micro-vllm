@@ -10,7 +10,12 @@ import micro_vllm.model_loader as model_loader
 import micro_vllm.models as models
 import micro_vllm.sampling as sampling
 import micro_vllm.worker as worker
-from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
+from micro_vllm.config import (
+    CacheConfig,
+    LLMConfig,
+    ModelConfig,
+    SchedulerConfig,
+)
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
@@ -19,10 +24,8 @@ from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import Executor, ModelRunnerOutput, SampledToken
 from micro_vllm.llm import GenerationOutput, LLM
 from micro_vllm.model_loader import load_model
-from micro_vllm.config import ModelConfig
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.sampling.sampler import Sampler
-from micro_vllm.worker.config import ModelExecutionConfig
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 
 
@@ -80,11 +83,10 @@ def test_engine_executor_and_sampling_exports_are_explicit() -> None:
     assert sampling.SamplingParams is SamplingParams
 
 
-def test_model_and_worker_configuration_exports_are_explicit() -> None:
+def test_model_and_worker_exports_are_explicit() -> None:
     assert models.__all__ == ()
-    assert worker.__all__ == ("ModelExecutionConfig", "PhysicalKVCache")
+    assert worker.__all__ == ("PhysicalKVCache",)
     assert not hasattr(models, "ModelConfig")
-    assert worker.ModelExecutionConfig is ModelExecutionConfig
     assert worker.PhysicalKVCache is PhysicalKVCache
 
 

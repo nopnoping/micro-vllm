@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from micro_vllm.config import CacheConfig
+from micro_vllm.config import CacheConfig, LLMConfig
 from micro_vllm.core.kv_cache_manager import KVCacheAllocation, KVCacheManager
 from micro_vllm.core.prefix_cache import hash_block
 
@@ -16,10 +16,13 @@ def make_manager(
     enable_prefix_cache: bool = False,
 ) -> KVCacheManager:
     return KVCacheManager(
-        CacheConfig(
-            block_size=block_size,
-            num_blocks=num_blocks,
-            enable_prefix_cache=enable_prefix_cache,
+        LLMConfig(
+            model="unused",
+            cache_config=CacheConfig(
+                block_size=block_size,
+                num_blocks=num_blocks,
+                enable_prefix_cache=enable_prefix_cache,
+            ),
         )
     )
 

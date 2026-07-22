@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from micro_vllm.model_loader.loader import _resolve_local_model_path
+from micro_vllm.model_loader.default import _resolve_local_model_path
 
 
 def test_resolve_local_model_path_accepts_explicit_path(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@
 
 import pytest
 
-from micro_vllm.config import CacheConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.prefix_cache import hash_block
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
@@ -50,27 +50,39 @@ def make_scheduler(
     enable_prefix_cache: bool = False,
     cache_namespace: str = "default",
 ) -> Scheduler:
-    return Scheduler(
-        SchedulerConfig(token_budget, sequence_budget, max_model_len),
-        KVCacheManager(
-            CacheConfig(
-                block_size=block_size,
-                num_blocks=num_blocks,
-                enable_prefix_cache=enable_prefix_cache,
-            )
+    config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(
+            token_budget,
+            sequence_budget,
+            max_model_len,
         ),
+        cache_config=CacheConfig(
+            block_size=block_size,
+            num_blocks=num_blocks,
+            enable_prefix_cache=enable_prefix_cache,
+        ),
+    )
+    return Scheduler(
+        config,
+        KVCacheManager(config),
         cache_namespace=cache_namespace,
     )
 
 
 def test_scheduler_requires_explicit_kv_cache_manager() -> None:
     with pytest.raises(TypeError):
-        Scheduler(SchedulerConfig(4, 1, 128))  # type: ignore[call-arg]
+        Scheduler(LLMConfig(model="unused"))  # type: ignore[call-arg]
 
 
 def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> None:
-    manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
-    scheduler = Scheduler(SchedulerConfig(4, 1, 128), manager)
+    config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(4, 1, 128),
+        cache_config=CacheConfig(block_size=4, num_blocks=8),
+    )
+    manager = KVCacheManager(config)
+    scheduler = Scheduler(config, manager)
     request = make_request("request-1", [1, 2, 3])
     request_state_before = (
         request.status,
@@ -80,6 +92,7 @@ def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> No
 
     scheduler.add_request(request)
 
+    assert scheduler._config is config
     assert scheduler._kv_cache_manager is manager
     assert scheduler.get_request("request-1") is request
     assert manager.get_block_table("request-1") == ()
@@ -91,10 +104,20 @@ def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> No
 
 
 def test_each_scheduler_uses_an_independent_cache_manager() -> None:
-    first_manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
-    second_manager = KVCacheManager(CacheConfig(block_size=4, num_blocks=8))
-    first_scheduler = Scheduler(SchedulerConfig(4, 1, 128), first_manager)
-    second_scheduler = Scheduler(SchedulerConfig(4, 1, 128), second_manager)
+    first_config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(4, 1, 128),
+        cache_config=CacheConfig(block_size=4, num_blocks=8),
+    )
+    second_config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(4, 1, 128),
+        cache_config=CacheConfig(block_size=4, num_blocks=8),
+    )
+    first_manager = KVCacheManager(first_config)
+    second_manager = KVCacheManager(second_config)
+    first_scheduler = Scheduler(first_config, first_manager)
+    second_scheduler = Scheduler(second_config, second_manager)
 
     first_scheduler.add_request(make_request("request-1", [1]))
     second_scheduler.add_request(make_request("request-1", [2]))
@@ -484,13 +507,16 @@ def test_waiting_request_uses_prefix_hit_before_admission() -> None:
 
 
 def test_prefix_hit_larger_than_cache_fails_without_claiming_blocks() -> None:
-    manager = KVCacheManager(
-        CacheConfig(
+    config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(1, 1, 128),
+        cache_config=CacheConfig(
             block_size=2,
             num_blocks=2,
             enable_prefix_cache=True,
-        )
+        ),
     )
+    manager = KVCacheManager(config)
     manager.register_request("seed")
     assert manager.allocate_slots("seed", 0, 4) is not None
     assert manager.commit_prefix_blocks(
@@ -501,7 +527,7 @@ def test_prefix_hit_larger_than_cache_fails_without_claiming_blocks() -> None:
     ) == (0, 1)
     manager.free_request("seed")
     scheduler = Scheduler(
-        SchedulerConfig(1, 1, 128),
+        config,
         manager,
         cache_namespace="model-a",
     )
@@ -589,8 +615,13 @@ def test_preemption_selects_most_recent_unscheduled_victim() -> None:
 
 
 def test_preemption_stops_when_current_request_reaches_running_tail() -> None:
-    manager = KVCacheManager(CacheConfig(block_size=2, num_blocks=2))
-    scheduler = Scheduler(SchedulerConfig(3, 2, 128), manager)
+    config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(3, 2, 128),
+        cache_config=CacheConfig(block_size=2, num_blocks=2),
+    )
+    manager = KVCacheManager(config)
+    scheduler = Scheduler(config, manager)
     current = make_request("current", [1, 2, 3, 4, 5])
     victim = make_request("victim", [6, 7])
     scheduler.add_request(current)
@@ -612,15 +643,18 @@ def test_preemption_stops_when_current_request_reaches_running_tail() -> None:
 
 
 def test_preempted_victim_reenters_from_cached_prefix() -> None:
-    manager = KVCacheManager(
-        CacheConfig(
+    config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(4, 3, 128),
+        cache_config=CacheConfig(
             block_size=2,
             num_blocks=4,
             enable_prefix_cache=True,
-        )
+        ),
     )
+    manager = KVCacheManager(config)
     scheduler = Scheduler(
-        SchedulerConfig(4, 3, 128),
+        config,
         manager,
         cache_namespace="model-a",
     )

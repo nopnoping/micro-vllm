@@ -1,16 +1,15 @@
 """ModelRunner-owned physical KV-cache tensor storage."""
 
+from typing import cast
+
 import torch
 
-from micro_vllm.config import CacheConfig, ModelConfig
-from micro_vllm.worker.config import ModelExecutionConfig
+from micro_vllm.config import LLMConfig, ModelConfig
 
 
 def kv_cache_block_size_bytes(
+    llm_config: LLMConfig,
     model_config: ModelConfig,
-    *,
-    block_size: int,
-    dtype: torch.dtype,
 ) -> int:
     """Return the physical bytes consumed by one block across all layers."""
 
@@ -23,11 +22,11 @@ def kv_cache_block_size_bytes(
         "num_key_value_heads",
         num_attention_heads,
     )
-    element_size = torch.empty((), dtype=dtype).element_size()
+    element_size = torch.empty((), dtype=llm_config.dtype).element_size()
     return (
         num_layers
         * 2
-        * block_size
+        * llm_config.cache_config.block_size
         * num_key_value_heads
         * head_dim
         * element_size
@@ -41,10 +40,10 @@ class PhysicalKVCache:
 
     def __init__(
         self,
-        cache_config: CacheConfig,
+        llm_config: LLMConfig,
         model_config: ModelConfig,
-        execution_config: ModelExecutionConfig,
     ) -> None:
+        cache_config = llm_config.cache_config
         num_layers = model_config.require_positive_int("num_hidden_layers")
         head_dim = _model_head_dim(model_config)
         num_attention_heads = model_config.require_positive_int(
@@ -57,7 +56,7 @@ class PhysicalKVCache:
         shape = torch.Size(
             (
                 2,
-                cache_config.num_blocks,
+                cast(int, cache_config.num_blocks),
                 cache_config.block_size,
                 num_key_value_heads,
                 head_dim,
@@ -66,8 +65,8 @@ class PhysicalKVCache:
         self._layer_caches = tuple(
             torch.empty(
                 shape,
-                dtype=execution_config.dtype,
-                device=execution_config.device,
+                dtype=llm_config.dtype,
+                device=llm_config.device,
             )
             for _ in range(num_layers)
         )

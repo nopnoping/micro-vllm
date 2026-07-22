@@ -6,14 +6,10 @@ import pytest
 import torch
 from torch.nn import functional as F
 
-from micro_vllm.config import ModelConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.layers.attention_backend import AttentionMetadata, PAD_BLOCK_ID
 from micro_vllm.sampling.params import SamplingParams
-from micro_vllm.worker.config import (
-    KVCacheInitializationConfig,
-    ModelExecutionConfig,
-)
 from micro_vllm.worker.kv_cache import PhysicalKVCache
 from micro_vllm.worker.model_runner import ModelRunner
 
@@ -68,18 +64,23 @@ def make_model_config() -> ModelConfig:
 
 def make_runner() -> tuple[ModelRunner, FakeModel, PhysicalKVCache]:
     model = FakeModel()
+    cache_config = CacheConfig(block_size=2, num_blocks=8)
     runner = ModelRunner(
         lambda: model,
-        KVCacheInitializationConfig(block_size=2, max_num_blocks=8),
-        SchedulerConfig(
-            max_num_batched_tokens=8,
-            max_num_seqs=2,
-            max_model_len=32,
+        LLMConfig(
+            model="unused",
+            cache_config=cache_config,
+            scheduler_config=SchedulerConfig(
+                max_num_batched_tokens=8,
+                max_num_seqs=2,
+                max_model_len=32,
+            ),
+            device="cpu",
+            dtype=torch.float32,
         ),
-        ModelExecutionConfig(),
     )
     assert runner.initialize_model() is model.config
-    cache_config = runner.initialize_kv_cache()
+    runner.initialize_kv_cache()
     assert cache_config.num_blocks == 8
     cache = runner._physical_kv_cache
     assert cache is not None
@@ -93,20 +94,24 @@ def make_uninitialized_runner(
     *,
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
-    max_num_blocks: int | None = 8,
+    num_blocks: int | None = 8,
 ) -> ModelRunner:
     return ModelRunner(
         model_initializer,
-        KVCacheInitializationConfig(
-            block_size=2,
-            max_num_blocks=max_num_blocks,
+        LLMConfig(
+            model="unused",
+            cache_config=CacheConfig(
+                block_size=2,
+                num_blocks=num_blocks,
+            ),
+            scheduler_config=SchedulerConfig(
+                max_num_batched_tokens=8,
+                max_num_seqs=2,
+                max_model_len=32,
+            ),
+            device=device,
+            dtype=dtype,
         ),
-        SchedulerConfig(
-            max_num_batched_tokens=8,
-            max_num_seqs=2,
-            max_model_len=32,
-        ),
-        ModelExecutionConfig(device=device, dtype=dtype),
     )
 
 
@@ -117,6 +122,7 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
     runner = make_uninitialized_runner(
         lambda: initialized.append(model) or model
     )
+    cache_config = runner._config.cache_config
 
     assert initialized == []
     assert runner.initialize_model() is model.config
@@ -135,7 +141,7 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
         for request in warmup_plan.scheduled_requests
     )
 
-    cache_config = runner.initialize_kv_cache()
+    runner.initialize_kv_cache()
     cache = runner._physical_kv_cache
     assert cache_config.num_blocks == 8
     assert cache is not None
@@ -155,7 +161,7 @@ def test_model_runner_derives_gpu_block_count_from_available_bytes() -> None:
     model = FakeModel()
     runner = make_uninitialized_runner(
         lambda: model,
-        max_num_blocks=None,
+        num_blocks=None,
     )
     runner.initialize_model()
     bytes_per_block = 2 * 2 * 2 * 1 * 4 * 4
@@ -170,11 +176,11 @@ def test_cpu_kv_cache_initialization_requires_deterministic_capacity() -> None:
     model = FakeModel()
     runner = make_uninitialized_runner(
         lambda: model,
-        max_num_blocks=None,
+        num_blocks=None,
     )
     runner.initialize_model()
 
-    with pytest.raises(ValueError, match="CPU execution requires max_num_blocks"):
+    with pytest.raises(ValueError, match="CPU execution requires num_blocks"):
         runner.initialize_kv_cache()
 
 

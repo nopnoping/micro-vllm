@@ -2,8 +2,9 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import cast
 
-from micro_vllm.config import CacheConfig
+from micro_vllm.config import LLMConfig
 from micro_vllm.core.block import BlockHash, BlockPool, BlockTable
 from micro_vllm.core.prefix_cache import hash_block
 
@@ -34,8 +35,9 @@ class KVCacheManager:
         "_enable_prefix_cache",
     )
 
-    def __init__(self, config: CacheConfig) -> None:
-        self._block_pool = BlockPool(config.num_blocks)
+    def __init__(self, llm_config: LLMConfig) -> None:
+        config = llm_config.cache_config
+        self._block_pool = BlockPool(cast(int, config.num_blocks))
         self._block_size = config.block_size
         self._block_tables: dict[str, BlockTable] = {}
         self._enable_prefix_cache = config.enable_prefix_cache

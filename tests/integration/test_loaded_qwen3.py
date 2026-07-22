@@ -10,10 +10,9 @@ import pytest
 import torch
 from transformers import Qwen3ForCausalLM
 
-from micro_vllm.config import ModelConfig
+from micro_vllm.config import LLMConfig, ModelConfig
 from micro_vllm.layers.attention_backend import (
     AttentionMetadata,
-    ReferenceAttentionBackend,
     map_cache_slots,
 )
 from micro_vllm.model_loader import load_model
@@ -58,7 +57,7 @@ def test_load_model_restores_qwen3_parameters_and_tied_identity(
 ) -> None:
     reference_model, checkpoint_path = tiny_hf_qwen3_checkpoint
 
-    loaded_model = load_model(checkpoint_path, ReferenceAttentionBackend())
+    loaded_model = load_model(LLMConfig(model=checkpoint_path))
 
     assert isinstance(loaded_model, Qwen3Model)
     assert loaded_model.training is False
@@ -80,7 +79,7 @@ def test_loaded_qwen3_hidden_states_and_logits_match_transformers_cpu(
     tiny_hf_qwen3_checkpoint: tuple[Qwen3ForCausalLM, Path],
 ) -> None:
     reference_model, checkpoint_path = tiny_hf_qwen3_checkpoint
-    loaded_model = load_model(checkpoint_path, ReferenceAttentionBackend())
+    loaded_model = load_model(LLMConfig(model=checkpoint_path))
     assert isinstance(loaded_model, Qwen3Model)
 
     values = _run_model_pair(
@@ -111,7 +110,7 @@ def test_loaded_qwen3_hidden_states_and_logits_match_transformers_gpu_fp16(
     tiny_hf_qwen3_checkpoint: tuple[Qwen3ForCausalLM, Path],
 ) -> None:
     reference_model, checkpoint_path = tiny_hf_qwen3_checkpoint
-    loaded_model = load_model(checkpoint_path, ReferenceAttentionBackend())
+    loaded_model = load_model(LLMConfig(model=checkpoint_path))
     assert isinstance(loaded_model, Qwen3Model)
 
     values = _run_model_pair(

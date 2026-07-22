@@ -7,21 +7,16 @@ from dataclasses import dataclass
 
 import torch
 
-from micro_vllm.config import LLMConfig, SchedulerConfig
+from micro_vllm.config import LLMConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason
 from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.single_process import SingleProcessExecutor
-from micro_vllm.layers.attention_backend import ReferenceAttentionBackend
 from micro_vllm.model_loader import load_model
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.tokenizer import apply_tokenizer_eos, load_tokenizer
-from micro_vllm.worker.config import (
-    KVCacheInitializationConfig,
-    ModelExecutionConfig,
-)
 from micro_vllm.worker.worker import Worker
 
 
@@ -46,11 +41,11 @@ class LLM:
 
     __slots__ = (
         "_closed",
+        "_config",
         "_engine",
         "_executor",
         "_request_counter",
         "_scheduler",
-        "_scheduler_config",
         "_tokenizer",
         "_worker",
     )
@@ -58,51 +53,20 @@ class LLM:
     def __init__(self, config: LLMConfig) -> None:
         tokenizer = config.tokenizer
         if tokenizer is None:
-            tokenizer = load_tokenizer(
-                config.model
-                if config.tokenizer_name_or_path is None
-                else config.tokenizer_name_or_path,
-                revision=config.revision,
-                cache_dir=config.cache_dir,
-                token=config.token,
-                local_files_only=config.local_files_only,
-            )
-
-        scheduler_config = SchedulerConfig(
-            max_num_batched_tokens=config.max_num_batched_tokens,
-            max_num_seqs=config.max_num_seqs,
-            max_model_len=config.max_model_len,
-        )
+            tokenizer = load_tokenizer(config)
 
         def initialize_model() -> torch.nn.Module:
-            return load_model(
-                config.model,
-                ReferenceAttentionBackend(),
-                revision=config.revision,
-                cache_dir=config.cache_dir,
-                token=config.token,
-                local_files_only=config.local_files_only,
-            )
+            return load_model(config)
 
-        worker = Worker(
-            initialize_model,
-            KVCacheInitializationConfig(
-                block_size=config.block_size,
-                gpu_memory_utilization=config.gpu_memory_utilization,
-                max_num_blocks=config.max_num_blocks,
-                enable_prefix_cache=config.enable_prefix_cache,
-            ),
-            scheduler_config,
-            ModelExecutionConfig(device=config.device, dtype=config.dtype),
-        )
+        worker = Worker(initialize_model, config)
         scheduler = Scheduler(
-            scheduler_config,
-            KVCacheManager(worker.cache_config),
+            config,
+            KVCacheManager(config),
         )
         executor = SingleProcessExecutor(worker)
 
+        self._config = config
         self._tokenizer = tokenizer
-        self._scheduler_config = scheduler_config
         self._worker = worker
         self._scheduler = scheduler
         self._executor = executor
@@ -148,7 +112,10 @@ class LLM:
                 raise ValueError(
                     f"tokenizer produced no tokens for prompt at index {index}"
                 )
-            if len(prompt_token_ids) >= self._scheduler_config.max_model_len:
+            if (
+                len(prompt_token_ids)
+                >= self._config.scheduler_config.max_model_len
+            ):
                 raise ValueError(
                     f"prompt at index {index} has {len(prompt_token_ids)} tokens; "
                     "prompt length must be less than max_model_len"

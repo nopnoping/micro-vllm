@@ -1,6 +1,6 @@
 """End-to-end tests for the synchronous engine control loop."""
 
-from micro_vllm.config import CacheConfig, SchedulerConfig
+from micro_vllm.config import CacheConfig, LLMConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
@@ -52,19 +52,22 @@ def make_engine(
     max_model_len: int = 128,
     executor: FakeExecutor | None = None,
 ) -> tuple[Engine, Scheduler, FakeExecutor]:
-    scheduler = Scheduler(
-        SchedulerConfig(
+    config = LLMConfig(
+        model="unused",
+        scheduler_config=SchedulerConfig(
             max_num_batched_tokens=token_budget,
             max_num_seqs=sequence_budget,
             max_model_len=max_model_len,
         ),
-        KVCacheManager(
-            CacheConfig(
-                block_size=4,
-                num_blocks=128,
-                enable_prefix_cache=False,
-            )
+        cache_config=CacheConfig(
+            block_size=4,
+            num_blocks=128,
+            enable_prefix_cache=False,
         ),
+    )
+    scheduler = Scheduler(
+        config,
+        KVCacheManager(config),
     )
     fake_executor = executor or FakeExecutor()
     return Engine(scheduler, fake_executor), scheduler, fake_executor

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from micro_vllm.model_loader.loader import _read_model_config as read_model_config
+from micro_vllm.model_loader.base import _read_model_config as read_model_config
 
 
 def write_config(tmp_path: Path, config: object) -> Path:

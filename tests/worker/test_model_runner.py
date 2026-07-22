@@ -214,7 +214,7 @@ def test_slot_mapping_crosses_physical_block_boundary() -> None:
 
     slot_mapping = build_slot_mapping(
         SchedulerOutput((request,)),
-        CacheConfig(block_size=4, num_blocks=8),
+        4,
         device=torch.device("cpu"),
     )
 
@@ -243,7 +243,7 @@ def test_slot_mapping_preserves_mixed_request_order() -> None:
 
     slot_mapping = build_slot_mapping(
         SchedulerOutput((first, second)),
-        CacheConfig(block_size=4, num_blocks=8),
+        4,
         device=torch.device("cpu"),
     )
 
@@ -263,7 +263,7 @@ def test_slot_mapping_stays_within_flattened_cache_capacity() -> None:
 
     slot_mapping = build_slot_mapping(
         SchedulerOutput((request,)),
-        cache_config,
+        cache_config.block_size,
         device=torch.device("cpu"),
     )
 
@@ -353,7 +353,7 @@ def test_padding_is_not_referenced_by_slot_mapping() -> None:
     block_table = build_block_table(plan, device=torch.device("cpu"))
     slot_mapping = build_slot_mapping(
         plan,
-        cache_config,
+        cache_config.block_size,
         device=torch.device("cpu"),
     )
     model_input = flatten_model_input(
