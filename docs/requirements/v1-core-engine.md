@@ -273,13 +273,13 @@ group；Engine 侧仍只管理 logical/physical block ID，不持有真实 K/V t
 
 ## 7. V1.4：权重加载、模型覆盖与完整 Sampling（已完成）
 
-| 子阶段 | 内容 | 状态 | 技术清单 |
-|---|---|---|---|
-| V1.4A | Safetensors Checkpoint Reader | 已完成 | [清单](../implementation/v1-checkpoint-source-todo.md) |
-| V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
-| V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 | [清单](../implementation/v1-real-llama-integration-todo.md) |
-| V1.4D | Qwen dense model 与 checkpoint | 已完成 | [清单](../implementation/v1-qwen-integration-todo.md) |
-| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 已完成 | [清单](../implementation/v1-sampling-offline-api-todo.md) |
+| 子阶段 | 内容 | 状态 |
+|---|---|---|
+| V1.4A | Safetensors Checkpoint Reader | 已完成 |
+| V1.4B | Model Loader 与 HF checkpoint | 已完成 |
+| V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 |
+| V1.4D | Qwen dense model 与 checkpoint | 已完成 |
+| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 已完成 |
 
 V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
 验证。V1.4C 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
@@ -432,8 +432,7 @@ ModelInitializer
 
 ## 8. V1.5：多 Attention 类型与多 KV Cache Group（已完成）
 
-实现顺序、抽象边界和验收项见
-[技术清单](../implementation/v1-multi-attention-kv-cache-todo.md)。
+阶段性实现清单已完成并删除；稳定抽象、验收项和最终状态收敛在本节。
 
 ### 当前扩展基础
 
@@ -500,6 +499,9 @@ AttentionSpec 或 release boundary。
 - 关闭时不构造 event 或 block-table trace snapshot，热路径只保留一次空值判断。
 
 ## 9. V1.6：Optimized Backend 与性能收尾
+
+实现顺序、稳定边界、benchmark schema 和验收项见
+[技术清单](../implementation/v1-performance-todo.md)。
 
 ### Optimized Attention
 
