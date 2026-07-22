@@ -241,10 +241,15 @@ cache_hit.num_computed_tokens
 
 allocation = kv_cache_manager.allocate_slots(
     request_id,
-    cache_hit=cache_hit,
+    num_computed_tokens=cache_hit.num_computed_tokens,
     num_scheduled_tokens=num_scheduled_tokens,
+    cache_hit=cache_hit,
 )
 ```
+
+运行中的 request 不需要 cache hit，直接把当前公共 `num_computed_tokens` 交给
+同一 allocation facade。cache namespace 在 KVCacheManager 构造时绑定，不由
+Scheduler 在 lookup 或 commit 时传入。
 
 分配流程由 KVCacheManager 完成：
 
@@ -349,16 +354,21 @@ execute 数据流。
 
 ## 7. Phase 3：KVCacheManager coordinator 和 Scheduler facade
 
-- [ ] KVCacheManager 根据 layout 创建一个 group manager per group。
-- [ ] 实现跨 group fixed-point common-prefix intersection。
-- [ ] `KVCacheHit` 同时携带公共 token 数和 per-group opaque hit state。
-- [ ] 每 request/group 拥有独立 BlockTable。
-- [ ] allocation 汇总所有 group 需求并原子提交共享 pool。
-- [ ] Scheduler 不读取 group/spec，只读取公共 hit length 和 allocation 成败。
-- [ ] `commit_step()` 统一完成 prefix commit 和 skipped block release。
-- [ ] plan retry 和 failed execution 不改变已提交 cache state。
-- [ ] preempt/recompute、abort 和 finish 一次性释放所有 group。
-- [ ] victim selection 保持现有 deterministic Scheduler 策略。
+- [x] KVCacheManager 根据 layout 创建一个 group manager per group。
+- [x] 实现跨 group fixed-point common-prefix intersection。
+- [x] `KVCacheHit` 同时携带公共 token 数和 per-group opaque hit state。
+- [x] 每 request/group 拥有独立 BlockTable。
+- [x] allocation 汇总所有 group 需求并原子提交共享 pool。
+- [x] Scheduler 不读取 group/spec，只读取公共 hit length 和 allocation 成败。
+- [x] cache namespace 在 KVCacheManager 构造时绑定，不经过 Scheduler。
+- [x] `commit_step()` 统一完成 prefix commit 和 skipped block release。
+- [x] plan retry 和 failed execution 不改变已提交 cache state。
+- [x] preempt/recompute、abort 和 finish 一次性释放所有 group。
+- [x] victim selection 保持现有 deterministic Scheduler 策略。
+
+Phase 3 保留 `ScheduledRequest.block_table` 的 full-only execute 兼容视图；
+per-group tables 已由 coordinator 生成，但进入 SchedulerOutput/ModelRunner 的
+数据 contract 统一留到 Phase 5 完成。
 
 ## 8. Phase 4：PhysicalKVCache 共享 page layout
 
@@ -494,10 +504,13 @@ contract，应先停止并重新 review；正常 V1.5 扩展不需要改变这�
 
 ## 17. 实现状态
 
-2026-07-22：完成第二轮技术方案 review、实现清单重写、Phase 0、Phase 1 和
-Phase 2。
+2026-07-22：完成第二轮技术方案 review、实现清单重写、Phase 0、Phase 1、
+Phase 2 和 Phase 3。
 ModelRunner 从 `layer_attentions` 派生稳定 topology，`groups[].layer_indices` 是
 唯一的 layer/group 映射来源。BlockPool 的最后一个物理 page 现在永久作为公共
 null block，BlockTable 和 rectangular padding 只保存真实非负 block ID；prefix
 hash domain 已包含 group ID。Full、SlidingWindow 和 ChunkedLocal group policy
-已使用同一个 BlockPool 实现。按当前要求只完成本地静态检查，未执行 SSH 远端测试。
+已使用同一个 BlockPool 实现。KVCacheManager 现在负责 fixed-point common hit、
+跨 group 原子 allocation、step commit/release 和完整 request lifecycle；
+Scheduler 不再持有 cache namespace 或 cached block ID。按当前要求只完成本地
+静态检查，未执行 SSH 远端测试。

@@ -3,7 +3,7 @@
 from collections import deque
 
 from micro_vllm.config import LLMConfig
-from micro_vllm.core.kv_cache_manager import KVCacheManager
+from micro_vllm.core.kv_cache_manager import KVCacheHit, KVCacheManager
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler_output import ScheduledRequest, SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
@@ -16,12 +16,9 @@ class Scheduler:
         self,
         config: LLMConfig,
         kv_cache_manager: KVCacheManager,
-        *,
-        cache_namespace: str = "default",
     ) -> None:
         self._config = config
         self._kv_cache_manager = kv_cache_manager
-        self._cache_namespace = cache_namespace
         self._waiting: deque[Request] = deque()
         self._running: list[Request] = []
         self._requests: dict[str, Request] = {}
@@ -131,11 +128,11 @@ class Scheduler:
             and len(self._running) < scheduler_config.max_num_seqs
         ):
             request = self._waiting[0]
-            hit_block_ids, num_hit_tokens = self._kv_cache_manager.find_prefix_hit(
+            cache_hit = self._kv_cache_manager.find_longest_cache_hit(
                 request.request_id,
                 request.all_token_ids,
-                cache_namespace=self._cache_namespace,
             )
+            num_hit_tokens = cache_hit.num_computed_tokens
             num_scheduled_tokens = min(
                 request.num_known_tokens - num_hit_tokens,
                 remaining_token_budget,
@@ -145,7 +142,7 @@ class Scheduler:
                 request,
                 num_hit_tokens,
                 num_scheduled_tokens,
-                cached_block_ids=hit_block_ids,
+                cache_hit=cache_hit,
             )
             if scheduled_request is None:
                 if not scheduled_requests:
@@ -208,11 +205,10 @@ class Scheduler:
                     request.finish(finish_reason)
                     finished_request_ids.append(request.request_id)
 
-            self._kv_cache_manager.commit_prefix_blocks(
+            self._kv_cache_manager.commit_step(
                 request.request_id,
                 request.all_token_ids,
                 request.num_computed_tokens,
-                cache_namespace=self._cache_namespace,
             )
 
         if finished_request_ids:
@@ -232,13 +228,13 @@ class Scheduler:
         num_computed_tokens: int,
         num_scheduled_tokens: int,
         *,
-        cached_block_ids: tuple[int, ...] = (),
+        cache_hit: KVCacheHit | None = None,
     ) -> ScheduledRequest | None:
         allocation = self._kv_cache_manager.allocate_slots(
             request.request_id,
             num_computed_tokens,
             num_scheduled_tokens,
-            cached_block_ids,
+            cache_hit=cache_hit,
         )
         if allocation is None:
             return None

@@ -1,12 +1,25 @@
-"""Tests for logical request KV-cache lifecycle management."""
+"""Tests for multi-group logical KV-cache coordination."""
 
 from dataclasses import FrozenInstanceError
 
 import pytest
 
+from micro_vllm.attention.spec import (
+    AttentionSpec,
+    ChunkedLocalSpec,
+    FullAttentionSpec,
+    SlidingWindowSpec,
+)
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig
-from micro_vllm.core.kv_cache_manager import KVCacheAllocation, KVCacheManager
-from micro_vllm.core.prefix_cache import hash_block
+from micro_vllm.core.block import BlockTable
+from micro_vllm.core.kv_cache_manager import (
+    KVCacheAllocation,
+    KVCacheManager,
+)
+from micro_vllm.core.kv_cache_spec import (
+    KVCacheLayout,
+    build_kv_cache_topology,
+)
 
 
 def make_manager(
@@ -14,243 +27,294 @@ def make_manager(
     num_blocks: int = 9,
     *,
     enable_prefix_cache: bool = False,
+    attention_specs: tuple[AttentionSpec, ...] = (FullAttentionSpec(),),
+    cache_namespace: str = "model-a",
 ) -> KVCacheManager:
+    config = LLMConfig(
+        model_config=ModelConfig(model="unused"),
+        cache_config=CacheConfig(
+            block_size=block_size,
+            num_blocks=num_blocks,
+            enable_prefix_cache=enable_prefix_cache,
+        ),
+    )
+    layout = KVCacheLayout(
+        block_size=block_size,
+        num_blocks=num_blocks,
+        topology=build_kv_cache_topology(attention_specs),
+    )
     return KVCacheManager(
-        LLMConfig(
-            model_config=ModelConfig(model="unused"),
-            cache_config=CacheConfig(
-                block_size=block_size,
-                num_blocks=num_blocks,
-                enable_prefix_cache=enable_prefix_cache,
-            ),
-        )
+        config,
+        layout,
+        cache_namespace=cache_namespace,
     )
 
 
-def cache_token_blocks(
+def cache_group_blocks(
     manager: KVCacheManager,
-    token_blocks: tuple[tuple[int, ...], ...],
-    *,
-    namespace: str = "model-a",
-) -> tuple[bytes, ...]:
-    parent_hash = None
-    block_hashes: list[bytes] = []
+    group_index: int,
+    token_ids: tuple[int, ...],
+    logical_block_indices: tuple[int, ...],
+) -> tuple[int, ...]:
+    block_ids = manager._block_pool.allocate(len(logical_block_indices))
+    assert block_ids is not None
+    block_table = BlockTable(manager._block_pool.null_block_id)
+    block_table.fill_missing(logical_block_indices, block_ids)
+    manager._group_managers[group_index].cache_computed_blocks(
+        block_table,
+        token_ids,
+        (max(logical_block_indices) + 1) * manager._layout.block_size,
+    )
+    cached_block_ids = tuple(
+        block_table.physical_block(index)
+        for index in logical_block_indices
+    )
+    for block_id in block_table.clear():
+        manager._block_pool.release(block_id)
+    return cached_block_ids
 
-    for token_block in token_blocks:
-        block_ids = manager._block_pool.allocate(1)
-        assert block_ids is not None
-        block_hash = hash_block(
-            parent_hash,
-            token_block,
-            block_size=len(token_block),
-            cache_namespace=namespace,
+
+def test_manager_builds_group_policies_over_one_shared_pool() -> None:
+    manager = make_manager(
+        attention_specs=(
+            FullAttentionSpec(),
+            SlidingWindowSpec(4),
+            ChunkedLocalSpec(4),
         )
-        manager._block_pool.cache_block(block_ids[0], block_hash)
-        manager._block_pool.release(block_ids[0])
-        block_hashes.append(block_hash)
-        parent_hash = block_hash
+    )
 
-    return tuple(block_hashes)
-
-
-def test_manager_owns_one_pool_and_empty_table_registry() -> None:
-    manager = make_manager()
-
+    assert len(manager._group_managers) == 3
+    assert all(
+        group_manager._block_pool is manager._block_pool
+        for group_manager in manager._group_managers
+    )
     assert manager._block_pool.num_blocks == 9
     assert manager._block_pool.num_free_blocks == 8
     assert manager._block_pool.null_block_id == 8
-    assert manager._block_tables == {}
 
 
-def test_register_request_creates_isolated_empty_block_tables() -> None:
-    manager = make_manager()
+def test_register_request_creates_one_isolated_table_per_group() -> None:
+    manager = make_manager(
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(4))
+    )
 
     manager.register_request("request-1")
     manager.register_request("request-2")
 
-    assert manager.get_block_table("request-1") == ()
-    assert manager.get_block_table("request-2") == ()
-    assert manager._block_tables["request-1"] is not manager._block_tables["request-2"]
-
-
-def test_find_then_allocate_prefix_hit_separates_discovery_from_ownership() -> None:
-    manager = make_manager(
-        block_size=2,
-        num_blocks=5,
-        enable_prefix_cache=True,
+    assert manager.get_block_tables("request-1") == ((), ())
+    assert manager.get_block_tables("request-2") == ((), ())
+    first_tables = manager._block_tables["request-1"]
+    second_tables = manager._block_tables["request-2"]
+    assert all(
+        first is not second
+        for first, second in zip(first_tables, second_tables, strict=True)
     )
-    block_hashes = cache_token_blocks(manager, ((1, 2), (3, 4)))
+
+
+def test_default_layout_preserves_the_full_only_path() -> None:
+    config = LLMConfig(
+        model_config=ModelConfig(model="unused"),
+        cache_config=CacheConfig(block_size=2, num_blocks=5),
+    )
+    manager = KVCacheManager(config)
     manager.register_request("request-1")
 
-    hit_block_ids, num_hit_tokens = manager.find_prefix_hit(
+    allocation = manager.allocate_slots("request-1", 0, 3)
+
+    assert allocation == KVCacheAllocation(((0, 1),), (0, 1))
+    assert allocation.block_table == (0, 1)
+    assert manager.get_block_table("request-1") == (0, 1)
+
+
+def test_common_prefix_reaches_a_fixed_point_across_groups() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=12,
+        enable_prefix_cache=True,
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(3)),
+    )
+    token_ids = (1, 2, 3, 4, 5, 6, 7)
+    cache_group_blocks(manager, 0, token_ids, (0, 1))
+    cache_group_blocks(manager, 1, token_ids, (2,))
+    manager.register_request("request-1")
+
+    hit = manager.find_longest_cache_hit("request-1", token_ids)
+
+    assert hit.num_computed_tokens == 0
+    assert manager.get_block_tables("request-1") == ((), ())
+
+
+def test_common_hit_restores_each_group_snapshot_before_allocation() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=12,
+        enable_prefix_cache=True,
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(3)),
+    )
+    token_ids = (1, 2, 3, 4, 5, 6, 7)
+    full_block_ids = cache_group_blocks(manager, 0, token_ids, (0, 1))
+    (sliding_block_id,) = cache_group_blocks(manager, 1, token_ids, (1,))
+    manager.register_request("request-1")
+
+    hit = manager.find_longest_cache_hit("request-1", token_ids)
+    allocation = manager.allocate_slots(
         "request-1",
-        (1, 2, 3, 4, 5),
-        cache_namespace="model-a",
+        hit.num_computed_tokens,
+        1,
+        cache_hit=hit,
     )
 
-    assert hit_block_ids == (0, 1)
-    assert num_hit_tokens == 4
+    assert hit.num_computed_tokens == 4
+    assert allocation is not None
+    assert allocation.block_tables[0][:2] == full_block_ids
+    assert allocation.block_tables[1][:2] == (
+        manager._block_pool.null_block_id,
+        sliding_block_id,
+    )
+    assert len(allocation.new_block_ids) == 2
+    assert allocation.block_tables[0][2] != allocation.block_tables[1][2]
+
+
+def test_prefix_discovery_does_not_acquire_blocks() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=6,
+        enable_prefix_cache=True,
+    )
+    token_ids = (1, 2, 3, 4, 5)
+    cached_block_ids = cache_group_blocks(manager, 0, token_ids, (0, 1))
+    manager.register_request("request-1")
+
+    hit = manager.find_longest_cache_hit("request-1", token_ids)
+
+    assert hit.num_computed_tokens == 4
+    assert tuple(
+        manager._block_pool.ref_count(block_id)
+        for block_id in cached_block_ids
+    ) == (0, 0)
     assert manager.get_block_table("request-1") == ()
+
+
+def test_prefix_hit_keeps_one_known_token_for_model_computation() -> None:
+    manager = make_manager(
+        block_size=2,
+        enable_prefix_cache=True,
+    )
+    token_ids = (1, 2, 3, 4)
+    cache_group_blocks(manager, 0, token_ids, (0, 1))
+    manager.register_request("request-1")
+
+    hit = manager.find_longest_cache_hit("request-1", token_ids)
+
+    assert hit.num_computed_tokens == 2
+
+
+def test_chunked_group_can_skip_completed_chunks_without_prefix_cache() -> None:
+    manager = make_manager(
+        block_size=2,
+        attention_specs=(ChunkedLocalSpec(4),),
+    )
+    manager.register_request("request-1")
+
+    hit = manager.find_longest_cache_hit(
+        "request-1",
+        (1, 2, 3, 4, 5, 6, 7),
+    )
+    allocation = manager.allocate_slots(
+        "request-1",
+        hit.num_computed_tokens,
+        2,
+        cache_hit=hit,
+    )
+
+    assert hit.num_computed_tokens == 4
+    assert allocation is not None
+    assert allocation.block_table[:2] == (
+        manager._block_pool.null_block_id,
+        manager._block_pool.null_block_id,
+    )
+    assert len(allocation.new_block_ids) == 1
+
+
+def test_multi_group_capacity_failure_is_atomic() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=2,
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(3)),
+    )
+    manager.register_request("request-1")
+    free_blocks_before = manager._block_pool.free_block_ids
+
+    allocation = manager.allocate_slots("request-1", 0, 1)
+
+    assert allocation is None
+    assert manager.get_block_tables("request-1") == ((), ())
+    assert manager._block_pool.free_block_ids == free_blocks_before
     assert manager._block_pool.ref_count(0) == 0
-    assert manager._block_pool.ref_count(1) == 0
+
+
+def test_cached_acquire_and_new_blocks_share_one_atomic_preflight() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=4,
+        enable_prefix_cache=True,
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(3)),
+    )
+    token_ids = (1, 2, 3)
+    full_block_id = cache_group_blocks(manager, 0, token_ids, (0,))[0]
+    sliding_block_id = cache_group_blocks(manager, 1, token_ids, (0,))[0]
+    manager.register_request("request-1")
+    hit = manager.find_longest_cache_hit("request-1", token_ids)
+    free_blocks_before = manager._block_pool.free_block_ids
 
     allocation = manager.allocate_slots(
         "request-1",
-        num_hit_tokens,
+        hit.num_computed_tokens,
         1,
-        hit_block_ids,
+        cache_hit=hit,
     )
 
-    assert allocation == KVCacheAllocation((0, 1, 2), (2,))
-    assert manager.get_block_table("request-1") == (0, 1, 2)
-    assert manager._block_pool.ref_count(0) == 1
-    assert manager._block_pool.ref_count(1) == 1
-
-    manager.free_request("request-1")
-    assert manager._block_pool.ref_count(0) == 0
-    assert manager._block_pool.ref_count(1) == 0
-    assert manager._block_pool.get_cached_block(block_hashes[0]) is not None
-    assert manager._block_pool.get_cached_block(block_hashes[1]) is not None
+    assert hit.num_computed_tokens == 2
+    assert allocation is None
+    assert manager.get_block_tables("request-1") == ((), ())
+    assert manager._block_pool.free_block_ids == free_blocks_before
+    assert manager._block_pool.ref_count(full_block_id) == 0
+    assert manager._block_pool.ref_count(sliding_block_id) == 0
 
 
-def test_find_prefix_hit_ignores_partial_token_block() -> None:
-    manager = make_manager(block_size=2, enable_prefix_cache=True)
-    manager.register_request("request-1")
-
-    assert manager.find_prefix_hit(
-        "request-1",
-        (1,),
-        cache_namespace="model-a",
-    ) == ((), 0)
-    assert manager.get_block_table("request-1") == ()
-
-
-@pytest.mark.parametrize(
-    ("token_ids", "namespace"),
-    [
-        ((1, 3, 9), "model-a"),
-        ((1, 2, 9), "model-b"),
-    ],
-)
-def test_find_prefix_hit_rejects_different_token_or_namespace(
-    token_ids: tuple[int, ...],
-    namespace: str,
-) -> None:
-    manager = make_manager(block_size=2, enable_prefix_cache=True)
-    cache_token_blocks(manager, ((1, 2),))
-    manager.register_request("request-1")
-
-    assert manager.find_prefix_hit(
-        "request-1",
-        token_ids,
-        cache_namespace=namespace,
-    ) == ((), 0)
-    assert manager.get_block_table("request-1") == ()
-    assert manager._block_pool.ref_count(0) == 0
-
-
-def test_find_prefix_hit_stops_at_first_missing_parent_chain_block() -> None:
-    manager = make_manager(block_size=2, enable_prefix_cache=True)
-    first_hash = cache_token_blocks(manager, ((1, 2),))[0]
-    missing_hash = hash_block(
-        first_hash,
-        (3, 4),
-        block_size=2,
-        cache_namespace="model-a",
+def test_new_block_count_is_aggregated_across_groups() -> None:
+    manager = make_manager(
+        block_size=4,
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(4)),
     )
-    third_hash = hash_block(
-        missing_hash,
-        (5, 6),
-        block_size=2,
-        cache_namespace="model-a",
-    )
-    third_block_ids = manager._block_pool.allocate(1)
-    assert third_block_ids == (1,)
-    manager._block_pool.cache_block(1, third_hash)
-    manager._block_pool.release(1)
     manager.register_request("request-1")
 
-    assert manager.find_prefix_hit(
-        "request-1",
-        (1, 2, 3, 4, 5, 6, 7),
-        cache_namespace="model-a",
-    ) == ((0,), 2)
-    assert manager.get_block_table("request-1") == ()
-    assert manager._block_pool.ref_count(0) == 0
-    assert manager._block_pool.ref_count(1) == 0
+    assert manager.get_num_blocks_to_allocate("request-1", 0, 5) == 4
+    assert manager.get_num_blocks_to_allocate("request-1", 0, 0) == 0
+    assert manager.get_block_tables("request-1") == ((), ())
 
 
-def test_allocate_prefix_hit_is_atomic_when_capacity_is_insufficient() -> None:
+def test_running_allocation_fills_only_scheduled_holes() -> None:
     manager = make_manager(
         block_size=2,
-        num_blocks=3,
-        enable_prefix_cache=True,
+        attention_specs=(SlidingWindowSpec(3),),
     )
-    block_hashes = cache_token_blocks(manager, ((1, 2), (3, 4)))
     manager.register_request("request-1")
-    hit_block_ids, num_hit_tokens = manager.find_prefix_hit(
-        "request-1",
-        (1, 2, 3, 4, 5),
-        cache_namespace="model-a",
+    first = manager.allocate_slots("request-1", 0, 6)
+    assert first is not None
+    manager.commit_step("request-1", (1, 2, 3, 4, 5, 6), 6)
+
+    second = manager.allocate_slots("request-1", 6, 2)
+
+    assert second is not None
+    assert len(second.new_block_ids) == 1
+    assert second.block_table[:2] == (
+        manager._block_pool.null_block_id,
+        manager._block_pool.null_block_id,
     )
-    assert hit_block_ids == (0, 1)
-
-    assert manager.allocate_slots(
-        "request-1",
-        num_hit_tokens,
-        1,
-        hit_block_ids,
-    ) is None
-
-    assert manager.get_block_table("request-1") == ()
-    assert manager._block_pool.ref_count(0) == 0
-    assert manager._block_pool.ref_count(1) == 0
-    assert manager._block_pool.get_cached_block(block_hashes[0]) is not None
-    assert manager._block_pool.get_cached_block(block_hashes[1]) is not None
 
 
-def test_find_prefix_hit_is_disabled_by_cache_config() -> None:
-    manager = make_manager(block_size=2, enable_prefix_cache=False)
-    cache_token_blocks(manager, ((1, 2),))
-    manager.register_request("request-1")
-
-    assert manager.find_prefix_hit(
-        "request-1",
-        (1, 2),
-        cache_namespace="model-a",
-    ) == ((), 0)
-    assert manager.get_block_table("request-1") == ()
-    assert manager._block_pool.ref_count(0) == 0
-
-
-@pytest.mark.parametrize(
-    ("token_blocks", "token_ids", "expected_hit"),
-    [
-        (((1, 2),), (1, 2), ((), 0)),
-        (((1, 2), (3, 4)), (1, 2, 3, 4), ((0,), 2)),
-    ],
-)
-def test_find_prefix_hit_keeps_last_aligned_block_for_model_computation(
-    token_blocks: tuple[tuple[int, ...], ...],
-    token_ids: tuple[int, ...],
-    expected_hit: tuple[tuple[int, ...], int],
-) -> None:
-    manager = make_manager(block_size=2, enable_prefix_cache=True)
-    cache_token_blocks(manager, token_blocks)
-    manager.register_request("request-1")
-
-    assert manager.find_prefix_hit(
-        "request-1",
-        token_ids,
-        cache_namespace="model-a",
-    ) == expected_hit
-    assert manager.get_block_table("request-1") == ()
-    assert manager._block_pool.ref_count(0) == 0
-    if len(token_blocks) == 2:
-        assert manager._block_pool.ref_count(1) == 0
-
-
-def test_commit_prefix_blocks_caches_only_complete_blocks_and_is_idempotent() -> None:
+def test_commit_step_caches_only_complete_full_blocks() -> None:
     manager = make_manager(
         block_size=2,
         num_blocks=5,
@@ -259,33 +323,18 @@ def test_commit_prefix_blocks_caches_only_complete_blocks_and_is_idempotent() ->
     manager.register_request("request-1")
     assert manager.allocate_slots("request-1", 0, 5) is not None
 
-    first_commit = manager.commit_prefix_blocks(
-        "request-1",
-        (1, 2, 3, 4, 5),
-        5,
-        cache_namespace="model-a",
-    )
-    second_commit = manager.commit_prefix_blocks(
-        "request-1",
-        (1, 2, 3, 4, 5),
-        5,
-        cache_namespace="model-a",
-    )
+    manager.commit_step("request-1", (1, 2, 3, 4, 5), 5)
+    first_table = manager.get_block_table("request-1")
+    manager.commit_step("request-1", (1, 2, 3, 4, 5), 5)
 
-    assert first_commit == second_commit == (0, 1)
-    assert manager.get_block_table("request-1") == (0, 1, 2)
+    assert manager.get_block_table("request-1") == first_table == (0, 1, 2)
     assert manager._block_pool.num_cached_blocks == 2
     assert manager._block_pool.block_hash(0) is not None
     assert manager._block_pool.block_hash(1) is not None
     assert manager._block_pool.block_hash(2) is None
-    assert tuple(manager._block_pool.ref_count(block_id) for block_id in range(3)) == (
-        1,
-        1,
-        1,
-    )
 
 
-def test_commit_prefix_blocks_reuses_canonical_block_and_releases_duplicate() -> None:
+def test_commit_step_reuses_a_canonical_group_block() -> None:
     manager = make_manager(
         block_size=2,
         num_blocks=3,
@@ -293,231 +342,95 @@ def test_commit_prefix_blocks_reuses_canonical_block_and_releases_duplicate() ->
     )
     manager.register_request("request-1")
     assert manager.allocate_slots("request-1", 0, 2) is not None
-    assert manager.commit_prefix_blocks(
-        "request-1",
-        (1, 2),
-        2,
-        cache_namespace="model-a",
-    ) == (0,)
+    manager.commit_step("request-1", (1, 2), 2)
     manager.free_request("request-1")
 
     manager.register_request("request-2")
     allocation = manager.allocate_slots("request-2", 0, 2)
-    assert allocation == KVCacheAllocation((1,), (1,))
+    assert allocation == KVCacheAllocation(((1,),), (1,))
+    manager.commit_step("request-2", (1, 2), 2)
 
-    canonical_block_ids = manager.commit_prefix_blocks(
-        "request-2",
-        (1, 2),
-        2,
-        cache_namespace="model-a",
-    )
-
-    assert canonical_block_ids == (0,)
     assert manager.get_block_table("request-2") == (0,)
     assert manager._block_pool.ref_count(0) == 1
     assert manager._block_pool.ref_count(1) == 0
-    assert manager._block_pool.free_block_ids == (1,)
     assert manager._block_pool.num_cached_blocks == 1
 
 
-def test_commit_prefix_blocks_is_disabled_by_cache_config() -> None:
-    manager = make_manager(block_size=2, enable_prefix_cache=False)
+def test_commit_step_releases_only_the_bounded_group_history() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=8,
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(3)),
+    )
     manager.register_request("request-1")
-    assert manager.allocate_slots("request-1", 0, 2) is not None
+    allocation = manager.allocate_slots("request-1", 0, 6)
+    assert allocation is not None
+    full_block_ids, sliding_block_ids = allocation.block_tables
 
-    assert manager.commit_prefix_blocks(
-        "request-1",
-        (1, 2),
-        2,
-        cache_namespace="model-a",
-    ) == ()
-    assert manager._block_pool.num_cached_blocks == 0
-    assert manager._block_pool.block_hash(0) is None
+    manager.commit_step("request-1", (1, 2, 3, 4, 5, 6), 6)
+
+    assert manager.get_block_tables("request-1") == (
+        full_block_ids,
+        (
+            manager._block_pool.null_block_id,
+            manager._block_pool.null_block_id,
+            sliding_block_ids[2],
+        ),
+    )
+    assert tuple(
+        manager._block_pool.ref_count(block_id)
+        for block_id in full_block_ids
+    ) == (1, 1, 1)
+    assert tuple(
+        manager._block_pool.ref_count(block_id)
+        for block_id in sliding_block_ids
+    ) == (0, 0, 1)
 
 
-@pytest.mark.parametrize("operation", ["get_block_table", "free_request"])
-def test_unknown_request_operations_raise_key_error(operation: str) -> None:
-    manager = make_manager()
-
-    with pytest.raises(KeyError):
-        getattr(manager, operation)("missing")
-
-
-def test_free_registered_request_removes_its_table() -> None:
-    manager = make_manager()
+def test_free_request_blocks_releases_every_group_for_recompute() -> None:
+    manager = make_manager(
+        block_size=2,
+        num_blocks=6,
+        attention_specs=(FullAttentionSpec(), SlidingWindowSpec(3)),
+    )
     manager.register_request("request-1")
+    assert manager.allocate_slots("request-1", 0, 4) is not None
+
+    manager.free_request_blocks("request-1")
+
+    assert manager.get_block_tables("request-1") == ((), ())
+    assert manager.num_free_blocks == 5
+    assert manager.allocate_slots("request-1", 0, 1) is not None
+
+
+def test_free_request_removes_all_group_tables() -> None:
+    manager = make_manager(
+        attention_specs=(FullAttentionSpec(), ChunkedLocalSpec(4))
+    )
+    manager.register_request("request-1")
+    assert manager.allocate_slots("request-1", 0, 1) is not None
 
     manager.free_request("request-1")
 
     with pytest.raises(KeyError):
-        manager.get_block_table("request-1")
-    manager.register_request("request-1")
-    assert manager.get_block_table("request-1") == ()
+        manager.get_block_tables("request-1")
 
 
 @pytest.mark.parametrize(
-    ("num_computed_tokens", "num_scheduled_tokens", "expected_blocks"),
-    [
-        (0, 0, 0),
-        (0, 1, 1),
-        (0, 4, 1),
-        (0, 5, 2),
-        (3, 2, 2),
-        (4, 4, 2),
-        (4, 5, 3),
-    ],
+    "operation",
+    ["get_block_tables", "find_longest_cache_hit", "free_request"],
 )
-def test_num_blocks_to_allocate_uses_ceil_div_of_target_tokens(
-    num_computed_tokens: int,
-    num_scheduled_tokens: int,
-    expected_blocks: int,
-) -> None:
+def test_unknown_request_operations_raise_key_error(operation: str) -> None:
     manager = make_manager()
-    manager.register_request("request-1")
 
-    assert (
-        manager.get_num_blocks_to_allocate(
-            "request-1",
-            num_computed_tokens,
-            num_scheduled_tokens,
-        )
-        == expected_blocks
-    )
+    with pytest.raises(KeyError):
+        if operation == "find_longest_cache_hit":
+            manager.find_longest_cache_hit("missing", (1,))
+        else:
+            getattr(manager, operation)("missing")
 
 
-@pytest.mark.parametrize(
-    ("num_computed_tokens", "num_scheduled_tokens", "expected_blocks"),
-    [
-        (1, 1, 0),
-        (3, 1, 0),
-        (4, 1, 1),
-        (4, 4, 1),
-        (3, 6, 2),
-    ],
-)
-def test_num_blocks_to_allocate_only_counts_blocks_missing_from_table(
-    num_computed_tokens: int,
-    num_scheduled_tokens: int,
-    expected_blocks: int,
-) -> None:
-    manager = make_manager()
-    manager.register_request("request-1")
-    manager._block_tables["request-1"].extend((0,))
-
-    assert (
-        manager.get_num_blocks_to_allocate(
-            "request-1",
-            num_computed_tokens,
-            num_scheduled_tokens,
-        )
-        == expected_blocks
-    )
-
-
-def test_num_blocks_to_allocate_is_a_read_only_calculation() -> None:
-    manager = make_manager()
-    manager.register_request("request-1")
-    manager._block_tables["request-1"].extend((0,))
-    table_before = manager.get_block_table("request-1")
-    num_free_blocks_before = manager._block_pool.num_free_blocks
-
-    assert manager.get_num_blocks_to_allocate("request-1", 3, 6) == 2
-
-    assert manager.get_block_table("request-1") == table_before
-    assert manager._block_pool.num_free_blocks == num_free_blocks_before
-
-
-def test_allocate_slots_reserves_first_partial_block() -> None:
-    manager = make_manager()
-    manager.register_request("request-1")
-
-    allocation = manager.allocate_slots("request-1", 0, 1)
-
-    assert allocation == KVCacheAllocation(
-        block_table=(0,),
-        new_block_ids=(0,),
-    )
-    assert manager.get_block_table("request-1") == (0,)
-    assert manager._block_pool.ref_count(0) == 1
-
-
-def test_allocate_slots_reuses_capacity_in_partial_block() -> None:
-    manager = make_manager()
-    manager.register_request("request-1")
-    assert manager.allocate_slots("request-1", 0, 1) is not None
-
-    allocation = manager.allocate_slots("request-1", 1, 2)
-
-    assert allocation == KVCacheAllocation(
-        block_table=(0,),
-        new_block_ids=(),
-    )
-    assert manager._block_pool.num_free_blocks == 7
-
-
-def test_allocate_slots_crosses_one_block_boundary() -> None:
-    manager = make_manager()
-    manager.register_request("request-1")
-    assert manager.allocate_slots("request-1", 0, 3) is not None
-
-    allocation = manager.allocate_slots("request-1", 3, 2)
-
-    assert allocation == KVCacheAllocation(
-        block_table=(0, 1),
-        new_block_ids=(1,),
-    )
-
-
-def test_allocate_slots_crosses_multiple_block_boundaries() -> None:
-    manager = make_manager()
-    manager.register_request("request-1")
-
-    allocation = manager.allocate_slots("request-1", 0, 9)
-
-    assert allocation == KVCacheAllocation(
-        block_table=(0, 1, 2),
-        new_block_ids=(0, 1, 2),
-    )
-
-
-def test_allocate_slots_isolates_request_tables_while_sharing_pool_capacity() -> None:
-    manager = make_manager(num_blocks=5)
-    manager.register_request("request-1")
-    manager.register_request("request-2")
-
-    first = manager.allocate_slots("request-1", 0, 5)
-    second = manager.allocate_slots("request-2", 0, 4)
-
-    assert first == KVCacheAllocation((0, 1), (0, 1))
-    assert second == KVCacheAllocation((2,), (2,))
-    assert manager.get_block_table("request-1") == (0, 1)
-    assert manager.get_block_table("request-2") == (2,)
-    assert manager._block_pool.num_free_blocks == 1
-
-
-def test_allocate_slots_capacity_failure_is_atomic() -> None:
-    manager = make_manager(num_blocks=3)
-    manager.register_request("request-1")
-    manager.register_request("request-2")
-    assert manager.allocate_slots("request-1", 0, 4) is not None
-    first_table_before = manager.get_block_table("request-1")
-    second_table_before = manager.get_block_table("request-2")
-    free_blocks_before = manager._block_pool.free_block_ids
-
-    allocation = manager.allocate_slots("request-2", 0, 5)
-
-    assert allocation is None
-    assert manager.get_block_table("request-1") == first_table_before
-    assert manager.get_block_table("request-2") == second_table_before
-    assert manager._block_pool.free_block_ids == free_blocks_before
-    assert tuple(manager._block_pool.ref_count(block_id) for block_id in range(3)) == (
-        1,
-        0,
-        0,
-    )
-
-
-def test_allocation_snapshot_does_not_change_after_later_allocation() -> None:
+def test_allocation_snapshot_is_frozen_and_stable() -> None:
     manager = make_manager()
     manager.register_request("request-1")
     first = manager.allocate_slots("request-1", 0, 1)
@@ -525,133 +438,8 @@ def test_allocation_snapshot_does_not_change_after_later_allocation() -> None:
 
     assert manager.allocate_slots("request-1", 4, 1) is not None
 
-    assert first.block_table == (0,)
+    assert first.block_tables == ((0,),)
     assert first.new_block_ids == (0,)
     assert manager.get_block_table("request-1") == (0, 1)
-
-
-def test_kv_cache_allocation_is_frozen_and_canonicalizes_sequences() -> None:
-    allocation = KVCacheAllocation(
-        block_table=[0, 8],  # type: ignore[arg-type]
-        new_block_ids=[0],  # type: ignore[arg-type]
-    )
-
-    assert allocation.block_table == (0, 8)
-    assert allocation.new_block_ids == (0,)
     with pytest.raises(FrozenInstanceError):
-        allocation.block_table = ()
-
-
-def test_free_request_blocks_keeps_an_empty_table_for_recompute() -> None:
-    manager = make_manager(num_blocks=3)
-    manager.register_request("request-1")
-    assert manager.allocate_slots("request-1", 0, 5) is not None
-
-    manager.free_request_blocks("request-1")
-
-    assert manager.get_block_table("request-1") == ()
-    assert manager.num_free_blocks == 2
-    assert manager.allocate_slots("request-1", 0, 1) is not None
-
-
-def test_repeated_recompute_cycles_release_each_reference_once() -> None:
-    manager = make_manager(num_blocks=3)
-    manager.register_request("request-1")
-
-    for _ in range(3):
-        assert manager.allocate_slots("request-1", 0, 3) is not None
-        manager.free_request_blocks("request-1")
-        assert manager.get_block_table("request-1") == ()
-        assert manager.num_free_blocks == 2
-        ref_counts = tuple(
-            manager._block_pool.ref_count(block_id) for block_id in range(3)
-        )
-        assert ref_counts == (
-            0,
-            0,
-            0,
-        )
-
-
-def test_free_request_recycles_all_request_owned_blocks() -> None:
-    manager = make_manager(num_blocks=5)
-    manager.register_request("request-1")
-    assert manager.allocate_slots("request-1", 0, 9) is not None
-
-    manager.free_request("request-1")
-
-    assert manager._block_pool.num_free_blocks == 4
-    assert manager._block_pool.free_block_ids == (3, 0, 1, 2)
-    assert tuple(manager._block_pool.ref_count(block_id) for block_id in range(5)) == (
-        0,
-        0,
-        0,
-        0,
-        0,
-    )
-    with pytest.raises(KeyError):
-        manager.get_block_table("request-1")
-
-
-def test_free_request_does_not_affect_other_request() -> None:
-    manager = make_manager(num_blocks=5)
-    manager.register_request("request-1")
-    manager.register_request("request-2")
-    assert manager.allocate_slots("request-1", 0, 5) is not None
-    assert manager.allocate_slots("request-2", 0, 4) is not None
-    second_table_before = manager.get_block_table("request-2")
-
-    manager.free_request("request-1")
-
-    assert manager.get_block_table("request-2") == second_table_before == (2,)
-    assert manager._block_pool.ref_count(2) == 1
-    assert manager._block_pool.free_block_ids == (3, 0, 1)
-
-
-def test_free_request_releases_one_reference_from_shared_block() -> None:
-    manager = make_manager(num_blocks=3)
-    manager.register_request("request-1")
-    manager.register_request("request-2")
-    shared_block_ids = manager._block_pool.allocate(1)
-    assert shared_block_ids == (0,)
-    block_hash = b"a" * 32
-    manager._block_pool.cache_block(0, block_hash)
-    assert manager._block_pool.acquire_cached_block(block_hash) is not None
-    manager._block_tables["request-1"].extend((0,))
-    manager._block_tables["request-2"].extend((0,))
-
-    manager.free_request("request-1")
-
-    assert manager._block_pool.ref_count(0) == 1
-    assert manager._block_pool.free_block_ids == (1,)
-    assert manager.get_block_table("request-2") == (0,)
-
-    manager.free_request("request-2")
-    assert manager._block_pool.ref_count(0) == 0
-    assert manager._block_pool.free_block_ids == (1, 0)
-
-
-def test_repeated_free_is_explicit_and_does_not_double_release() -> None:
-    manager = make_manager(num_blocks=3)
-    manager.register_request("request-1")
-    assert manager.allocate_slots("request-1", 0, 1) is not None
-    manager.free_request("request-1")
-    free_blocks_before = manager._block_pool.free_block_ids
-
-    with pytest.raises(KeyError):
-        manager.free_request("request-1")
-
-    assert manager._block_pool.free_block_ids == free_blocks_before
-    assert manager._block_pool.ref_count(0) == 0
-
-
-def test_get_block_table_returns_stable_read_only_snapshot() -> None:
-    manager = make_manager()
-    manager.register_request("request-1")
-    assert manager.allocate_slots("request-1", 0, 1) is not None
-    snapshot = manager.get_block_table("request-1")
-
-    assert isinstance(snapshot, tuple)
-    assert manager.allocate_slots("request-1", 4, 1) is not None
-    assert snapshot == (0,)
-    assert manager.get_block_table("request-1") == (0, 1)
+        first.block_tables = ()

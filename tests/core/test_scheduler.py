@@ -2,8 +2,10 @@
 
 import pytest
 
+from micro_vllm.attention.spec import FullAttentionSpec, SlidingWindowSpec
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
+from micro_vllm.core.kv_cache_spec import KVCacheLayout, build_kv_cache_topology
 from micro_vllm.core.prefix_cache import hash_block
 from micro_vllm.core.request import FinishReason, Request, RequestStatus
 from micro_vllm.core.scheduler import Scheduler
@@ -65,8 +67,7 @@ def make_scheduler(
     )
     return Scheduler(
         config,
-        KVCacheManager(config),
-        cache_namespace=cache_namespace,
+        KVCacheManager(config, cache_namespace=cache_namespace),
     )
 
 
@@ -103,6 +104,31 @@ def test_scheduler_owns_request_while_manager_only_registers_cache_state() -> No
         request.num_computed_tokens,
         tuple(request.output_token_ids),
     ) == request_state_before
+
+
+def test_scheduler_uses_multi_group_cache_through_one_manager_facade() -> None:
+    config = LLMConfig(
+        model_config=ModelConfig(model="unused"),
+        scheduler_config=SchedulerConfig(2, 1, 128),
+        cache_config=CacheConfig(block_size=2, num_blocks=5),
+    )
+    layout = KVCacheLayout(
+        block_size=2,
+        num_blocks=5,
+        topology=build_kv_cache_topology(
+            (FullAttentionSpec(), SlidingWindowSpec(3))
+        ),
+    )
+    manager = KVCacheManager(config, layout)
+    scheduler = Scheduler(config, manager)
+    request = make_request("request-1", [1, 2, 3])
+    scheduler.add_request(request)
+
+    plan = scheduler.schedule()
+
+    assert plan.scheduled_requests[0].block_table == (0,)
+    assert manager.get_block_tables("request-1") == ((0,), (1,))
+    assert not hasattr(scheduler, "_cache_namespace")
 
 
 def test_each_scheduler_uses_an_independent_cache_manager() -> None:
@@ -518,21 +544,16 @@ def test_prefix_hit_larger_than_cache_fails_without_claiming_blocks() -> None:
             enable_prefix_cache=True,
         ),
     )
-    manager = KVCacheManager(config)
+    manager = KVCacheManager(config, cache_namespace="model-a")
     manager.register_request("seed")
     assert manager.allocate_slots("seed", 0, 4) is not None
-    assert manager.commit_prefix_blocks(
+    manager.commit_step(
         "seed",
         (1, 2, 3, 4),
         4,
-        cache_namespace="model-a",
-    ) == (0, 1)
-    manager.free_request("seed")
-    scheduler = Scheduler(
-        config,
-        manager,
-        cache_namespace="model-a",
     )
+    manager.free_request("seed")
+    scheduler = Scheduler(config, manager)
     request = make_request("request-1", [1, 2, 3, 4, 5])
     scheduler.add_request(request)
 
@@ -654,12 +675,8 @@ def test_preempted_victim_reenters_from_cached_prefix() -> None:
             enable_prefix_cache=True,
         ),
     )
-    manager = KVCacheManager(config)
-    scheduler = Scheduler(
-        config,
-        manager,
-        cache_namespace="model-a",
-    )
+    manager = KVCacheManager(config, cache_namespace="model-a")
+    scheduler = Scheduler(config, manager)
     current = make_request("current", [9, 10], max_tokens=2)
     holder = make_request("holder", [1, 2, 3], max_tokens=2)
     victim = make_request("victim", [1, 2, 4], max_tokens=2)
@@ -668,25 +685,23 @@ def test_preempted_victim_reenters_from_cached_prefix() -> None:
     scheduler._waiting.clear()
 
     assert manager.allocate_slots("holder", 0, 3) is not None
-    assert manager.commit_prefix_blocks(
+    manager.commit_step(
         "holder",
         holder.all_token_ids,
         3,
-        cache_namespace="model-a",
-    ) == (0,)
+    )
     holder.resume(3)
     holder.append_sampled_token(30)
 
-    hit_block_ids, num_hit_tokens = manager.find_prefix_hit(
+    cache_hit = manager.find_longest_cache_hit(
         "victim",
         victim.all_token_ids,
-        cache_namespace="model-a",
     )
     assert manager.allocate_slots(
         "victim",
-        num_hit_tokens,
+        cache_hit.num_computed_tokens,
         1,
-        hit_block_ids,
+        cache_hit=cache_hit,
     ) is not None
     victim.resume(3)
     victim.append_sampled_token(40)
