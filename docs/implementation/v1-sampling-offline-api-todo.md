@@ -30,7 +30,7 @@ scheduler/executor 并驱动 Engine 的高层离线 facade，不把字符串、t
 - [x] sampling params 的不可变执行计划快照。
 - [x] tokenizer-backed 同步批量 `LLM.generate()`。
 - [x] 文本、prompt/output token IDs、finish reason 的最终输出。
-- [ ] 本地 tokenizer fixture 与固定公开 Llama/Qwen checkpoint 的离线 API 验收。
+- [x] 本地 tokenizer fixture 与固定公开 Llama/Qwen checkpoint 的离线 API 验收。
 
 ### 本阶段不实现
 
@@ -164,13 +164,13 @@ output text、output token IDs 和 `FinishReason`。它是 frozen snapshot，不
 
 ## 9. Phase 5：真实模型验收与文档
 
-- [ ] tiny local tokenizer + Llama/Qwen checkpoint 完成字符串到文本闭环。
-- [ ] 固定 TinyLlama commit 的 greedy 文本/token IDs 与 Transformers 一致。
-- [ ] 固定 Qwen3 commit 的 seeded sampling 在 repeated/mixed batch 中可重复。
-- [ ] 在线 tokenizer 首次下载后可用 `HF_HUB_OFFLINE=1` 完全离线生成。
-- [ ] 记录公开模型、revision、prompt、sampling params、tokens 和输出文本。
-- [ ] sampling/LLM 定向、非 model 和完整默认回归通过。
-- [ ] 更新 public exports、README/requirements 和最小使用示例。
+- [x] tiny local tokenizer + Llama/Qwen checkpoint 完成字符串到文本闭环。
+- [x] 固定 TinyLlama commit 的 greedy 文本/token IDs 与 Transformers 一致。
+- [x] 固定 Qwen3 commit 的 seeded sampling 在 repeated/mixed batch 中可重复。
+- [x] 在线 tokenizer 首次下载后可用 `HF_HUB_OFFLINE=1` 完全离线生成。
+- [x] 记录公开模型、revision、prompt、sampling params、tokens 和输出文本。
+- [x] sampling/LLM 定向、非 model 和完整默认回归通过。
+- [x] 更新 public exports、README/requirements 和最小使用示例。
 
 ## 10. 验证命令
 
@@ -196,14 +196,14 @@ ssh aliyun-ecs \
 
 ## 11. 完成标准
 
-- [ ] temperature/top-k/top-p 具有独立 reference correctness tests。
-- [ ] seeded request 在 batching、chunking 和 preemption 变化下保持确定性。
-- [ ] Scheduler/Engine 不执行 logits filtering，Sampler 不访问 Request。
-- [ ] tokenizer/string 逻辑只存在于 LLM 高层。
-- [ ] `LLM.generate()` 可在单 GPU 上加载两个真实模型族并返回最终文本。
-- [ ] ModelRunner 继续独占模型初始化、warmup/profile 和 KV cache 生命周期。
-- [ ] 普通回归无网络，公开 tokenizer/model 验收显式启用并可完全离线。
-- [ ] `docs/requirements/v1-core-engine.md` 按实际证据更新。
+- [x] temperature/top-k/top-p 具有独立 reference correctness tests。
+- [x] seeded request 在 batching、chunking 和 preemption 变化下保持确定性。
+- [x] Scheduler/Engine 不执行 logits filtering，Sampler 不访问 Request。
+- [x] tokenizer/string 逻辑只存在于 LLM 高层。
+- [x] `LLM.generate()` 可在单 GPU 上加载两个真实模型族并返回最终文本。
+- [x] ModelRunner 继续独占模型初始化、warmup/profile 和 KV cache 生命周期。
+- [x] 普通回归无网络，公开 tokenizer/model 验收显式启用并可完全离线。
+- [x] `docs/requirements/v1-core-engine.md` 按实际证据更新。
 
 ## 12. 实现状态
 
@@ -224,4 +224,4 @@ tokenizer 加载为 10.463s，cache 重载约 0.5–0.7s，`HF_HUB_OFFLINE=1` �
 per-prompt params，以内部递增 request ID 恢复输入顺序，并返回 frozen
 `GenerationOutput`。模型 initializer、warmup/profile 和 KV cache 仍完全由
 ModelRunner 执行和持有。Phase 4 定向回归为 `12 passed`，完整默认回归为
-`531 passed, 5 skipped`。Phase 5 真实公开模型 API 验收尚未开始。
+`531 passed, 5 skipped`。Phase 5 真实公开模型 API 验收已完成。

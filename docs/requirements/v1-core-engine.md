@@ -11,7 +11,8 @@ V1 必须回答以下问题：
 - KV cache 如何按 block 分配、共享、释放和抢占；
 - Scheduler 如何生成与设备执行解耦的执行计划；
 - ModelRunner 如何把计划转换为设备输入并访问 physical KV cache；
-- 通用模型配置、架构实现和 Model Loader 如何分工并加载 Hugging Face 权重。
+- `LLMConfig`、模型架构、Model Loader 和 tokenizer 如何共享同一份配置；
+- Attention 语义、runtime metadata 和 tensor operator 如何分层。
 
 ## 2. 当前实现顺序
 
@@ -20,8 +21,8 @@ V1 必须回答以下问题：
 | V1.1 | Request、统一 Scheduler、Engine control loop、Executor contract | 已完成 |
 | V1.2 | 单类型 full-attention 逻辑 Paged KV Cache、prefix cache、preemption/recompute | 主体已完成 |
 | V1.3 | Physical KV Cache、reference full attention、Tiny Llama execution、ModelRunner、Worker、SingleProcessExecutor | 已完成 |
-| V1.4 | Model Loader、真实 Llama/Qwen checkpoint、完整 sampling 和离线 API | 当前阶段 |
-| V1.5 | sliding window、chunked-local、多 KV cache group、Mistral/hybrid model | 延后实现 |
+| V1.4 | Model Loader、真实 Llama/Qwen checkpoint、完整 sampling 和离线 API | 已完成 |
+| V1.5 | sliding window、chunked-local、多 KV cache group、Mistral/hybrid model | 当前阶段 |
 | V1.6 | optimized attention、CUDA Graph/compile、benchmark 和性能收尾 | 待实现 |
 
 ## 3. V1.1：Request 与 Engine Control Loop
@@ -48,13 +49,14 @@ V1 必须回答以下问题：
 - [x] 提供 `has_unfinished_requests()`。
 - [x] 支持 abort waiting/running request。
 - [x] Engine 不直接访问 CUDA device 或 model module。
-- [ ] `LLM` 提供 tokenizer-backed 离线批量 `generate()`。
+- [x] `LLM` 提供 tokenizer-backed 离线批量 `generate()`。
 - [ ] 提供异步迭代器形式的 streaming API。
 - [ ] 支持累计与增量两种文本输出形式。
 
 ### 执行契约
 
-- [x] 定义稳定的最小 Executor protocol。
+- [x] Executor protocol 统一定义 `execute()` 和 `shutdown()`。
+- [x] Engine control loop 只调用 `execute()`，高层 `LLM` 负责触发资源释放。
 - [x] `SchedulerOutput` 和嵌套 ScheduledRequest 使用不可变数据结构。
 - [x] SchedulerOutput 不包含 Request 或设备 tensor。
 - [x] sampled token 通过 request ID 显式关联，不依赖隐含 batch index。
@@ -98,7 +100,8 @@ V1 必须回答以下问题：
 
 ### CacheConfig
 
-- [x] 配置固定 block size 和 physical block 数。
+- [x] 配置固定 block size、GPU memory utilization 和可选 block 数。
+- [x] CPU 使用显式 block 数作为确定性容量；CUDA 将其作为 profile 结果的可选上限。
 - [x] 配置是否启用 prefix cache。
 - [x] prefix cache 关闭时不进行 lookup/commit。
 - [x] 非正 block size/count 被拒绝。
@@ -184,7 +187,7 @@ V1 必须回答以下问题：
 - [x] ModelRunner 为每个 decoder layer 创建 physical KV cache tensor。
 - [x] KV tensor 的 block dimension 与 CacheConfig physical block ID 一一对应。
 - [x] tensor shape 表达 K/V、block、block offset、KV heads 和 head dim。
-- [x] physical cache dtype/device 由 ModelRunner execution config 决定。
+- [x] physical cache dtype/device 由 `ModelConfig.device/dtype` 决定。
 - [x] ModelRunner 拥有 tensor，Scheduler/KVCacheManager 不访问 tensor。
 - [x] block 被逻辑释放后不强制清零，slot overwrite 和 block table 保证隔离。
 
@@ -198,6 +201,8 @@ V1 必须回答以下问题：
 - [x] 生成 sampling row indices。
 - [x] 支持 request 具有不同 scheduled token 数的 mixed batch。
 - [x] 不建立 prefill/decode 两套 ModelInput。
+- [x] ModelRunner 从模型持有的 `Attention` 请求 metadata，不在
+      runner 中推断模型 attention 语义。
 
 ### Reference Full Paged Attention
 
@@ -211,9 +216,19 @@ V1 必须回答以下问题：
   KVCacheManager。
 - [x] full prefill、chunked prefill 和 decode 与 dense causal reference 对拍。
 
+### Attention 分层
+
+- [x] `attention.Attention` 拥有 full-causal 语义、metadata 构造和 operator 实例。
+- [x] `AttentionOperator` 只接收 Q/K/V、physical KV cache 和 metadata，
+      不解释 Scheduler/Request。
+- [x] 模型创建并持有 `Attention`，各 decoder layer 共享同一 attention 语义对象。
+- [x] operator 名称由 `ModelConfig.attention_operator` 选择，静态
+      registry 当前只提供 reference operator。
+- [x] attention 语义和 operator 选择不进入 Scheduler 核心抽象。
+
 ### Tiny Llama
 
-- [x] 使用通用只读 `ModelConfig` 保存 HF metadata，由 Llama 读取自身所需字段。
+- [x] `ModelConfig` 统一保存模型来源、运行选项和加载后的只读 HF metadata mapping。
 - [x] `ModelConfig` 不定义所有模型专属字段的并集。
 - [x] 实现 RMSNorm。
 - [x] 实现标准 Llama RoPE。
@@ -237,7 +252,8 @@ V1 必须回答以下问题：
 - [x] Worker 只编排 device process 和 ModelRunner 生命周期。
 - [x] Worker 不直接构造、加载或持有 model。
 - [x] ModelRunner 根据 CUDA warmup peak 和 GPU memory utilization 推导实际 block 数。
-- [x] ModelRunner 返回实际 `CacheConfig`，control plane 再据此创建逻辑 block pool。
+- [x] ModelRunner 将最终 block 数回填到共享 `LLMConfig.cache_config`，
+      Worker 完成初始化后 control plane 再创建等容量逻辑 block pool。
 - [x] Worker 提供显式 shutdown。
 - [x] 实现 SingleProcessExecutor 并只委托 Worker。
 - [x] Engine 使用真实 SingleProcessExecutor 完成 tiny-model generation。
@@ -253,7 +269,7 @@ V1 必须回答以下问题：
 - [x] CPU FP32 reference tests 通过。
 - [x] 单 GPU eager tests 通过。
 
-## 7. V1.4：权重加载、模型覆盖与完整 Sampling（V1.4E 进行中）
+## 7. V1.4：权重加载、模型覆盖与完整 Sampling（已完成）
 
 | 子阶段 | 内容 | 状态 | 技术清单 |
 |---|---|---|---|
@@ -261,7 +277,7 @@ V1 必须回答以下问题：
 | V1.4B | Model Loader 与 HF checkpoint | 已完成 | [清单](../implementation/v1-model-loader-todo.md) |
 | V1.4C | 真实 Llama checkpoint 对拍与 Engine 集成 | 已完成 | [清单](../implementation/v1-real-llama-integration-todo.md) |
 | V1.4D | Qwen dense model 与 checkpoint | 已完成 | [清单](../implementation/v1-qwen-integration-todo.md) |
-| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 进行中（Phase 4 已完成） | [清单](../implementation/v1-sampling-offline-api-todo.md) |
+| V1.4E | 完整 Sampling 与 tokenizer-backed `LLM.generate()` | 已完成 | [清单](../implementation/v1-sampling-offline-api-todo.md) |
 
 V1.4B 的代码、单文件/分片/tied checkpoint 测试和 CPU/GPU 数值对拍已经在远端完成
 验证。V1.4C 已将本地 HF-format tiny Llama checkpoint 接入 ModelRunner、
@@ -274,32 +290,42 @@ V1.4E 已冻结 sampling snapshot、request-local seed、tokenizer ownership 和
 以及 temperature/top-k/top-p Sampler，并验证跨 batching/chunking/preemption 的
 request-local 随机语义，并完成可离线重载的 Transformers tokenizer adapter。高层
 `LLM.generate()` 已支持同步单条/批量 encode、request-local params、按输入顺序返回
-frozen 最终输出和幂等 shutdown；公开模型端到端 API 验收留在 Phase 5。
+frozen 最终输出和幂等 shutdown；Phase 5 真实模型离线 API 验收已完成。
 
 ### 当前模型加载架构
 
 ```text
-model name/path
-    -> ModelInitializer
+LLMConfig
+    -> ModelConfig(source/tokenizer/revision/device/dtype/operator/metadata)
+    -> SchedulerConfig
+    -> CacheConfig
+
+ModelInitializer
     -> ModelRunner.initialize_model()
-    -> model_loader.load_model()
-        -> local directory or pinned Hugging Face commit
-        -> config.json -> read-only ModelConfig
-        -> models.registry -> model class
+    -> model_loader.load_model(LLMConfig)
+        -> DefaultModelLoader(ModelLoader template)
+        -> local directory or Hugging Face snapshot_download
+        -> config.json -> ModelConfig.set_metadata()
+        -> models.registry -> construct model on CPU
         -> SafetensorsCheckpoint.iter_tensors()
-        -> model.load_weights(tensor iterable)
+        -> model.load_weights(tensor stream)
     -> ModelRunner warmup/profile
     -> available GPU KV bytes / bytes per block -> actual num_blocks
+    -> update LLMConfig.cache_config.num_blocks
     -> ModelRunner allocates and owns physical KV tensor storage
-    -> Worker exposes actual CacheConfig to the control plane
+    -> Worker exposes initialized LLMConfig to the control plane
 ```
 
-- `config` 拥有共享、只读的 `ModelConfig`；构造时统一校验 `architectures` 并提供
-  通用字段读取方法，不解释 Llama/Qwen 专属语义。
-- `model_loader` 拥有路径/Hub 解析、config IO、commit 固定、checkpoint 下载与遍历，
-  但不导入具体模型或解释参数布局。
-- 固定 40 位 commit SHA 不需要在线 metadata 解析；`local_files_only` 可从同一 commit
-  的标准 Hub cache 完全离线重载 config 和 checkpoint。
+- `config` 拥有 `LLMConfig`、`ModelConfig`、`SchedulerConfig` 和 `CacheConfig`。
+  调用方提供 `ModelConfig` 的来源/运行字段，Loader 通过 `set_metadata()`
+  注入校验后的只读 metadata mapping；具体模型再解释其中的架构字段。
+- `ModelLoader` 定义“下载→读 config→选模型→构造→加权重→eval”模板；
+  `DefaultModelLoader` 只实现本地/Hub 来源和 safetensors 权重遍历。
+- Hub repo/revision 解析交给 `huggingface_hub.snapshot_download()`，config 和权重来自
+  同一 snapshot。需要可复现时由调用方显式传 commit revision；
+  `local_files_only=True` 可从标准 Hub cache 离线重载。
+- tokenizer 由高层 `LLM` 加载，默认复用模型的 source/revision/cache/offline 选项，
+  也可在 `ModelConfig` 注入已有 tokenizer 或指定独立 tokenizer source。
 - `models.registry` 是不可变的 architecture → model class mapping，不建立 Registry
   object、动态 `register()` 或 plugin discovery。
 - 具体模型负责从 `ModelConfig` 读取字段、组装网络，并在 `load_weights()` 中解释
@@ -311,20 +337,24 @@ model name/path
 - ModelRunner 在最终 KV cache 分配前执行 warmup；CUDA 路径测量 peak activation，
   按 GPU memory utilization 扣除 non-KV memory，再按模型 KV block bytes 推导容量。
 - `initialize_kv_cache()` 不接收外部分配的 cache 或最终 block 数；它分配并持有
-  physical KV tensor，返回实际 `CacheConfig` 给 control plane 建立同容量逻辑 block pool。
-- CPU reference path 无 GPU memory 可 profile，使用 `max_num_blocks` 作为确定性容量；
+  physical KV tensor，同时回填 `CacheConfig.num_blocks`。control plane 在 Worker 初始化后
+  使用这一容量建立逻辑 block pool。
+- CPU reference path 无 GPU memory 可 profile，使用显式 `num_blocks` 作为确定性容量；
   CUDA 路径只将其作为可选上限，实际容量仍来自 profile。
 
 ### 相对初始清单的设计调整
 
 | 初始设想 | 当前实现 | 调整原因 |
 |---|---|---|
-| 每个模型先转换为专属 config dataclass | 通用只读 `ModelConfig` 保存原始 metadata，具体模型读取自身字段 | 避免建立跨模型字段并集和重复 config adapter |
+| 每个模型先转换为专属 config dataclass | `ModelConfig` 统一保存来源/运行选项和原始 metadata，具体模型读取自身字段 | 避免建立跨模型字段并集和重复 config adapter |
+| Scheduler、cache、worker 和高层 API 分别接收配置 | `LLMConfig` 组合 Model/Scheduler/Cache 配置并贯穿单机运行时 | 保留显式子配置，同时消除重复参数和分叉状态 |
 | Registry object + resolved model factory | 静态不可变 architecture → model class mapping | 当前只有静态内置模型，不提前建设动态注册框架 |
 | `weights` package 和独立 parameter loader | `model_loader` 负责来源/IO/编排，具体模型实现 `load_weights()` | 参数名称和布局属于模型/layer 语义 |
+| 单个 loader function 包含来源分支和加载全流程 | `ModelLoader` 模板 + `DefaultModelLoader` 的本地/Hub safetensors 机制 | 保留稳定加载顺序，后续替换权重来源时不复制编排 |
 | Loader 汇总 missing/unexpected/duplicate/shape 状态 | checkpoint 结构由 reader 校验；模型按名称直接查找并用 `copy_` 复制 | 首版保留 Python/PyTorch 原生错误，减少重复状态机 |
 | V1 Loader 接收 size=1 `ParallelContext` | V1 不引入 parallel context | shard/placement 语义推迟到 V2 的真实 TP/PP 边界 |
-| checkpoint source 只面向本地目录 | 顶层 Model Loader 同时支持本地目录和 commit-pinned Hub repo | source reader 仍保持本地；Hub 只负责把远端文件解析到本地 cache |
+| checkpoint source 只面向本地目录 | `DefaultModelLoader` 同时支持本地目录和 Hub snapshot | checkpoint reader 仍只读本地文件；Hub 下载和 cache 解析交给官方客户端 |
+| Attention backend 同时承担 mask 语义、metadata 和 kernel | `Attention` 拥有语义/metadata，`AttentionOperator` 拥有 tensor 计算 | 为 V1.5 多 attention 类型和 V1.6 optimized operator 保留两个独立扩展点 |
 
 这些调整不改变 Scheduler、Paged KV Cache、ModelRunner 或 Attention 的 V1 核心控制流。
 后续分布式、量化和多模态继续沿用“Loader 提供 tensor stream，模型/layer 解释布局”的
@@ -332,15 +362,19 @@ model name/path
 
 ### Model Loader 和模型接口
 
-- [x] 通用 `ModelConfig` 保留只读 HF metadata，不定义模型专属字段全集。
+- [x] `LLMConfig` 统一组合 Model/Scheduler/Cache 配置。
+- [x] `ModelConfig` 统一保存模型来源、tokenizer、device/dtype、operator 和
+      只读 HF metadata mapping，不定义模型专属字段全集。
 - [x] `models` registry 根据 Hugging Face `architectures` 选择实现。
 - [x] registry 使用静态不可变 mapping，不提供动态注册机制。
 - [x] 模型类负责架构差异，不把模型判断放入 Scheduler/ModelRunner。
 - [x] 模型 `forward()` 与 `compute_logits()` 职责分离。
 - [x] 模型计算与 checkpoint IO 职责分离。
 - [x] 模型通过 `load_weights(tensor iterable)` 拥有参数名称和布局语义。
-- [x] Model Loader 支持本地目录、HF repo id 和可选静态 alias mapping；当前没有内置 alias。
-- [x] 公共 RMSNorm、RoPE、MLP、Embedding、Linear 和 Attention layer 可复用。
+- [x] `ModelLoader` 模板拥有通用加载顺序，`DefaultModelLoader` 支持
+      本地目录和 HF repo id。
+- [x] 公共 RMSNorm、RoPE、MLP、Embedding 和 Linear 放在 `layers`；
+      Attention 放在独立 `attention` 模块。
 - [x] 不实现难以理解的万能声明式 Transformer builder。
 
 ### 权重加载
@@ -348,8 +382,8 @@ model name/path
 - [x] 支持单文件 safetensors。
 - [x] 支持 safetensors index 和多 shard 流式加载。
 - [x] 避免同时将全部 checkpoint tensor 常驻 CPU 内存。
-- [x] 支持本地目录和 Hugging Face Hub 延迟 checkpoint 下载。
-- [x] config 和 checkpoint 固定到同一个 Hub commit。
+- [x] 支持本地目录和 Hugging Face Hub snapshot 下载。
+- [x] config 和 checkpoint 由同一次 Hub snapshot 解析；显式 commit revision 用于可复现验收。
 - [x] 支持 tied embedding/lm_head。
 - [x] 当前分离的 Q/K/V 和 gate/up checkpoint 参数直接映射。
 - [x] 参数名称映射后直接复制，不维护额外的完整性校验状态。
@@ -389,11 +423,21 @@ model name/path
 - [x] 不实现 structured/guided decoding。
 - [x] 不实现用户自定义 logits processor。
 
-## 8. V1.5：多 Attention 类型与多 KV Cache Group（延后）
+## 8. V1.5：多 Attention 类型与多 KV Cache Group（当前阶段）
+
+实现顺序、抽象边界和验收项见
+[技术清单](../implementation/v1-multi-attention-kv-cache-todo.md)。
+
+### 当前扩展基础
+
+- [x] `Attention` 与 `AttentionOperator` 已分离，语义变化不需改
+      Scheduler 或 tensor operator contract。
+- [x] ModelRunner 通过模型持有的 `Attention.build_metadata()` 构造 runtime metadata。
+- [x] operator 选择已有独立静态 registry，当前只注册 reference operator。
 
 ### AttentionSpec
 
-- [ ] 定义不可变 AttentionSpec contract。
+- [ ] 仅在 control plane/cache 需要读取 attention 结构时引入不可变 `AttentionSpec` contract。
 - [ ] 实现 `FullAttentionSpec`。
 - [ ] 实现 `SlidingWindowSpec(window_size)`。
 - [ ] 实现 `ChunkedLocalSpec(chunk_size)`。
@@ -423,6 +467,7 @@ model name/path
 
 ### Optimized Attention
 
+- [x] reference operator 可通过 `ModelConfig.attention_operator` 和静态 registry 选择。
 - [ ] 至少提供一个 GPU prefill operator。
 - [ ] 至少提供一个 paged decode attention operator。
 - [ ] optimized chunked prefill 能读取历史 paged KV 和当前 chunk。
@@ -454,6 +499,7 @@ model name/path
 - [x] prefix cache on/off 的随机 tiny Llama 输出一致。
 - [x] preempt/recompute 与无抢占的随机 tiny Llama 输出一致。
 - [x] full attention 与 dense causal reference 对拍。
+- [x] Attention metadata、语义对象、operator contract 和 registry 具有独立测试。
 - [x] tiny Llama hidden state、logits 和 GPU FP16 与 Transformers 对拍。
 
 ### 待补测试
@@ -461,6 +507,7 @@ model name/path
 - [ ] sliding/chunked-local attention 与 dense reference 对拍。
 - [x] Qwen 外部 checkpoint 端到端加载测试。
 - [ ] Mistral 外部 checkpoint 端到端加载测试。
+- [x] 固定公开 Llama/Qwen checkpoint 的 tokenizer-backed `LLM.generate()` 文本闭环验收。
 
 ### Trace 和指标
 
