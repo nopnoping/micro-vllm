@@ -5,6 +5,7 @@ from collections.abc import Callable
 import pytest
 import torch
 
+import micro_vllm.worker.model_runner as model_runner_module
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.scheduler_output import (
     CacheGroupBlockTable,
@@ -16,6 +17,18 @@ from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.trace import KVCacheLayoutTrace, TraceEvent
 from micro_vllm.worker.worker import Worker
+
+_MODELS_TO_LOAD: list[LlamaModel] = []
+
+
+@pytest.fixture(autouse=True)
+def stub_model_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    _MODELS_TO_LOAD.clear()
+    monkeypatch.setattr(
+        model_runner_module,
+        "load_model",
+        lambda _: _MODELS_TO_LOAD.pop(0),
+    )
 
 
 def make_model_config() -> ModelConfig:
@@ -43,8 +56,8 @@ def make_worker(
 ) -> Worker:
     if model is None:
         model = LlamaModel(make_model_config())
+    _MODELS_TO_LOAD.append(model)
     return Worker(
-        lambda: model,
         LLMConfig(
             model_config=ModelConfig(
                 model="unused",

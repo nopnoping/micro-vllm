@@ -302,8 +302,7 @@ LLMConfig
     -> SchedulerConfig
     -> CacheConfig
 
-ModelInitializer
-    -> ModelRunner.initialize_model()
+ModelRunner.initialize_model()
     -> model_loader.load_model(LLMConfig)
         -> DefaultModelLoader(ModelLoader template)
         -> local directory or Hugging Face snapshot_download
@@ -334,8 +333,8 @@ ModelInitializer
   checkpoint parameter names。
 - checkpoint reader 一次只打开一个 safetensors shard；模型收到 tensor 后直接复制到
   parameter，不维护独立的全量 missing/unexpected/duplicate 状态机。
-- Worker 接收延迟 `ModelInitializer`，但只负责将其交给 ModelRunner；ModelRunner
-  调用 initializer、持有模型，并负责 device/dtype placement 和 eval mode。
+- Worker 只把 `LLMConfig` 交给 ModelRunner；ModelRunner 直接调用 `load_model(config)`、
+  持有模型，并负责 device/dtype placement 和 eval mode。
 - ModelRunner 在最终 KV cache 分配前执行 warmup；CUDA 路径测量 peak activation，
   按 GPU memory utilization 扣除 non-KV memory，再按模型 KV block bytes 推导容量。
 - `initialize_kv_cache()` 不接收外部分配的 cache 或最终 block 数；它分配并持有

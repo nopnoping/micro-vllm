@@ -18,8 +18,6 @@ from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.executor.single_process import SingleProcessExecutor
-from micro_vllm.model_loader import load_model
-from micro_vllm.models.qwen import Qwen3Model
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.worker import Worker
 
@@ -46,7 +44,6 @@ class LoadedQwen3Harness:
     cache_manager: KVCacheManager
     worker: Worker
     executor: RecordingSingleProcessExecutor
-    load_calls: list[Path]
 
 
 def make_loaded_engine(
@@ -78,15 +75,7 @@ def make_loaded_engine(
             enable_prefix_cache=enable_prefix_cache,
         ),
     )
-    load_calls: list[Path] = []
-
-    def initialize_model() -> Qwen3Model:
-        load_calls.append(checkpoint_path)
-        model = load_model(config)
-        assert isinstance(model, Qwen3Model)
-        return model
-
-    worker = Worker(initialize_model, config)
+    worker = Worker(config)
     cache_manager = KVCacheManager(config)
     scheduler = Scheduler(config, cache_manager)
     executor = RecordingSingleProcessExecutor(worker)
@@ -96,7 +85,6 @@ def make_loaded_engine(
         cache_manager=cache_manager,
         worker=worker,
         executor=executor,
-        load_calls=load_calls,
     )
 
 
@@ -166,8 +154,6 @@ def test_qwen3_full_chunked_prefill_and_decode_match_transformers(
 
     assert request_output_tokens(full, "request") == expected
     assert request_output_tokens(chunked, "request") == expected
-    assert full.load_calls == [checkpoint_path]
-    assert chunked.load_calls == [checkpoint_path]
     assert [
         plan.scheduled_requests[0].num_scheduled_tokens
         for plan in chunked.executor.plans[:3]

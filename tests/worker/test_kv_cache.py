@@ -47,7 +47,7 @@ def make_cache(
             (FullAttentionSpec(), FullAttentionSpec())
         ),
     )
-    return ModelRunner(torch.nn.Module, config)._allocate_kv_cache(layout)
+    return ModelRunner(config)._allocate_kv_cache(layout)
 
 
 def test_cpu_cache_uses_model_cache_and_execution_configuration() -> None:
@@ -93,7 +93,7 @@ def test_cache_shape_uses_explicit_model_head_dimension() -> None:
             (FullAttentionSpec(), FullAttentionSpec())
         ),
     )
-    runner = ModelRunner(torch.nn.Module, config)
+    runner = ModelRunner(config)
     cache = runner._allocate_kv_cache(layout)
 
     assert cache[0].shape == torch.Size((2, 3, 4, 2, 8))
@@ -123,7 +123,7 @@ def test_null_model_head_dimension_uses_hidden_size_fallback() -> None:
         ),
     )
 
-    runner = ModelRunner(torch.nn.Module, config)
+    runner = ModelRunner(config)
     cache = runner._allocate_kv_cache(layout)
 
     assert cache[0].shape == torch.Size((2, 3, 4, 2, 4))
@@ -161,7 +161,7 @@ def test_cache_uses_max_group_layers_instead_of_total_model_layers() -> None:
         ),
     )
 
-    runner = ModelRunner(torch.nn.Module, config)
+    runner = ModelRunner(config)
     cache = runner._allocate_kv_cache(layout)
 
     assert layout.page_layer_count == 4
@@ -209,7 +209,7 @@ def test_logical_block_release_does_not_clear_physical_storage() -> None:
             (FullAttentionSpec(), FullAttentionSpec())
         ),
     )
-    cache = ModelRunner(torch.nn.Module, config)._allocate_kv_cache(layout)
+    cache = ModelRunner(config)._allocate_kv_cache(layout)
     cache[0][:, physical_block_id].fill_(7)
 
     manager.free_request("request-1")

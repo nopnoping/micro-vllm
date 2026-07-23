@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 
+import micro_vllm.worker.model_runner as model_runner_module
 from micro_vllm.config import (
     CacheConfig,
     LLMConfig,
@@ -22,6 +23,15 @@ from micro_vllm.executor.single_process import SingleProcessExecutor
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.worker import Worker
+
+
+@pytest.fixture(autouse=True)
+def stub_model_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        model_runner_module,
+        "load_model",
+        lambda _: LlamaModel(make_model_config()),
+    )
 
 
 class RecordingSingleProcessExecutor(SingleProcessExecutor):
@@ -93,10 +103,7 @@ def make_real_engine(
             enable_prefix_cache=enable_prefix_cache,
         ),
     )
-    worker = Worker(
-        lambda: LlamaModel(make_model_config()),
-        config,
-    )
+    worker = Worker(config)
     cache_manager = KVCacheManager(config)
     scheduler = Scheduler(config, cache_manager)
     executor = RecordingSingleProcessExecutor(worker)

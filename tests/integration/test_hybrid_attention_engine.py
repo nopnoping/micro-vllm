@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 
+import micro_vllm.worker.model_runner as model_runner_module
 from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.attention.spec import (
     AttentionSpec,
@@ -27,6 +28,18 @@ from micro_vllm.executor.single_process import SingleProcessExecutor
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.worker import Worker
+
+_MODELS_TO_LOAD: list["HybridLlamaModel"] = []
+
+
+@pytest.fixture(autouse=True)
+def stub_model_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    _MODELS_TO_LOAD.clear()
+    monkeypatch.setattr(
+        model_runner_module,
+        "load_model",
+        lambda _: _MODELS_TO_LOAD.pop(0),
+    )
 
 
 class HybridLlamaModel(LlamaModel):
@@ -143,7 +156,8 @@ def make_hybrid_engine(
             num_blocks=num_blocks,
         ),
     )
-    worker = Worker(lambda: model, config)
+    _MODELS_TO_LOAD.append(model)
+    worker = Worker(config)
     cache_manager = KVCacheManager(config, worker.kv_cache_layout)
     scheduler = Scheduler(config, cache_manager)
     executor = RecordingExecutor(worker)

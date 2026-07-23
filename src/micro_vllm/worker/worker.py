@@ -4,7 +4,7 @@ from micro_vllm.config import LLMConfig
 from micro_vllm.core.kv_cache_spec import KVCacheLayout
 from micro_vllm.core.scheduler_output import SchedulerOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
-from micro_vllm.worker.model_runner import ModelInitializer, ModelRunner
+from micro_vllm.worker.model_runner import ModelRunner
 
 
 class Worker:
@@ -12,12 +12,8 @@ class Worker:
 
     __slots__ = ("_config", "_model_runner")
 
-    def __init__(
-        self,
-        model_initializer: ModelInitializer,
-        config: LLMConfig,
-    ) -> None:
-        model_runner = ModelRunner(model_initializer, config)
+    def __init__(self, config: LLMConfig) -> None:
+        model_runner = ModelRunner(config)
         model_runner.initialize_model()
         model_runner.initialize_kv_cache()
 

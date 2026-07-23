@@ -14,6 +14,7 @@ import torch
 from huggingface_hub import HfApi, hf_hub_download
 from transformers import LlamaForCausalLM
 
+import micro_vllm.worker.model_runner as model_runner_module
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.scheduler import Scheduler
@@ -114,7 +115,9 @@ def test_selected_hub_llama_is_public_and_supported() -> None:
 @pytest.mark.model
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
-def test_pinned_hub_llama_gpu_acceptance() -> None:
+def test_pinned_hub_llama_gpu_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Download once, reload offline, and match Transformers through Engine."""
 
     torch.cuda.empty_cache()
@@ -183,7 +186,12 @@ def test_pinned_hub_llama_gpu_acceptance() -> None:
         assert isinstance(model, LlamaModel)
         return model
 
-    worker = Worker(initialize_cached_model, config)
+    monkeypatch.setattr(
+        model_runner_module,
+        "load_model",
+        initialize_cached_model,
+    )
+    worker = Worker(config)
     assert len(cached_load_seconds) == 1
     model_runner = worker._model_runner
     assert model_runner is not None

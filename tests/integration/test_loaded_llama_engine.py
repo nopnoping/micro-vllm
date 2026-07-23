@@ -18,7 +18,6 @@ from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.interface import ModelRunnerOutput
 from micro_vllm.executor.single_process import SingleProcessExecutor
-from micro_vllm.model_loader import load_model
 from micro_vllm.models.llama import LlamaModel
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.worker import Worker
@@ -46,7 +45,6 @@ class LoadedEngineHarness:
     cache_manager: KVCacheManager
     worker: Worker
     executor: RecordingSingleProcessExecutor
-    load_calls: list[Path]
 
 
 def make_loaded_engine(
@@ -78,15 +76,7 @@ def make_loaded_engine(
             enable_prefix_cache=enable_prefix_cache,
         ),
     )
-    load_calls: list[Path] = []
-
-    def initialize_model() -> LlamaModel:
-        load_calls.append(checkpoint_path)
-        model = load_model(config)
-        assert isinstance(model, LlamaModel)
-        return model
-
-    worker = Worker(initialize_model, config)
+    worker = Worker(config)
     cache_manager = KVCacheManager(config)
     scheduler = Scheduler(config, cache_manager)
     executor = RecordingSingleProcessExecutor(worker)
@@ -96,7 +86,6 @@ def make_loaded_engine(
         cache_manager=cache_manager,
         worker=worker,
         executor=executor,
-        load_calls=load_calls,
     )
 
 
@@ -155,7 +144,6 @@ def test_loaded_checkpoint_runs_through_model_runner_and_engine(
     model_runner = harness.worker._model_runner
     assert model_runner is not None
     assert isinstance(model_runner._model, LlamaModel)
-    assert harness.load_calls == [checkpoint_path]
 
     prompt = [1, 2, 3]
     harness.engine.add_request(

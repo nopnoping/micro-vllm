@@ -37,7 +37,6 @@ def make_input_runner(
     device: torch.device,
 ) -> ModelRunner:
     runner = ModelRunner(
-        torch.nn.Module,
         LLMConfig(
             model_config=ModelConfig(model="unused", device=device),
             cache_config=CacheConfig(

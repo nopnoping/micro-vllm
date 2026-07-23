@@ -82,7 +82,7 @@ def make_harness(
             num_blocks=num_blocks,
         ),
     )
-    worker = Worker(lambda: load_model(config), config)
+    worker = Worker(config)
     cache_manager = KVCacheManager(config, worker.kv_cache_layout)
     scheduler = Scheduler(config, cache_manager)
     executor = RecordingExecutor(worker)

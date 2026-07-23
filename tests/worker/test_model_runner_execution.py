@@ -1,11 +1,12 @@
 """Tests for ModelRunner lifecycle and immutable plan execution."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
 import torch
 from torch.nn import functional as F
 
+import micro_vllm.worker.model_runner as model_runner_module
 from micro_vllm.attention.attention import Attention, AttentionMetadata
 from micro_vllm.attention.spec import ChunkedLocalSpec, FullAttentionSpec
 from micro_vllm.config import CacheConfig, LLMConfig, ModelConfig, SchedulerConfig
@@ -18,6 +19,23 @@ from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.worker.model_runner import ModelRunner
 
 NULL_BLOCK_ID = 7
+_MODEL_INITIALIZERS: list[Callable[[], torch.nn.Module]] = []
+
+
+@pytest.fixture(autouse=True)
+def model_load_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[list[LLMConfig]]:
+    calls: list[LLMConfig] = []
+
+    def load_next_model(config: LLMConfig) -> torch.nn.Module:
+        calls.append(config)
+        return _MODEL_INITIALIZERS.pop(0)()
+
+    _MODEL_INITIALIZERS.clear()
+    monkeypatch.setattr(model_runner_module, "load_model", load_next_model)
+    yield calls
+    _MODEL_INITIALIZERS.clear()
 
 
 class FakeModel(torch.nn.Module):
@@ -73,9 +91,9 @@ def make_model_config() -> ModelConfig:
 
 def make_runner() -> tuple[ModelRunner, FakeModel, tuple[torch.Tensor, ...]]:
     model = FakeModel()
+    _MODEL_INITIALIZERS.append(lambda: model)
     cache_config = CacheConfig(block_size=2, num_blocks=8)
     runner = ModelRunner(
-        lambda: model,
         LLMConfig(
             model_config=ModelConfig(
                 model="unused",
@@ -108,8 +126,8 @@ def make_uninitialized_runner(
     dtype: torch.dtype = torch.float32,
     num_blocks: int | None = 8,
 ) -> ModelRunner:
+    _MODEL_INITIALIZERS.append(model_initializer)
     return ModelRunner(
-        model_initializer,
         LLMConfig(
             model_config=ModelConfig(
                 model="unused",
@@ -129,7 +147,9 @@ def make_uninitialized_runner(
     )
 
 
-def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
+def test_model_runner_owns_model_warmup_and_cache_initialization(
+    model_load_calls: list[LLMConfig],
+) -> None:
     model = FakeModel()
     model.train()
     initialized: list[FakeModel] = []
@@ -140,6 +160,7 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
 
     assert initialized == []
     runner.initialize_model()
+    assert model_load_calls == [runner._config]
     assert runner._config.model_config is model.config
     assert initialized == [model]
     assert runner._model is model
@@ -178,10 +199,12 @@ def test_model_runner_owns_model_warmup_and_cache_initialization() -> None:
 
     runner.shutdown()
     assert runner._model is None
-    assert runner._model_initializer is None
     assert runner._kv_cache_layout is None
     assert runner._kv_cache_topology is None
     assert runner._kv_cache_buffers is None
+    with pytest.raises(RuntimeError, match="model runner is shut down"):
+        runner.initialize_model()
+    assert model_load_calls == [runner._config]
 
 
 def test_model_runner_derives_topology_from_layer_attentions() -> None:

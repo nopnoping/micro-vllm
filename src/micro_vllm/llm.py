@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-import torch
-
 from micro_vllm.config import LLMConfig
 from micro_vllm.core.kv_cache_manager import KVCacheManager
 from micro_vllm.core.request import FinishReason
@@ -14,7 +12,6 @@ from micro_vllm.core.scheduler import Scheduler
 from micro_vllm.engine.engine import Engine
 from micro_vllm.engine.output import RequestOutput
 from micro_vllm.executor.single_process import SingleProcessExecutor
-from micro_vllm.model_loader import load_model
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.tokenizer import apply_tokenizer_eos, load_tokenizer
 from micro_vllm.worker.worker import Worker
@@ -55,10 +52,7 @@ class LLM:
         if tokenizer is None:
             tokenizer = load_tokenizer(config)
 
-        def initialize_model() -> torch.nn.Module:
-            return load_model(config)
-
-        worker = Worker(initialize_model, config)
+        worker = Worker(config)
         scheduler = Scheduler(
             config,
             KVCacheManager(config, worker.kv_cache_layout),

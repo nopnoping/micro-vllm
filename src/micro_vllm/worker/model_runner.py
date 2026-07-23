@@ -2,12 +2,10 @@
 
 import gc
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
 import torch
-from torch import nn
 
 from micro_vllm.attention.attention import (
     Attention,
@@ -26,6 +24,7 @@ from micro_vllm.core.scheduler_output import (
     SchedulerOutput,
 )
 from micro_vllm.executor.interface import ModelRunnerOutput
+from micro_vllm.model_loader import load_model
 from micro_vllm.sampling.params import SamplingParams
 from micro_vllm.sampling.sampler import Sampler
 from micro_vllm.trace import KVCacheLayoutTrace
@@ -46,9 +45,6 @@ class _RunnerModel(Protocol):
     ) -> torch.Tensor: ...
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor: ...
-
-
-ModelInitializer = Callable[[], nn.Module]
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -79,8 +75,8 @@ class ModelRunner:
         "_config",
         "_device",
         "_dtype",
+        "_is_shutdown",
         "_model",
-        "_model_initializer",
         "_kv_cache_layout",
         "_kv_cache_buffers",
         "_kv_cache_topology",
@@ -90,12 +86,8 @@ class ModelRunner:
 
     # Model initialization
 
-    def __init__(
-        self,
-        model_initializer: ModelInitializer,
-        config: LLMConfig,
-    ) -> None:
-        self._model_initializer: ModelInitializer | None = model_initializer
+    def __init__(self, config: LLMConfig) -> None:
+        self._is_shutdown = False
         self._model: _RunnerModel | None = None
         self._kv_cache_topology: KVCacheTopology | None = None
         self._kv_cache_layout: KVCacheLayout | None = None
@@ -111,13 +103,12 @@ class ModelRunner:
     def initialize_model(self) -> None:
         """Construct, place, and retain the execution model exactly once."""
 
-        model_initializer = self._model_initializer
-        if model_initializer is None:
-            if self._model is None:
-                raise RuntimeError("model runner is shut down")
+        if self._is_shutdown:
+            raise RuntimeError("model runner is shut down")
+        if self._model is not None:
             raise RuntimeError("model is already initialized")
 
-        model = model_initializer()
+        model = load_model(self._config)
         model_config = self._config.model_config
         if model_config.metadata is None:
             model_config.set_metadata(model.config.values)
@@ -129,7 +120,6 @@ class ModelRunner:
             tuple(attention.spec for attention in runner_model.layer_attentions)
         )
         self._model = runner_model
-        self._model_initializer = None
 
     # KV cache initialization
 
@@ -237,7 +227,7 @@ class ModelRunner:
         self._kv_cache_layout = None
         self._kv_cache_topology = None
         self._model = None
-        self._model_initializer = None
+        self._is_shutdown = True
 
     # KV cache profiling and allocation
 
