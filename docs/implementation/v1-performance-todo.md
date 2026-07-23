@@ -143,10 +143,10 @@ operator(
 
 ### 4.4 Reference baseline
 
-- [ ] 先只运行 `attention_operator="reference"`。
-- [ ] 保存 prefill、decode、mixed 和 cache-pressure 的原始 JSON 结果。
-- [ ] 重复运行确认指标没有数量级抖动；不为正常噪声设置硬编码阈值。
-- [ ] reference baseline 未记录前，不开始永久性的 optimized code 改造。
+- [x] 先只运行 `attention_operator="reference"`。
+- [x] 保存 prefill、decode、mixed 和 cache-pressure 的原始 JSON 结果。
+- [x] 重复运行确认指标没有数量级抖动；不为正常噪声设置硬编码阈值。
+- [x] reference baseline 未记录前，不开始永久性的 optimized code 改造。
 
 ## 5. Phase 1：单一 optimized GPU operator（对应第 3 项）
 
@@ -328,6 +328,7 @@ docs/requirements/v1-core-engine.md
 
 ## 13. 实现状态
 
-2026-07-23：Phase 0 的本地 benchmark harness、冻结 workload 和 result schema 已实现；
-Tesla T4 reference 原始结果及重复运行稳定性检查尚未执行。V1.1–V1.5 correctness
-baseline 已完成；完整 runtime trace 不阻塞 optimized feasibility 或实现。
+2026-07-23：Phase 0 已完成。Tesla T4 reference baseline 已保存两轮原始结果；两轮
+output throughput 最大差异为 0.797%，单轮 elapsed time coefficient of variation
+最大为 3.92%，未观察到数量级抖动。V1.1–V1.5 correctness baseline 已完成；完整
+runtime trace 不阻塞 optimized feasibility 或实现。

@@ -1,0 +1,293 @@
+{
+  "capacity": {
+    "block_size_tokens": 16,
+    "enable_prefix_cache": false,
+    "gpu_memory_utilization": 0.9,
+    "kv_data_page_count": 63,
+    "kv_page_count": 64,
+    "max_model_len": 160,
+    "max_num_batched_tokens": 512,
+    "max_num_seqs": 1,
+    "physical_kv_buffer_count": 28,
+    "physical_kv_bytes": 117440512,
+    "requested_kv_page_count": 64
+  },
+  "hardware": {
+    "device_index": 0,
+    "device_type": "cuda",
+    "gpu_name": "Tesla T4",
+    "gpu_total_memory_bytes": 15636037632
+  },
+  "model": {
+    "attention_operator": "reference",
+    "cache_dir": null,
+    "dtype": "torch.float16",
+    "id": "Qwen/Qwen3-0.6B",
+    "local_files_only": true,
+    "revision": "c1899de289a04d12100db370d81485cdf75e47ca"
+  },
+  "repetitions": [
+    {
+      "cuda_peak_allocated_bytes": 1325962240,
+      "elapsed_seconds": 0.062283627000056185,
+      "index": 0,
+      "peak_used_kv_pages": 8,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 128,
+          "request_id": "prefill",
+          "ttft_seconds": 0.062283627000056185
+        }
+      ]
+    },
+    {
+      "cuda_peak_allocated_bytes": 1325962240,
+      "elapsed_seconds": 0.06127365899999404,
+      "index": 1,
+      "peak_used_kv_pages": 8,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 128,
+          "request_id": "prefill",
+          "ttft_seconds": 0.06127365899999404
+        }
+      ]
+    },
+    {
+      "cuda_peak_allocated_bytes": 1325962240,
+      "elapsed_seconds": 0.0608758810000154,
+      "index": 2,
+      "peak_used_kv_pages": 8,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 128,
+          "request_id": "prefill",
+          "ttft_seconds": 0.0608758810000154
+        }
+      ]
+    },
+    {
+      "cuda_peak_allocated_bytes": 1325962240,
+      "elapsed_seconds": 0.06062206399997194,
+      "index": 3,
+      "peak_used_kv_pages": 8,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 128,
+          "request_id": "prefill",
+          "ttft_seconds": 0.06062206399997194
+        }
+      ]
+    },
+    {
+      "cuda_peak_allocated_bytes": 1325962240,
+      "elapsed_seconds": 0.06061706200000572,
+      "index": 4,
+      "peak_used_kv_pages": 8,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 128,
+          "request_id": "prefill",
+          "ttft_seconds": 0.06061706200000572
+        }
+      ]
+    }
+  ],
+  "runtime": {
+    "cuda_version": "12.8",
+    "execution_mode": "eager",
+    "python_version": "3.12.3",
+    "pytorch_version": "2.8.0+cu128",
+    "random_seed": 0,
+    "sampling": "greedy"
+  },
+  "schema_version": "micro-vllm.engine-benchmark.v1",
+  "summary": {
+    "completed_requests": 5,
+    "cuda_peak_allocated_bytes": 1325962240,
+    "elapsed_seconds": 0.3056722930000433,
+    "itl": {
+      "count": 0,
+      "median_seconds": null,
+      "p90_seconds": null
+    },
+    "output_token_throughput_per_second": 16.357387026894493,
+    "output_tokens": 5,
+    "peak_kv_utilization": 0.12698412698412698,
+    "peak_used_kv_pages": 8,
+    "preempted_request_count": 0,
+    "prompt_token_throughput_per_second": 2093.745539442495,
+    "prompt_tokens": 640,
+    "request_throughput_per_second": 16.357387026894493,
+    "total_token_throughput_per_second": 2110.1029264693893,
+    "total_tokens": 645,
+    "ttft": {
+      "count": 5,
+      "median_seconds": 0.0608758810000154,
+      "p90_seconds": 0.061879639800031326
+    }
+  },
+  "workload": {
+    "description": "single request, 128 prompt tokens, one output token",
+    "measurement_repetitions": 5,
+    "name": "prefill-128",
+    "requests": [
+      {
+        "admit_after_steps": 0,
+        "max_tokens": 1,
+        "prompt_token_ids": [
+          24,
+          7943,
+          15862,
+          23781,
+          31700,
+          39619,
+          47538,
+          55457,
+          63376,
+          71295,
+          79214,
+          87133,
+          95052,
+          102971,
+          110890,
+          118809,
+          126728,
+          134647,
+          142566,
+          150485,
+          6469,
+          14388,
+          22307,
+          30226,
+          38145,
+          46064,
+          53983,
+          61902,
+          69821,
+          77740,
+          85659,
+          93578,
+          101497,
+          109416,
+          117335,
+          125254,
+          133173,
+          141092,
+          149011,
+          4995,
+          12914,
+          20833,
+          28752,
+          36671,
+          44590,
+          52509,
+          60428,
+          68347,
+          76266,
+          84185,
+          92104,
+          100023,
+          107942,
+          115861,
+          123780,
+          131699,
+          139618,
+          147537,
+          3521,
+          11440,
+          19359,
+          27278,
+          35197,
+          43116,
+          51035,
+          58954,
+          66873,
+          74792,
+          82711,
+          90630,
+          98549,
+          106468,
+          114387,
+          122306,
+          130225,
+          138144,
+          146063,
+          2047,
+          9966,
+          17885,
+          25804,
+          33723,
+          41642,
+          49561,
+          57480,
+          65399,
+          73318,
+          81237,
+          89156,
+          97075,
+          104994,
+          112913,
+          120832,
+          128751,
+          136670,
+          144589,
+          573,
+          8492,
+          16411,
+          24330,
+          32249,
+          40168,
+          48087,
+          56006,
+          63925,
+          71844,
+          79763,
+          87682,
+          95601,
+          103520,
+          111439,
+          119358,
+          127277,
+          135196,
+          143115,
+          151034,
+          7018,
+          14937,
+          22856,
+          30775,
+          38694,
+          46613,
+          54532,
+          62451,
+          70370,
+          78289,
+          86208,
+          94127
+        ],
+        "request_id": "prefill"
+      }
+    ],
+    "warmup_repetitions": 2
+  }
+}

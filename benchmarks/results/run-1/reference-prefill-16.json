@@ -1,0 +1,181 @@
+{
+  "capacity": {
+    "block_size_tokens": 16,
+    "enable_prefix_cache": false,
+    "gpu_memory_utilization": 0.9,
+    "kv_data_page_count": 63,
+    "kv_page_count": 64,
+    "max_model_len": 32,
+    "max_num_batched_tokens": 512,
+    "max_num_seqs": 1,
+    "physical_kv_buffer_count": 28,
+    "physical_kv_bytes": 117440512,
+    "requested_kv_page_count": 64
+  },
+  "hardware": {
+    "device_index": 0,
+    "device_type": "cuda",
+    "gpu_name": "Tesla T4",
+    "gpu_total_memory_bytes": 15636037632
+  },
+  "model": {
+    "attention_operator": "reference",
+    "cache_dir": null,
+    "dtype": "torch.float16",
+    "id": "Qwen/Qwen3-0.6B",
+    "local_files_only": true,
+    "revision": "c1899de289a04d12100db370d81485cdf75e47ca"
+  },
+  "repetitions": [
+    {
+      "cuda_peak_allocated_bytes": 1318894592,
+      "elapsed_seconds": 0.05998343699997122,
+      "index": 0,
+      "peak_used_kv_pages": 1,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 16,
+          "request_id": "prefill",
+          "ttft_seconds": 0.05998343699997122
+        }
+      ]
+    },
+    {
+      "cuda_peak_allocated_bytes": 1318894592,
+      "elapsed_seconds": 0.05997226099998443,
+      "index": 1,
+      "peak_used_kv_pages": 1,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 16,
+          "request_id": "prefill",
+          "ttft_seconds": 0.05997226099998443
+        }
+      ]
+    },
+    {
+      "cuda_peak_allocated_bytes": 1318894592,
+      "elapsed_seconds": 0.06007168799999363,
+      "index": 2,
+      "peak_used_kv_pages": 1,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 16,
+          "request_id": "prefill",
+          "ttft_seconds": 0.06007168799999363
+        }
+      ]
+    },
+    {
+      "cuda_peak_allocated_bytes": 1318894592,
+      "elapsed_seconds": 0.05978807899998628,
+      "index": 3,
+      "peak_used_kv_pages": 1,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 16,
+          "request_id": "prefill",
+          "ttft_seconds": 0.05978807899998628
+        }
+      ]
+    },
+    {
+      "cuda_peak_allocated_bytes": 1318894592,
+      "elapsed_seconds": 0.059543265000002066,
+      "index": 4,
+      "peak_used_kv_pages": 1,
+      "preempted_request_count": 0,
+      "requests": [
+        {
+          "finished": true,
+          "itl_seconds": [],
+          "output_tokens": 1,
+          "prompt_tokens": 16,
+          "request_id": "prefill",
+          "ttft_seconds": 0.059543265000002066
+        }
+      ]
+    }
+  ],
+  "runtime": {
+    "cuda_version": "12.8",
+    "execution_mode": "eager",
+    "python_version": "3.12.3",
+    "pytorch_version": "2.8.0+cu128",
+    "random_seed": 0,
+    "sampling": "greedy"
+  },
+  "schema_version": "micro-vllm.engine-benchmark.v1",
+  "summary": {
+    "completed_requests": 5,
+    "cuda_peak_allocated_bytes": 1318894592,
+    "elapsed_seconds": 0.2993587299999376,
+    "itl": {
+      "count": 0,
+      "median_seconds": null,
+      "p90_seconds": null
+    },
+    "output_token_throughput_per_second": 16.70236909410005,
+    "output_tokens": 5,
+    "peak_kv_utilization": 0.015873015873015872,
+    "peak_used_kv_pages": 1,
+    "preempted_request_count": 0,
+    "prompt_token_throughput_per_second": 267.2379055056008,
+    "prompt_tokens": 80,
+    "request_throughput_per_second": 16.70236909410005,
+    "total_token_throughput_per_second": 283.9402745997009,
+    "total_tokens": 85,
+    "ttft": {
+      "count": 5,
+      "median_seconds": 0.05997226099998443,
+      "p90_seconds": 0.06003638759998466
+    }
+  },
+  "workload": {
+    "description": "single request, 16 prompt tokens, one output token",
+    "measurement_repetitions": 5,
+    "name": "prefill-16",
+    "requests": [
+      {
+        "admit_after_steps": 0,
+        "max_tokens": 1,
+        "prompt_token_ids": [
+          12,
+          7931,
+          15850,
+          23769,
+          31688,
+          39607,
+          47526,
+          55445,
+          63364,
+          71283,
+          79202,
+          87121,
+          95040,
+          102959,
+          110878,
+          118797
+        ],
+        "request_id": "prefill"
+      }
+    ],
+    "warmup_repetitions": 2
+  }
+}
