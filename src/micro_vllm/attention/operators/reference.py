@@ -8,63 +8,6 @@ from micro_vllm.attention.attention import AttentionMetadata, map_cache_slots
 from micro_vllm.attention.operators.base import AttentionOperator
 
 
-def write_kv_cache(
-    key: torch.Tensor,
-    value: torch.Tensor,
-    layer_kv_cache: torch.Tensor,
-    metadata: AttentionMetadata,
-) -> None:
-    """Write current query keys and values into their physical cache slots."""
-
-    flattened_cache = layer_kv_cache.view(
-        2,
-        -1,
-        *layer_kv_cache.shape[3:],
-    )
-    flattened_cache[0].index_copy_(0, metadata.slot_mapping, key)
-    flattened_cache[1].index_copy_(0, metadata.slot_mapping, value)
-
-
-def gather_kv_cache(
-    layer_kv_cache: torch.Tensor,
-    metadata: AttentionMetadata,
-) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
-    """Gather each request's visible K/V context."""
-
-    flattened_cache = layer_kv_cache.view(
-        2,
-        -1,
-        *layer_kv_cache.shape[3:],
-    )
-    histories: list[tuple[torch.Tensor, torch.Tensor]] = []
-    for request_index in range(metadata.num_requests):
-        query_start = metadata.query_start_locations[request_index].item()
-        context_start = metadata.query_context_start_positions[
-            query_start
-        ].item()
-        context_length = metadata.context_lengths[request_index].item()
-        block_table = metadata.block_table[request_index]
-        token_positions = torch.arange(
-            context_start,
-            context_length,
-            dtype=torch.int64,
-            device=metadata.query_positions.device,
-        )
-        slots = map_cache_slots(
-            token_positions,
-            block_table,
-            metadata.block_size,
-        )
-        histories.append(
-            (
-                flattened_cache[0].index_select(0, slots),
-                flattened_cache[1].index_select(0, slots),
-            )
-        )
-
-    return tuple(histories)
-
-
 class ReferenceAttentionOperator(AttentionOperator):
     """Readable causal attention over a paged physical K/V cache."""
 
@@ -136,3 +79,60 @@ class ReferenceAttentionOperator(AttentionOperator):
             output[query_start:query_end].copy_(attention)
 
         return output
+
+
+def write_kv_cache(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    layer_kv_cache: torch.Tensor,
+    metadata: AttentionMetadata,
+) -> None:
+    """Write current query keys and values into their physical cache slots."""
+
+    flattened_cache = layer_kv_cache.view(
+        2,
+        -1,
+        *layer_kv_cache.shape[3:],
+    )
+    flattened_cache[0].index_copy_(0, metadata.slot_mapping, key)
+    flattened_cache[1].index_copy_(0, metadata.slot_mapping, value)
+
+
+def gather_kv_cache(
+    layer_kv_cache: torch.Tensor,
+    metadata: AttentionMetadata,
+) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
+    """Gather each request's visible K/V context."""
+
+    flattened_cache = layer_kv_cache.view(
+        2,
+        -1,
+        *layer_kv_cache.shape[3:],
+    )
+    histories: list[tuple[torch.Tensor, torch.Tensor]] = []
+    for request_index in range(metadata.num_requests):
+        query_start = metadata.query_start_locations[request_index].item()
+        context_start = metadata.query_context_start_positions[
+            query_start
+        ].item()
+        context_length = metadata.context_lengths[request_index].item()
+        block_table = metadata.block_table[request_index]
+        token_positions = torch.arange(
+            context_start,
+            context_length,
+            dtype=torch.int64,
+            device=metadata.query_positions.device,
+        )
+        slots = map_cache_slots(
+            token_positions,
+            block_table,
+            metadata.block_size,
+        )
+        histories.append(
+            (
+                flattened_cache[0].index_select(0, slots),
+                flattened_cache[1].index_select(0, slots),
+            )
+        )
+
+    return tuple(histories)
