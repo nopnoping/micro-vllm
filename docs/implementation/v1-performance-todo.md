@@ -99,24 +99,24 @@ operator(
 
 ### 4.1 固定 workload
 
-- [ ] 使用 `Qwen/Qwen3-0.6B` revision
+- [x] 使用 `Qwen/Qwen3-0.6B` revision
       `c1899de289a04d12100db370d81485cdf75e47ca`。
-- [ ] 使用标准 Hub cache 和 `local_files_only=True`，测量时不访问网络。
-- [ ] 固定 Tesla T4、FP16、reference eager、greedy sampling 和随机 seed。
-- [ ] 记录 PyTorch、CUDA、GPU 名称/显存、model revision、dtype、operator、block size、
+- [x] 使用标准 Hub cache 和 `local_files_only=True`，测量时不访问网络。
+- [x] 固定 Tesla T4、FP16、reference eager、greedy sampling 和随机 seed。
+- [x] 记录 PyTorch、CUDA、GPU 名称/显存、model revision、dtype、operator、block size、
       token/sequence budget 和 KV page capacity。
-- [ ] 至少定义以下 tokenized workloads：
+- [x] 至少定义以下 tokenized workloads：
   - prefill：单 request，多个固定 prompt length，输出一个 token；
   - decode：短 prompt，固定长输出；
   - mixed：running decode 与新 prefill 共处一个 batch；
   - cache pressure：小容量下触发 prefix/reuse 或 preemption。
-- [ ] warmup 次数、测量次数和输入 token IDs 固定并写入结果。
+- [x] warmup 次数、测量次数和输入 token IDs 固定并写入结果。
 
 ### 4.2 结果 schema
 
-- [ ] benchmark 输出单个 JSON document，不解析人类日志。
-- [ ] 配置字段包含 model/hardware/runtime/workload 的完整可复现参数。
-- [ ] 结果至少包含：
+- [x] benchmark 输出单个 JSON document，不解析人类日志。
+- [x] 配置字段包含 model/hardware/runtime/workload 的完整可复现参数。
+- [x] 结果至少包含：
   - elapsed seconds；
   - request throughput；
   - prompt/output/total token throughput；
@@ -124,21 +124,21 @@ operator(
   - ITL 的 count、median 和 p90；
   - CUDA peak allocated memory；
   - physical KV bytes、page count 和 peak utilization。
-- [ ] 单位固定为 seconds、tokens、bytes，不在 schema 中混用格式化字符串。
-- [ ] stdout 可打印简短摘要；机器可读 JSON 写入调用方显式指定的路径。
+- [x] 单位固定为 seconds、tokens、bytes，不在 schema 中混用格式化字符串。
+- [x] stdout 可打印简短摘要；机器可读 JSON 写入调用方显式指定的路径。
 
 ### 4.3 最小测量边界
 
-- [ ] benchmark harness 直接计时 `Engine.step()`，从 RequestOutput 计算 TTFT/ITL 和
+- [x] benchmark harness 直接计时 `Engine.step()`，从 RequestOutput 计算 TTFT/ITL 和
       output token throughput。
-- [ ] 在 benchmark 外层使用 CUDA synchronize 和 peak-memory API，不把计时器放进
+- [x] 在 benchmark 外层使用 CUDA synchronize 和 peak-memory API，不把计时器放进
       model/attention hot path。
-- [ ] 复用现有 `KVCacheLayoutTrace` 或初始化后的只读 layout 获取 physical KV bytes 和
+- [x] 复用现有 `KVCacheLayoutTrace` 或初始化后的只读 layout 获取 physical KV bytes 和
       page count。
-- [ ] peak utilization 由 benchmark harness 对已知 workload/cache capacity 计算；若
+- [x] peak utilization 由 benchmark harness 对已知 workload/cache capacity 计算；若
       当前信息不足，再增加一个最小只读计数，不先建设完整 lifecycle trace。
-- [ ] Phase 0 不新增 engine-step、request-lifecycle 或逐 block trace event。
-- [ ] 某项指标无法从 harness 获得时，先记录为空并说明原因，不因此阻塞 optimized
+- [x] Phase 0 不新增 engine-step、request-lifecycle 或逐 block trace event。
+- [x] 某项指标无法从 harness 获得时，先记录为空并说明原因，不因此阻塞 optimized
       feasibility spike。
 
 ### 4.4 Reference baseline
@@ -328,6 +328,6 @@ docs/requirements/v1-core-engine.md
 
 ## 13. 实现状态
 
-2026-07-22：技术清单已冻结，尚未开始 Phase 0。V1.1–V1.5 correctness baseline
-已完成；V1.6 从最小 benchmark/result contract 和 reference baseline 开始，完整
-runtime trace 不阻塞 optimized feasibility 或实现。
+2026-07-23：Phase 0 的本地 benchmark harness、冻结 workload 和 result schema 已实现；
+Tesla T4 reference 原始结果及重复运行稳定性检查尚未执行。V1.1–V1.5 correctness
+baseline 已完成；完整 runtime trace 不阻塞 optimized feasibility 或实现。
