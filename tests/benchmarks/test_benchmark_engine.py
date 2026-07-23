@@ -54,11 +54,12 @@ def test_latency_summary_uses_seconds_and_all_samples() -> None:
         "median_seconds": None,
         "p90_seconds": None,
     }
-    assert _latency_summary((0.1, 0.2, 0.3)) == {
-        "count": 3,
-        "median_seconds": 0.2,
-        "p90_seconds": 0.28,
-    }
+    summary = _latency_summary((0.1, 0.2, 0.3))
+    assert summary["count"] == 3
+    assert summary["median_seconds"] == 0.2
+    p90_seconds = summary["p90_seconds"]
+    assert isinstance(p90_seconds, float)
+    assert math.isclose(p90_seconds, 0.28)
 
 
 def test_request_document_keeps_raw_token_timings() -> None:
