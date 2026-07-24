@@ -185,7 +185,7 @@ dense-only Triton core；学习步骤从 batched page write 和 page-address map
 - [x] 第一步实现 batched Triton page-write kernel：grid 覆盖全部 flattened token、
       KV head 和 head-dim block，通过 `slot_mapping` 将 K/V 写入 physical cache；
       不按 request 启动 kernel。
-- [ ] 第二步实现独立 Triton page-address/gather spike，用多 request、乱序 physical
+- [x] 第二步实现独立 Triton page-address/gather spike，用多 request、乱序 physical
       block table 和跨 page context 对拍 reference；该 tensor materialization 只用于
       学习地址映射，不进入最终性能路径。
 - [ ] 第三步实现 correctness-first 的 ragged paged-attention kernel：grid 同时覆盖
@@ -214,6 +214,15 @@ decode 则约为 `0.84 us` 对 `3.16 us`。Triton device work 更少，但
 Python-to-Triton dispatch 使独立调用更慢。该结果通过地址语义验收，但不构成
 standalone performance win；正式路径必须在更大的 fused paged-attention 边界摊销
 dispatch，或直接从当前 scheduled K/V 读取并同时保持 cache side effect。
+
+Step 2 使用一次 `(request, context_offset, kv_head)` launch，把 request context
+边界、logical position、block table lookup 和 K/V copy 全部放入 Triton。多 request
+测试覆盖不同 context start/length、乱序 physical blocks、跨 page、非 2 次幂
+head dim 和 Qwen3 shape，valid output 与 reference bitwise 一致。RTX 5090 两轮
+512-token gather 中，prefill 标签 case 为 `2.698x/2.712x`，decode 标签 case 为
+`3.103x/3.107x`；两者实际 gather 相同 K/V 数量。该 padded 输出约 2 MiB，只用于
+学习和对拍；Step 3 必须把 page load 直接接到 QK、online softmax 和 PV，不能把
+gather tensor 带入 runtime。
 
 ### 5.2 正式 operator
 
@@ -408,3 +417,9 @@ gather spike 或第一版学习 kernel 直接注册到 runtime。
 bitwise 对拍。独立 wrapper 因 dispatch 固定成本慢于 reference，但 CUDA kernel
 本身减少了 device time；下一步实现仅用于地址学习和对拍的 batched page-gather
 spike，随后把同一地址计算融合进 ragged paged attention。
+
+2026-07-24：Step 2 batched page-gather 已完成。一个 kernel launch 并发处理所有
+request/context offsets/KV heads，移除了 reference gather 的 CPU request loop、
+`.item()` DtoH 同步和多个地址 tensor kernels；两轮 512-token context 结果稳定为
+约 `2.7-3.1x`。下一步不优化或注册 padded gather，而是直接实现 fused ragged
+paged attention。

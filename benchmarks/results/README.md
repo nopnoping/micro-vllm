@@ -185,3 +185,54 @@ The result argues against adding a separately launched Triton write to the
 runtime unchanged. The fused design must amortize dispatch over paged attention,
 or read current scheduled K/V directly while preserving the required cache
 write side effect.
+
+### Triton paged path step 2: batched page gather
+
+Step 2 moves request slicing and page lookup into one Triton launch. Its
+learning-only output is padded to the block-table capacity:
+
+```text
+[2, num_requests, context_capacity, num_kv_heads, head_dim]
+```
+
+The kernel grid is `(request, context_offset, kv_head)`. Each program loads the
+request's query start, derives its context start, masks offsets beyond the
+request's context length, maps the logical position through that row of the
+block table, and copies one K/V head from the selected physical page. The
+multi-request parity test uses different context starts and lengths, scrambled
+physical block rows `3 -> 1 -> 5` and `4 -> 0`, and contexts that cross page
+boundaries.
+
+Run the benchmark as:
+
+```bash
+.venv/bin/python -m benchmarks.spike_triton_paged \
+  --step page-gather \
+  --launches-per-sample 100 \
+  --expected-gpu-name "NVIDIA GeForce RTX 5090" \
+  --output benchmarks/results/spikes/triton-page-gather-rtx5090-run-1.json
+```
+
+The frozen benchmark shapes each gather one 512-token context. The prefill and
+decode labels retain their query shapes, but gather the same number of K/V
+elements, so the latency difference should not be interpreted as different
+memory volume.
+
+| case | reference gather microseconds | Triton gather microseconds | Triton speedup | exact valid-region parity |
+| --- | ---: | ---: | ---: | --- |
+| prefill, Q=512 | 77.930 / 77.958 | 28.881 / 28.747 | 2.698x / 2.712x | yes / yes |
+| decode, Q=1 | 98.439 / 98.050 | 31.723 / 31.556 | 3.103x / 3.107x | yes / yes |
+
+The JSON profiler records approximately `11.1 us` of reference CUDA activity
+per gather and `2.96 us` for Triton. The reference path performs three
+device-to-host scalar copies per request and separately launches position
+creation, division, remainder, block-table lookup, slot arithmetic, and two K/V
+gathers. The Triton kernel performs the same address calculation and copies in
+one launch, so it wins despite Python-to-Triton dispatch.
+
+This is still not the final performance path. For one 512-token Qwen3 context,
+the padded K/V output materializes approximately 2 MiB and the following
+attention kernel must read it again. Step 3 will keep the same block-table
+address calculation but replace the gather stores with immediate Q/K
+accumulation, online softmax, and V accumulation. That removes the padded
+allocation and its write/read traffic.
