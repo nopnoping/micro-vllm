@@ -1,0 +1,147 @@
+{
+  "cases": {
+    "decode": {
+      "accuracy": {
+        "exact": true,
+        "max_absolute_error": 0.0
+      },
+      "cuda_kernel_profile": {
+        "reference": {
+          "device_seconds_per_operation": 3.1648400000000813e-06,
+          "iterations": 100,
+          "kernels": [
+            {
+              "count": 200,
+              "mean_device_seconds": 1.5824200000000407e-06,
+              "name": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_impl<at::native::OpaqueType<2> >(at::TensorIterator&, long, long, long)::{lambda(int)#1}>(long, at::native::index_copy_kernel_impl<at::native::OpaqueType<2> >(at::TensorIterator&, long, long, long)::{lambda(int)#1})",
+              "total_device_seconds": 0.0003164840000000081
+            }
+          ]
+        },
+        "triton": {
+          "device_seconds_per_operation": 8.37430000000029e-07,
+          "iterations": 100,
+          "kernels": [
+            {
+              "count": 100,
+              "mean_device_seconds": 8.37430000000029e-07,
+              "name": "_write_kv_cache_kernel",
+              "total_device_seconds": 8.374300000000289e-05
+            }
+          ]
+        }
+      },
+      "latency": {
+        "median_speedup": 0.7283569047395653,
+        "reference": {
+          "count": 20,
+          "max_seconds": 1.685923194885254e-05,
+          "mean_seconds": 1.5500705575942993e-05,
+          "median_seconds": 1.5361711978912354e-05,
+          "min_seconds": 1.5285311698913574e-05,
+          "p90_seconds": 1.5567702674865724e-05
+        },
+        "triton": {
+          "count": 20,
+          "max_seconds": 2.287788772583008e-05,
+          "mean_seconds": 2.1171523189544678e-05,
+          "median_seconds": 2.1090912818908693e-05,
+          "min_seconds": 2.0883840560913086e-05,
+          "p90_seconds": 2.1201260948181153e-05
+        }
+      },
+      "shape": {
+        "block_size": 16,
+        "context_length": 512,
+        "head_dim": 128,
+        "kv_page_count": 32,
+        "name": "decode",
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "query_length": 1
+      }
+    },
+    "prefill": {
+      "accuracy": {
+        "exact": true,
+        "max_absolute_error": 0.0
+      },
+      "cuda_kernel_profile": {
+        "reference": {
+          "device_seconds_per_operation": 4.262149999999974e-06,
+          "iterations": 100,
+          "kernels": [
+            {
+              "count": 200,
+              "mean_device_seconds": 2.131074999999987e-06,
+              "name": "void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_impl<at::native::OpaqueType<2> >(at::TensorIterator&, long, long, long)::{lambda(int)#1}>(long, at::native::index_copy_kernel_impl<at::native::OpaqueType<2> >(at::TensorIterator&, long, long, long)::{lambda(int)#1})",
+              "total_device_seconds": 0.0004262149999999974
+            }
+          ]
+        },
+        "triton": {
+          "device_seconds_per_operation": 2.6800199999999766e-06,
+          "iterations": 100,
+          "kernels": [
+            {
+              "count": 100,
+              "mean_device_seconds": 2.6800199999999766e-06,
+              "name": "_write_kv_cache_kernel",
+              "total_device_seconds": 0.00026800199999999766
+            }
+          ]
+        }
+      },
+      "latency": {
+        "median_speedup": 0.6285316573989582,
+        "reference": {
+          "count": 20,
+          "max_seconds": 1.2620063781738281e-05,
+          "mean_seconds": 1.2503422451019288e-05,
+          "median_seconds": 1.249606418609619e-05,
+          "min_seconds": 1.2420127868652344e-05,
+          "p90_seconds": 1.2574134731292724e-05
+        },
+        "triton": {
+          "count": 20,
+          "max_seconds": 2.1184288024902342e-05,
+          "mean_seconds": 1.995360651016235e-05,
+          "median_seconds": 1.9881360054016114e-05,
+          "min_seconds": 1.9781600952148435e-05,
+          "p90_seconds": 2.001616020202637e-05
+        }
+      },
+      "shape": {
+        "block_size": 16,
+        "context_length": 512,
+        "head_dim": 128,
+        "kv_page_count": 32,
+        "name": "prefill",
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "query_length": 512
+      }
+    }
+  },
+  "hardware": {
+    "compute_capability": "12.0",
+    "gpu_name": "NVIDIA GeForce RTX 5090",
+    "gpu_total_memory_bytes": 33670758400
+  },
+  "measurement": {
+    "launches_per_sample": 1000,
+    "measurement_iterations": 20,
+    "sample_order": "alternating_reference_and_triton",
+    "timer": "cuda_events_over_repeated_launches",
+    "warmup_iterations": 100
+  },
+  "runtime": {
+    "cuda_version": "12.8",
+    "python_version": "3.12.3",
+    "pytorch_version": "2.8.0+cu128",
+    "random_seed": 0,
+    "triton_version": "3.4.0"
+  },
+  "schema_version": "micro-vllm.triton-paged-step1.v1",
+  "step": "batched_page_write"
+}

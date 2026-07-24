@@ -34,7 +34,8 @@ ModelConfig.attention_operator
 
 - 固定公开 Qwen3 checkpoint 的 T4 FP16 reference baseline。
 - tokenized Engine benchmark，不依赖 tokenizer、网络或随机 prompt 文本。
-- 一个 optimized attention operator；首选无新增依赖的 PyTorch SDPA 路径。
+- 一个 optimized attention operator；目标为批量执行的 Triton paged attention
+  路径，PyTorch SDPA 只保留为 feasibility 对照。
 - Full、SlidingWindow、ChunkedLocal 和 hybrid 的数值/生命周期回归。
 - full prefill、chunked prefill、decode 和 mixed batch 的对拍。
 - reference/optimized 显式切换和 benchmark 对比。
@@ -77,12 +78,12 @@ operator(
   SchedulerOutput。
 - current K/V 必须先写入 metadata 指定的 physical slots；reference 和 optimized
   共享相同的 cache side effect。
-- V1.6 允许 operator 将 paged history gather 成连续 tensor 后调用 SDPA；是否进一步
-  实现 direct paged kernel 由 benchmark 决定，不进入稳定 contract。
+- Triton operator 直接通过 block table 读取 paged history；独立 gather 只允许作为
+  地址映射学习/对拍步骤，不进入最终 hot path。
 
 ### 3.2 只增加一个静态 operator
 
-- registry 增加一个明确名称，初版建议为 `"torch_sdpa"`。
+- registry 增加一个明确名称，初版建议为 `"triton_paged"`。
 - `"reference"` 始终保留为正确性基线和显式 fallback。
 - 不增加动态 register、entry point、capability graph 或自动硬件探测 registry。
 - 不在运行中捕获 optimized 异常后静默切换 reference；不支持的外部配置在初始化/
@@ -152,23 +153,79 @@ operator(
 
 ### 5.1 小型 feasibility spike
 
-- [ ] 用当前 paged gather 输出验证 `torch.nn.functional.scaled_dot_product_attention`
+- [x] 用当前 paged gather 输出验证 `torch.nn.functional.scaled_dot_product_attention`
       在 T4/FP16 上的可用性。
-- [ ] 分别测量 prefill 和 decode；记录 PyTorch 实际可用 kernel 和 graph break。
-- [ ] spike 不进入 registry，不保留未证明收益的通用抽象。
-- [ ] 若 SDPA 在目标 workload 没有可测收益，记录结果并在继续前重新 review direct
+- [x] 分别测量 prefill 和 decode；记录 PyTorch 实际可用 kernel 和 graph break。
+- [x] spike 不进入 registry，不保留未证明收益的通用抽象。
+- [x] 若 SDPA 在目标 workload 没有可测收益，记录结果并在继续前重新 review direct
       paged kernel/依赖选择，不把无收益实现命名为 optimized backend。
+
+  本次 spike 的两轮结果分别为 prefill `2.292x/2.292x`、decode
+  `1.259x/1.257x`，因此不触发无收益 review gate，可以进入正式 operator 实现。
+
+#### 5.1.1 RTX 5090 分阶段测量
+
+- [x] 将 GPU 名称从 spike 实现中解耦；可用 `--expected-gpu-name` 为单次实验显式
+      锁定硬件，输出仍记录实际 GPU 和 compute capability。
+- [x] 在 RTX 5090 上用相同 shape、FP16、seed 和测量次数重复两轮 SDPA spike。
+- [x] 隔离测量 KV write、paged gather、request scalar/view extraction、dense SDPA
+      preparation、SDPA core 和 output copy。
+- [x] 原始结果按 GPU 和 run 分文件保存，不覆盖或混入 T4 baseline。
+- [x] isolated component 每项单独 synchronize，只用于排序优化目标，不把 medians
+      相加当作完整 operator latency。
+
+两轮最大的 isolated stage 都是 paged gather（约 `0.082 ms`），其次是 SDPA core
+（prefill 约 `0.064 ms`、decode 约 `0.058 ms`）和 dense input preparation
+（约 `0.051 ms`）；request scalar/view extraction 约 `0.030 ms`。因此不实现
+dense-only Triton core；学习步骤从 batched page write 和 page-address mapping
+开始，随后直接进入 fused ragged paged attention。
+
+#### 5.1.2 教学型 Triton paged 路径
+
+- [x] 第一步实现 batched Triton page-write kernel：grid 覆盖全部 flattened token、
+      KV head 和 head-dim block，通过 `slot_mapping` 将 K/V 写入 physical cache；
+      不按 request 启动 kernel。
+- [ ] 第二步实现独立 Triton page-address/gather spike，用多 request、乱序 physical
+      block table 和跨 page context 对拍 reference；该 tensor materialization 只用于
+      学习地址映射，不进入最终性能路径。
+- [ ] 第三步实现 correctness-first 的 ragged paged-attention kernel：grid 同时覆盖
+      flattened query token 和 query head，kernel 内根据 `query_start_locations`
+      找到 request，直接通过该 request 的 `block_table` 加载 K/V。
+- [ ] 在同一个 kernel 中完成 GQA head mapping、causal/context-start mask 和 FP32
+      online softmax；不生成 gathered K/V、`repeat_interleave` 结果或 dense mask。
+- [ ] mixed batch 的所有 request 在一个 kernel launch 中执行；Python/C++ 只做一次
+      launch，不允许逐 request 调 SDPA 或 Triton。
+- [ ] correctness-first 版本允许在 GPU 内扫描较小的
+      `query_start_locations` 来完成 flattened-query 到 request 的映射；测量后再比较
+      GPU request-index tensor、二维 padded grid 或 work queue，不能预先增加复杂调度。
+- [ ] page write、独立 gather spike、fused paged attention 分别与 reference 对拍，
+      覆盖 decode、prefill、mixed、跨 page、GQA/MQA 和非连续 physical blocks。
+- [ ] 在同一 warmup/measurement loop 中交错测量完整 reference、SDPA spike 和
+      Triton paged path，避免把不同 harness 或 GPU clock state 的绝对时间直接比较。
+- [ ] 只有 fused direct-paged 版本正确且有重复收益时，才注册正式 operator；独立
+      gather spike 和中间 tensor 不进入 runtime。
+
+Step 1 在乱序 slots、跨 physical page、非连续 K stride、非 2 次幂 head dim 和
+Qwen3 `8 x 128` KV shape 上与 reference cache bitwise 一致。RTX 5090 两轮结果中，
+standalone Triton write 为 `19.9-21.1 us`，reference 为 `12.5-15.4 us`，因此
+端到端只有 `0.61-0.73x`。JSON 内的 profiler 数据同时显示：prefill Triton CUDA
+kernel 为约 `2.68 us/write`，reference 两个 kernels 合计约 `4.27 us/write`；
+decode 则约为 `0.84 us` 对 `3.16 us`。Triton device work 更少，但
+Python-to-Triton dispatch 使独立调用更慢。该结果通过地址语义验收，但不构成
+standalone performance win；正式路径必须在更大的 fused paged-attention 边界摊销
+dispatch，或直接从当前 scheduled K/V 读取并同时保持 cache side effect。
 
 ### 5.2 正式 operator
 
-- [ ] 新增 `TorchSDPAAttentionOperator` 并注册为 `"torch_sdpa"`。
-- [ ] 复用或提取当前 K/V cache write 与 paged gather 机制，不复制 slot mapping 语义。
+- [ ] 新增 `TritonPagedAttentionOperator` 并注册为 `"triton_paged"`。
+- [ ] page write 和 fused paged read 共享当前 slot mapping/block table 语义，不复制
+      Scheduler 或 KV cache policy。
 - [ ] Full/SW/Chunked 的可见范围只读取 `AttentionMetadata`，不判断 spec class。
-- [ ] 支持 MHA、GQA 和 MQA；GQA 展开或原生 enable_gqa 的选择以兼容性/测量为准。
+- [ ] 支持 MHA、GQA 和 MQA；由 query head 直接映射 KV head，不物化展开 K/V。
 - [ ] mask 同时表达 causal upper bound 和每 query 的 context start。
 - [ ] softmax/accumulation 使用与 reference 对拍后确认的稳定精度。
-- [ ] mixed request batch 可以逐 request 组织 SDPA 输入；首版不为消除小循环引入复杂
-      ragged tensor abstraction。
+- [ ] mixed request batch 由一次 Triton launch 并发执行；不在 CPU 逐 request 切分或
+      调用 attention。
 - [ ] CPU reference 路径继续使用 `"reference"`，不要求 optimized operator 成为通用
       CPU backend。
 
@@ -273,7 +330,7 @@ operator(
 | Length | 至少一个短 prompt、一个跨多 block prompt、一个长 decode |
 | Cache | prefix off 基线；prefix on/reuse 代表性场景 |
 | Model | Qwen3-0.6B 固定 revision；tiny models 用于快速 parity |
-| Hardware | aliyun-ecs Tesla T4，记录实际 CUDA/PyTorch 版本 |
+| Hardware | Phase 0 baseline 保留 aliyun-ecs Tesla T4；后续实验使用 RTX 5090，结果按 GPU 分开并记录实际 CUDA/PyTorch 版本 |
 
 benchmark 结果不能只写“更快”。每份结果必须能回答：优化了哪个 workload、代价是
 什么、是否改变显存/KV capacity，以及结果是否包含 compile/warmup 成本。
@@ -283,14 +340,14 @@ benchmark 结果不能只写“更快”。每份结果必须能回答：优化�
 ```text
 benchmarks/benchmark_engine.py
 benchmarks/results/README.md
-src/micro_vllm/attention/operators/torch_sdpa.py
+src/micro_vllm/attention/operators/triton_paged.py
 src/micro_vllm/attention/operators/registry.py
 src/micro_vllm/trace.py
 src/micro_vllm/core/scheduler.py
 src/micro_vllm/engine/engine.py
 src/micro_vllm/worker/model_runner.py
 src/micro_vllm/config.py                    # 仅在 compile 实验保留时
-tests/attention/operators/test_torch_sdpa.py
+tests/attention/operators/test_triton_paged.py
 tests/integration/test_optimized_engine.py
 docs/requirements/v1-core-engine.md
 ```
@@ -302,7 +359,7 @@ docs/requirements/v1-core-engine.md
 ## 11. 建议提交顺序
 
 1. `bench: freeze v1 reference workloads and result schema`
-2. `feat: add torch sdpa attention operator`
+2. `feat: add triton paged attention operator`
 3. `test: validate optimized attention parity`
 4. `bench: compare reference and optimized attention`
 5. `feat: trace measured engine and cache metrics`
@@ -328,7 +385,26 @@ docs/requirements/v1-core-engine.md
 
 ## 13. 实现状态
 
-2026-07-23：Phase 0 已完成。Tesla T4 reference baseline 已保存两轮原始结果；两轮
-output throughput 最大差异为 0.797%，单轮 elapsed time coefficient of variation
-最大为 3.92%，未观察到数量级抖动。V1.1–V1.5 correctness baseline 已完成；完整
-runtime trace 不阻塞 optimized feasibility 或实现。
+2026-07-23：Phase 0 与 Phase 1 feasibility spike 已完成。Tesla T4 reference
+baseline 已保存两轮原始结果；两轮 output throughput 最大差异为 0.797%，单轮
+elapsed time coefficient of variation 最大为 3.92%，未观察到数量级抖动。独立
+SDPA spike 在 prefill/decode 均有重复收益，实际选择 efficient attention kernel；
+纯 SDPA core 无 graph break，完整 paged path 的 break 来自现有 gather 中的
+`Tensor.item()`。下一步进入单一正式 operator，不先扩展 runtime trace。
+
+2026-07-24：后续 GPU 实验迁移到 NVIDIA GeForce RTX 5090（32,607 MiB，
+compute capability 12.0），并在相同 PyTorch 2.8.0+cu128、CUDA 12.8、shape、
+FP16、seed、warmup 和 measurement 配置下重跑两轮 spike。prefill speedup 为
+`1.340x/1.346x`，decode 为 `1.169x/1.148x`，两者仍选择 efficient attention。
+Flash Attention 因显式 non-null mask 不可用；cuDNN 仅支持本次 prefill，不支持
+query length 1 的 decode。鉴于相对收益较 T4 缩小，正式 operator 前先分解
+write/gather/prepare/attention core 的耗时。分解结果显示 paged gather 是最大
+isolated stage；下一步从 batched Triton page write 和 page-address mapping 开始，
+随后实现一次 launch 并发处理 mixed requests 的 fused paged attention，不把独立
+gather spike 或第一版学习 kernel 直接注册到 runtime。
+
+2026-07-24：Triton paged path Step 1 已完成。Batched page write 使用
+`grid=(total_query_tokens, num_kv_heads)`，无 request CPU loop，并与 reference
+bitwise 对拍。独立 wrapper 因 dispatch 固定成本慢于 reference，但 CUDA kernel
+本身减少了 device time；下一步实现仅用于地址学习和对拍的 batched page-gather
+spike，随后把同一地址计算融合进 ragged paged attention。

@@ -1,0 +1,245 @@
+{
+  "cases": {
+    "decode": {
+      "accuracy": {
+        "allclose": true,
+        "atol": 0.05,
+        "max_absolute_error": 0.000244140625,
+        "max_relative_error": 0.8340517282485962,
+        "rtol": 0.05
+      },
+      "forced_backend_availability": {
+        "cudnn_attention": {
+          "available": false,
+          "error": "No available kernel. Aborting execution.",
+          "error_type": "RuntimeError",
+          "warnings": [
+            "Memory efficient kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:858.)",
+            "Memory Efficient attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:552.)",
+            "Flash attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:860.)",
+            "Flash attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:540.)",
+            "CuDNN attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:862.)",
+            "cudnn SDPA does not support sequence length 1. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:458.)"
+          ]
+        },
+        "efficient_attention": {
+          "available": true,
+          "error": null,
+          "error_type": null,
+          "warnings": []
+        },
+        "flash_attention": {
+          "available": false,
+          "error": "No available kernel. Aborting execution.",
+          "error_type": "RuntimeError",
+          "warnings": [
+            "Memory efficient kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:858.)",
+            "Memory Efficient attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:552.)",
+            "Flash attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:860.)",
+            "Flash Attention does not support non-null attn_mask. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:262.)",
+            "CuDNN attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:862.)",
+            "CuDNN attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:592.)"
+          ]
+        },
+        "math": {
+          "available": true,
+          "error": null,
+          "error_type": null,
+          "warnings": []
+        }
+      },
+      "graphs": {
+        "paged_operator": {
+          "break_reasons": [
+            "Unsupported Tensor.item() call with capture_scalar_outputs=False\n  Explanation: Dynamo does not support tracing `Tensor.item()` with config.capture_scalar_outputs=False.\n  Hint: Set `torch._dynamo.config.capture_scalar_outputs = True` or `export TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1` to include these operations in the captured graph.\n\n  Developer debug context: call_method TensorVariable() item () {}\n"
+          ],
+          "error": null,
+          "error_type": null,
+          "graph_break_count": 3,
+          "graph_count": 4,
+          "succeeded": true,
+          "warnings": []
+        },
+        "sdpa_core": {
+          "break_reasons": [],
+          "error": null,
+          "error_type": null,
+          "graph_break_count": 0,
+          "graph_count": 1,
+          "succeeded": true,
+          "warnings": []
+        }
+      },
+      "latency": {
+        "median_speedup": 1.2588535445279092,
+        "reference": {
+          "count": 100,
+          "max_seconds": 0.0011158209999848623,
+          "mean_seconds": 0.00104169166997508,
+          "median_seconds": 0.0010369119997903908,
+          "min_seconds": 0.0010251339999740594,
+          "p90_seconds": 0.0010562552998635512
+        },
+        "sdpa": {
+          "count": 100,
+          "max_seconds": 0.0008699770000930585,
+          "mean_seconds": 0.000822595819986418,
+          "median_seconds": 0.0008236955000029411,
+          "min_seconds": 0.0008022140000321087,
+          "p90_seconds": 0.0008352359998752946
+        }
+      },
+      "profiled_sdpa_operators": [
+        "aten::_scaled_dot_product_efficient_attention",
+        "aten::scaled_dot_product_attention"
+      ],
+      "shape": {
+        "block_size": 16,
+        "context_length": 512,
+        "head_dim": 128,
+        "kv_page_count": 32,
+        "name": "decode",
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "query_length": 1
+      }
+    },
+    "prefill": {
+      "accuracy": {
+        "allclose": true,
+        "atol": 0.05,
+        "max_absolute_error": 0.001953125,
+        "max_relative_error": 27.77576446533203,
+        "rtol": 0.05
+      },
+      "forced_backend_availability": {
+        "cudnn_attention": {
+          "available": false,
+          "error": "No available kernel. Aborting execution.",
+          "error_type": "RuntimeError",
+          "warnings": [
+            "Memory efficient kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:858.)",
+            "Memory Efficient attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:552.)",
+            "Flash attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:860.)",
+            "Flash attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:540.)",
+            "CuDNN attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:862.)",
+            "cuDNN MHA only supports gpu architectures in the range [sm80, sm121]. Attempting to run on a sm 7.5 gpu. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:538.)"
+          ]
+        },
+        "efficient_attention": {
+          "available": true,
+          "error": null,
+          "error_type": null,
+          "warnings": []
+        },
+        "flash_attention": {
+          "available": false,
+          "error": "No available kernel. Aborting execution.",
+          "error_type": "RuntimeError",
+          "warnings": [
+            "Memory efficient kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:858.)",
+            "Memory Efficient attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:552.)",
+            "Flash attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:860.)",
+            "Flash Attention does not support non-null attn_mask. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/sdp_utils_cpp.h:262.)",
+            "CuDNN attention kernel not used because: (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:862.)",
+            "CuDNN attention has been runtime disabled. (Triggered internally at /pytorch/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp:592.)"
+          ]
+        },
+        "math": {
+          "available": true,
+          "error": null,
+          "error_type": null,
+          "warnings": []
+        }
+      },
+      "graphs": {
+        "paged_operator": {
+          "break_reasons": [
+            "Unsupported Tensor.item() call with capture_scalar_outputs=False\n  Explanation: Dynamo does not support tracing `Tensor.item()` with config.capture_scalar_outputs=False.\n  Hint: Set `torch._dynamo.config.capture_scalar_outputs = True` or `export TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1` to include these operations in the captured graph.\n\n  Developer debug context: call_method TensorVariable() item () {}\n"
+          ],
+          "error": null,
+          "error_type": null,
+          "graph_break_count": 3,
+          "graph_count": 4,
+          "succeeded": true,
+          "warnings": []
+        },
+        "sdpa_core": {
+          "break_reasons": [],
+          "error": null,
+          "error_type": null,
+          "graph_break_count": 0,
+          "graph_count": 1,
+          "succeeded": true,
+          "warnings": []
+        }
+      },
+      "latency": {
+        "median_speedup": 2.2919287664205963,
+        "reference": {
+          "count": 100,
+          "max_seconds": 0.002052261999779148,
+          "mean_seconds": 0.0020113927399916065,
+          "median_seconds": 0.002012144999980592,
+          "min_seconds": 0.001985419999982696,
+          "p90_seconds": 0.0020216981000885426
+        },
+        "sdpa": {
+          "count": 100,
+          "max_seconds": 0.0013076010000077076,
+          "mean_seconds": 0.0009452841499978604,
+          "median_seconds": 0.0008779264999247971,
+          "min_seconds": 0.000847551000333624,
+          "p90_seconds": 0.001083233100007419
+        }
+      },
+      "profiled_sdpa_operators": [
+        "aten::_scaled_dot_product_efficient_attention",
+        "aten::scaled_dot_product_attention"
+      ],
+      "shape": {
+        "block_size": 16,
+        "context_length": 512,
+        "head_dim": 128,
+        "kv_page_count": 32,
+        "name": "prefill",
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "query_length": 512
+      }
+    }
+  },
+  "hardware": {
+    "compute_capability": "7.5",
+    "gpu_name": "Tesla T4",
+    "gpu_total_memory_bytes": 15636037632
+  },
+  "measurement": {
+    "measurement_iterations": 100,
+    "timer": "perf_counter_with_per_iteration_cuda_synchronize",
+    "warmup_iterations": 10
+  },
+  "model_shape": {
+    "dtype": "torch.float16",
+    "id": "Qwen/Qwen3-0.6B",
+    "manual_gqa_expansion": true,
+    "paged_cache_helpers": [
+      "write_kv_cache",
+      "gather_kv_cache"
+    ],
+    "revision": "c1899de289a04d12100db370d81485cdf75e47ca"
+  },
+  "runtime": {
+    "cuda_version": "12.8",
+    "global_sdpa_flags": {
+      "cudnn_enabled": true,
+      "efficient_enabled": true,
+      "flash_enabled": true,
+      "math_enabled": true
+    },
+    "python_version": "3.12.3",
+    "pytorch_version": "2.8.0+cu128",
+    "random_seed": 0
+  },
+  "schema_version": "micro-vllm.sdpa-feasibility.v1"
+}

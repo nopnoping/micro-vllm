@@ -1,0 +1,162 @@
+{
+  "cases": {
+    "decode": {
+      "full_paged_sdpa": {
+        "count": 100,
+        "max_seconds": 0.0002456218935549259,
+        "mean_seconds": 0.00023943445179611445,
+        "median_seconds": 0.00023890798911452293,
+        "min_seconds": 0.00023390096612274647,
+        "p90_seconds": 0.0002423888770863414
+      },
+      "isolated_components": {
+        "copy_output": {
+          "count": 100,
+          "max_seconds": 1.1079013347625732e-05,
+          "mean_seconds": 1.0451603448018431e-05,
+          "median_seconds": 1.0439020115882158e-05,
+          "min_seconds": 1.0135001502931118e-05,
+          "p90_seconds": 1.0641012340784072e-05
+        },
+        "extract_request_metadata_and_views": {
+          "count": 100,
+          "max_seconds": 3.4874072298407555e-05,
+          "mean_seconds": 3.036693320609629e-05,
+          "median_seconds": 3.0327006243169308e-05,
+          "min_seconds": 2.970104105770588e-05,
+          "p90_seconds": 3.062777686864138e-05
+        },
+        "gather_kv_cache": {
+          "count": 100,
+          "max_seconds": 8.724897634238005e-05,
+          "mean_seconds": 8.306570933200419e-05,
+          "median_seconds": 8.27265321277082e-05,
+          "min_seconds": 8.189899381250143e-05,
+          "p90_seconds": 8.432567119598389e-05
+        },
+        "prepare_sdpa_inputs": {
+          "count": 100,
+          "max_seconds": 5.565898027271032e-05,
+          "mean_seconds": 5.104205571115017e-05,
+          "median_seconds": 5.092349601909518e-05,
+          "min_seconds": 5.022005643695593e-05,
+          "p90_seconds": 5.130469799041748e-05
+        },
+        "sdpa_core": {
+          "count": 100,
+          "max_seconds": 7.170403841882944e-05,
+          "mean_seconds": 5.900744115933776e-05,
+          "median_seconds": 5.8676989283412695e-05,
+          "min_seconds": 5.8107078075408936e-05,
+          "p90_seconds": 5.965244490653276e-05
+        },
+        "write_kv_cache": {
+          "count": 100,
+          "max_seconds": 2.1036015823483467e-05,
+          "mean_seconds": 1.7442370299249888e-05,
+          "median_seconds": 1.7366022802889347e-05,
+          "min_seconds": 1.700094435364008e-05,
+          "p90_seconds": 1.7570587806403638e-05
+        }
+      },
+      "shape": {
+        "block_size": 16,
+        "context_length": 512,
+        "head_dim": 128,
+        "kv_page_count": 32,
+        "name": "decode",
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "query_length": 1
+      }
+    },
+    "prefill": {
+      "full_paged_sdpa": {
+        "count": 100,
+        "max_seconds": 0.00025882397312670946,
+        "mean_seconds": 0.0002463946910575032,
+        "median_seconds": 0.000245098490267992,
+        "min_seconds": 0.0002415659837424755,
+        "p90_seconds": 0.0002503169467672706
+      },
+      "isolated_components": {
+        "copy_output": {
+          "count": 100,
+          "max_seconds": 1.173198688775301e-05,
+          "mean_seconds": 1.1236852733418346e-05,
+          "median_seconds": 1.124752452597022e-05,
+          "min_seconds": 1.0942923836410046e-05,
+          "p90_seconds": 1.1358154006302357e-05
+        },
+        "extract_request_metadata_and_views": {
+          "count": 100,
+          "max_seconds": 3.3334014005959034e-05,
+          "mean_seconds": 3.0301754595711827e-05,
+          "median_seconds": 3.0292547307908535e-05,
+          "min_seconds": 2.9218033887445927e-05,
+          "p90_seconds": 3.059234004467726e-05
+        },
+        "gather_kv_cache": {
+          "count": 100,
+          "max_seconds": 8.78210412338376e-05,
+          "mean_seconds": 8.285493007861078e-05,
+          "median_seconds": 8.264195639640093e-05,
+          "min_seconds": 7.936800830066204e-05,
+          "p90_seconds": 8.422482060268521e-05
+        },
+        "prepare_sdpa_inputs": {
+          "count": 100,
+          "max_seconds": 5.518505349755287e-05,
+          "mean_seconds": 5.148020340129733e-05,
+          "median_seconds": 5.1380484364926815e-05,
+          "min_seconds": 5.065405275672674e-05,
+          "p90_seconds": 5.173012614250183e-05
+        },
+        "sdpa_core": {
+          "count": 100,
+          "max_seconds": 7.259100675582886e-05,
+          "mean_seconds": 6.423407699912787e-05,
+          "median_seconds": 6.407999899238348e-05,
+          "min_seconds": 6.318604573607445e-05,
+          "p90_seconds": 6.448263302445411e-05
+        },
+        "write_kv_cache": {
+          "count": 100,
+          "max_seconds": 2.074800431728363e-05,
+          "mean_seconds": 1.7942111007869243e-05,
+          "median_seconds": 1.7925514839589596e-05,
+          "min_seconds": 1.6883015632629395e-05,
+          "p90_seconds": 1.8094480037689212e-05
+        }
+      },
+      "shape": {
+        "block_size": 16,
+        "context_length": 512,
+        "head_dim": 128,
+        "kv_page_count": 32,
+        "name": "prefill",
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "query_length": 512
+      }
+    }
+  },
+  "hardware": {
+    "compute_capability": "12.0",
+    "gpu_name": "NVIDIA GeForce RTX 5090",
+    "gpu_total_memory_bytes": 33670758400
+  },
+  "measurement": {
+    "isolated_component_medians_are_additive": false,
+    "measurement_iterations": 100,
+    "timer": "isolated_perf_counter_with_per_sample_cuda_synchronize",
+    "warmup_iterations": 10
+  },
+  "runtime": {
+    "cuda_version": "12.8",
+    "python_version": "3.12.3",
+    "pytorch_version": "2.8.0+cu128",
+    "random_seed": 0
+  },
+  "schema_version": "micro-vllm.attention-breakdown.v1"
+}
