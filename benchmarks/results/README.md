@@ -236,3 +236,60 @@ attention kernel must read it again. Step 3 will keep the same block-table
 address calculation but replace the gather stores with immediate Q/K
 accumulation, online softmax, and V accumulation. That removes the padded
 allocation and its write/read traffic.
+
+### Triton paged path step 3: fused ragged paged attention
+
+Step 3 keeps flattened mixed-request input but changes the launch grid to
+`(packed_query_blocks, num_kv_heads)`. Each program binary-searches the
+`query_start_locations` prefix to identify exactly one request, then processes
+one KV head and its complete GQA query-head group. K/V are loaded directly
+through that request's block-table row and immediately consumed by QK, FP32
+online softmax, and PV; no gathered K/V tensor, expanded GQA tensor, or dense
+mask is materialized.
+
+The launch uses the following synchronization-free upper bound:
+
+```text
+total_query_blocks = total_query_tokens // BLOCK_Q + num_requests
+```
+
+It upper-bounds `sum(ceil(request_query_length / BLOCK_Q))` without copying
+per-request lengths to the CPU. Programs that land in the small padded tail
+return before loading Q or paged K/V.
+
+Run the benchmark as:
+
+```bash
+.venv/bin/python -m benchmarks.spike_triton_paged \
+  --step paged-attention \
+  --expected-gpu-name "NVIDIA GeForce RTX 5090" \
+  --output benchmarks/results/spikes/triton-paged-comparison-rtx5090-run-1.json
+```
+
+The final two raw runs use 100 shared warmup iterations, 20 measured samples,
+and 10 complete operations per CUDA-event sample. Every warmup iteration runs
+reference, gathered-SDPA, and Triton. Measurement order rotates across samples
+so each path appears first, middle, and last. Each path owns an independent
+cache clone; both optimized paths match the reference output tolerance and
+produce an exactly equal KV-cache side effect.
+
+| case | reference microseconds | gathered-SDPA microseconds | Triton microseconds | SDPA / Triton |
+| --- | ---: | ---: | ---: | ---: |
+| prefill, Q=512 | 400.299 / 376.202 | 283.357 / 275.266 | 81.301 / 77.251 | 3.485x / 3.563x |
+| decode, Q=1 | 411.779 / 405.474 | 337.011 / 331.982 | 83.483 / 80.843 | 4.037x / 4.106x |
+
+The profiler records each complete path separately. PyTorch selects its
+memory-efficient CUTLASS attention kernel for SDPA.
+
+| case | gathered-SDPA device microseconds | Triton device microseconds | Triton page write | Triton paged attention |
+| --- | ---: | ---: | ---: | ---: |
+| prefill | 69.354 / 69.437 | 31.261 / 31.205 | 2.702 / 2.698 | 28.558 / 28.507 |
+| decode | 61.993 / 61.745 | 22.178 / 22.082 | 0.835 / 0.835 | 21.342 / 21.246 |
+
+The direct-paged path therefore passes the feasibility gate against both the
+readable reference and the existing SDPA spike. The `3.5-4.1x` result is an
+end-to-end operator improvement, not a claim that the Triton QK/PV arithmetic
+alone beats the SDPA core by that factor. It includes removal of the CPU request
+loop, paged gather, explicit dense mask, GQA expansion, and intermediate tensor
+traffic. The preliminary pairwise-only Step 3 JSON files remain preserved, but
+the three-path comparison files are authoritative for performance decisions.

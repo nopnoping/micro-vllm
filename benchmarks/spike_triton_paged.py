@@ -2,8 +2,9 @@
 
 Step 1 writes every flattened input token and KV head in one launch. Step 2
 gathers every request through its block table in one launch, materializing a
-padded teaching output that will not enter the final runtime path. The spike is
-not registered as a runtime attention operator.
+padded teaching output that will not enter the final runtime path. Step 3
+reuses the page-address calculation inside fused ragged attention, without a
+gathered K/V tensor. The spike is not registered as a runtime operator.
 """
 
 from __future__ import annotations
@@ -21,17 +22,21 @@ import triton
 import triton.language as tl
 
 from benchmarks.spike_sdpa import (
+    ATOL,
     DTYPE,
     RANDOM_SEED,
+    RTOL,
     SPIKE_SHAPES,
     SpikeCase,
     _latency_summary,
     _make_case,
     _shape_document,
     _validate_target_gpu,
+    paged_sdpa_attention,
 )
 from micro_vllm.attention.attention import AttentionMetadata
 from micro_vllm.attention.operators.reference import (
+    ReferenceAttentionOperator,
     gather_kv_cache,
     write_kv_cache,
 )
@@ -171,6 +176,228 @@ def _gather_kv_cache_kernel(
     )
 
 
+@triton.jit
+def _find_request_for_query_block(
+    query_start_locations_ptr,
+    query_block_index,
+    num_requests,
+    BLOCK_Q: tl.constexpr,
+):
+    """Map one packed query-block program to exactly one request."""
+
+    left: tl.int32 = 0
+    right = num_requests
+    while left < right:
+        middle = (left + right) // 2
+        flattened_query_start = tl.load(
+            query_start_locations_ptr + middle
+        )
+        packed_query_start = (
+            flattened_query_start // BLOCK_Q + middle
+        )
+        if packed_query_start <= query_block_index:
+            left = middle + 1
+        else:
+            right = middle
+    return left - 1
+
+
+@triton.jit
+def _paged_attention_kernel(
+    query_ptr,
+    cache_ptr,
+    query_positions_ptr,
+    query_context_start_positions_ptr,
+    query_start_locations_ptr,
+    block_table_ptr,
+    output_ptr,
+    query_token_stride,
+    query_head_stride,
+    query_dim_stride,
+    cache_plane_stride,
+    cache_block_stride,
+    cache_offset_stride,
+    cache_head_stride,
+    cache_dim_stride,
+    block_table_request_stride,
+    block_table_block_stride,
+    output_token_stride,
+    output_head_stride,
+    output_dim_stride,
+    scale,
+    num_requests,
+    HEAD_GROUP_SIZE: tl.constexpr,
+    VALID_QUERY_ROWS: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    BLOCK_Q: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_DIM: tl.constexpr,
+):
+    query_block_index = tl.program_id(0)
+    kv_head_index = tl.program_id(1)
+    request_index = _find_request_for_query_block(
+        query_start_locations_ptr,
+        query_block_index,
+        num_requests,
+        BLOCK_Q,
+    )
+    request_query_start = tl.load(
+        query_start_locations_ptr + request_index
+    )
+    request_query_end = tl.load(
+        query_start_locations_ptr + request_index + 1
+    )
+    request_query_length = request_query_end - request_query_start
+    request_query_block_start = (
+        request_query_start // BLOCK_Q + request_index
+    )
+    request_query_block_index = (
+        query_block_index - request_query_block_start
+    )
+    if request_query_block_index * BLOCK_Q >= request_query_length:
+        return
+
+    query_row_offsets = tl.arange(0, BLOCK_M)
+    dim_offsets = tl.arange(0, BLOCK_DIM)
+    dim_mask = dim_offsets < HEAD_DIM
+    valid_query_row = query_row_offsets < VALID_QUERY_ROWS
+    request_query_offsets = (
+        request_query_block_index * BLOCK_Q
+        + query_row_offsets // HEAD_GROUP_SIZE
+    )
+    query_indices = request_query_start + request_query_offsets
+    query_head_indices = (
+        kv_head_index * HEAD_GROUP_SIZE
+        + query_row_offsets % HEAD_GROUP_SIZE
+    )
+    query_mask = (
+        valid_query_row
+        & (request_query_offsets < request_query_length)
+    )
+    query_positions = tl.load(
+        query_positions_ptr + query_indices,
+        mask=query_mask,
+        other=-1,
+    )
+    context_starts = tl.load(
+        query_context_start_positions_ptr + query_indices,
+        mask=query_mask,
+        other=0,
+    )
+    query_offsets = (
+        query_indices[:, None] * query_token_stride
+        + query_head_indices[:, None] * query_head_stride
+        + dim_offsets[None, :] * query_dim_stride
+    )
+    query = tl.load(
+        query_ptr + query_offsets,
+        mask=query_mask[:, None] & dim_mask[None, :],
+        other=0.0,
+    )
+
+    running_max = tl.full(
+        (BLOCK_M,),
+        -float("inf"),
+        dtype=tl.float32,
+    )
+    running_sum = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    accumulator = tl.zeros(
+        (BLOCK_M, BLOCK_DIM),
+        dtype=tl.float32,
+    )
+    context_offsets = tl.arange(0, BLOCK_N)
+    first_context_start = tl.min(
+        tl.where(query_mask, context_starts, 2**31 - 1),
+        axis=0,
+    )
+    last_query_position = tl.max(query_positions, axis=0)
+
+    for block_start in tl.range(
+        first_context_start,
+        last_query_position + 1,
+        BLOCK_N,
+    ):
+        logical_positions = block_start + context_offsets
+        context_token_mask = logical_positions <= last_query_position
+        attention_mask = (
+            query_mask[:, None]
+            & (
+                logical_positions[None, :]
+                >= context_starts[:, None]
+            )
+            & (
+                logical_positions[None, :]
+                <= query_positions[:, None]
+            )
+        )
+        logical_blocks = logical_positions // BLOCK_SIZE
+        physical_blocks = tl.load(
+            block_table_ptr
+            + request_index * block_table_request_stride
+            + logical_blocks * block_table_block_stride,
+            mask=context_token_mask,
+            other=0,
+        )
+        block_offsets = logical_positions % BLOCK_SIZE
+        cache_offsets = (
+            physical_blocks[:, None] * cache_block_stride
+            + block_offsets[:, None] * cache_offset_stride
+            + kv_head_index * cache_head_stride
+            + dim_offsets[None, :] * cache_dim_stride
+        )
+        element_mask = (
+            context_token_mask[:, None] & dim_mask[None, :]
+        )
+        key = tl.load(
+            cache_ptr + cache_offsets,
+            mask=element_mask,
+            other=0.0,
+        )
+        scores = tl.dot(query, tl.trans(key)) * scale
+        scores = tl.where(
+            attention_mask,
+            scores,
+            -float("inf"),
+        )
+
+        block_max = tl.max(scores, axis=1)
+        next_max = tl.maximum(running_max, block_max)
+        previous_scale = tl.exp(running_max - next_max)
+        probabilities = tl.exp(scores - next_max[:, None])
+        next_sum = (
+            running_sum * previous_scale
+            + tl.sum(probabilities, axis=1)
+        )
+
+        value = tl.load(
+            cache_ptr + cache_plane_stride + cache_offsets,
+            mask=element_mask,
+            other=0.0,
+        )
+        accumulator = (
+            accumulator * previous_scale[:, None]
+            + tl.dot(
+                probabilities.to(value.dtype),
+                value,
+            )
+        )
+        running_max = next_max
+        running_sum = next_sum
+
+    output_offsets = (
+        query_indices[:, None] * output_token_stride
+        + query_head_indices[:, None] * output_head_stride
+        + dim_offsets[None, :] * output_dim_stride
+    )
+    tl.store(
+        output_ptr + output_offsets,
+        accumulator / running_sum[:, None],
+        mask=query_mask[:, None] & dim_mask[None, :],
+    )
+
+
 def triton_write_kv_cache(
     key: torch.Tensor,
     value: torch.Tensor,
@@ -257,6 +484,70 @@ def triton_gather_kv_cache(
     return output[0], output[1]
 
 
+def triton_paged_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    layer_kv_cache: torch.Tensor,
+    metadata: AttentionMetadata,
+) -> torch.Tensor:
+    """Write current K/V, then attend to paged history without gathering it."""
+
+    triton_write_kv_cache(
+        key,
+        value,
+        layer_kv_cache,
+        metadata,
+    )
+    output = torch.empty_like(query)
+    num_query_heads = query.shape[1]
+    num_kv_heads = key.shape[1]
+    head_dim = query.shape[2]
+    head_group_size = num_query_heads // num_kv_heads
+    block_q = max(1, 16 // head_group_size)
+    valid_query_rows = block_q * head_group_size
+    block_m = triton.next_power_of_2(valid_query_rows)
+    block_dim = max(16, triton.next_power_of_2(head_dim))
+    num_warps = 4 if block_dim >= 64 else 1
+    num_requests = metadata.num_requests
+    total_query_blocks = query.shape[0] // block_q + num_requests
+    grid = (total_query_blocks, num_kv_heads)
+    _paged_attention_kernel[grid](
+        query,
+        layer_kv_cache,
+        metadata.query_positions,
+        metadata.query_context_start_positions,
+        metadata.query_start_locations,
+        metadata.block_table,
+        output,
+        query.stride(0),
+        query.stride(1),
+        query.stride(2),
+        layer_kv_cache.stride(0),
+        layer_kv_cache.stride(1),
+        layer_kv_cache.stride(2),
+        layer_kv_cache.stride(3),
+        layer_kv_cache.stride(4),
+        metadata.block_table.stride(0),
+        metadata.block_table.stride(1),
+        output.stride(0),
+        output.stride(1),
+        output.stride(2),
+        head_dim**-0.5,
+        num_requests,
+        HEAD_GROUP_SIZE=head_group_size,
+        VALID_QUERY_ROWS=valid_query_rows,
+        HEAD_DIM=head_dim,
+        BLOCK_SIZE=metadata.block_size,
+        BLOCK_Q=block_q,
+        BLOCK_M=block_m,
+        BLOCK_N=16,
+        BLOCK_DIM=block_dim,
+        num_warps=num_warps,
+    )
+    return output
+
+
 def _accuracy(case: SpikeCase, device: torch.device) -> dict[str, Any]:
     reference_cache = case.layer_kv_cache.clone()
     triton_cache = case.layer_kv_cache.clone()
@@ -321,6 +612,74 @@ def _gather_accuracy(
     }
 
 
+def _attention_accuracy(
+    case: SpikeCase,
+    device: torch.device,
+) -> dict[str, Any]:
+    reference_cache = case.layer_kv_cache.clone()
+    sdpa_cache = case.layer_kv_cache.clone()
+    triton_cache = case.layer_kv_cache.clone()
+    reference = ReferenceAttentionOperator()(
+        case.query,
+        case.key,
+        case.value,
+        reference_cache,
+        case.metadata,
+    )
+    sdpa = paged_sdpa_attention(
+        case.query,
+        case.key,
+        case.value,
+        sdpa_cache,
+        case.metadata,
+    )
+    triton_output = triton_paged_attention(
+        case.query,
+        case.key,
+        case.value,
+        triton_cache,
+        case.metadata,
+    )
+    torch.cuda.synchronize(device)
+
+    reference_float = reference.to(torch.float32)
+
+    def comparison(
+        output: torch.Tensor,
+        cache: torch.Tensor,
+    ) -> dict[str, Any]:
+        difference = (reference_float - output.to(torch.float32)).abs()
+        relative_difference = difference / reference_float.abs().clamp_min(
+            1e-6
+        )
+        return {
+            "allclose": torch.allclose(
+                reference,
+                output,
+                atol=ATOL,
+                rtol=RTOL,
+            ),
+            "cache_exact": torch.equal(reference_cache, cache),
+            "max_absolute_error": difference.max().item(),
+            "max_relative_error": relative_difference.max().item(),
+        }
+
+    sdpa_comparison = comparison(sdpa, sdpa_cache)
+    triton_comparison = comparison(triton_output, triton_cache)
+    return {
+        "atol": ATOL,
+        "rtol": RTOL,
+        "allclose": (
+            sdpa_comparison["allclose"]
+            and sdpa_comparison["cache_exact"]
+            and triton_comparison["allclose"]
+            and triton_comparison["cache_exact"]
+        ),
+        "sdpa": sdpa_comparison,
+        "triton": triton_comparison,
+    }
+
+
 def _measure_launch_batch(
     operation: Callable[[], object],
     *,
@@ -380,6 +739,51 @@ def _measure_pair(
             reference_summary["median_seconds"]
             / triton_summary["median_seconds"]
         ),
+    }
+
+
+def _measure_interleaved(
+    operations: dict[str, Callable[[], object]],
+    *,
+    warmup_iterations: int,
+    measurement_iterations: int,
+    launches_per_sample: int,
+) -> dict[str, Any]:
+    """Measure every complete path under one rotating sample order."""
+
+    operation_names = tuple(operations)
+    for _ in range(warmup_iterations):
+        for operation in operations.values():
+            operation()
+    torch.cuda.synchronize()
+
+    samples = {name: [] for name in operation_names}
+    for sample_index in range(measurement_iterations):
+        rotation = sample_index % len(operation_names)
+        order = operation_names[rotation:] + operation_names[:rotation]
+        for name in order:
+            samples[name].append(
+                _measure_launch_batch(
+                    operations[name],
+                    launches_per_sample=launches_per_sample,
+                )
+            )
+
+    summaries = {
+        name: _latency_summary(samples[name])
+        for name in operation_names
+    }
+    reference_median = summaries["reference"]["median_seconds"]
+    sdpa_median = summaries["sdpa"]["median_seconds"]
+    triton_median = summaries["triton"]["median_seconds"]
+    return {
+        **summaries,
+        "median_speedup": reference_median / triton_median,
+        "median_speedups": {
+            "reference_over_sdpa": reference_median / sdpa_median,
+            "reference_over_triton": reference_median / triton_median,
+            "sdpa_over_triton": sdpa_median / triton_median,
+        },
     }
 
 
@@ -545,6 +949,86 @@ def _gather_case_result(
     }
 
 
+def _attention_case_result(
+    case: SpikeCase,
+    device: torch.device,
+    *,
+    warmup_iterations: int,
+    measurement_iterations: int,
+    launches_per_sample: int,
+) -> dict[str, Any]:
+    accuracy = _attention_accuracy(case, device)
+    if not accuracy["allclose"]:
+        raise RuntimeError(
+            f"{case.shape.name} attention comparison mismatched "
+            f"reference: {accuracy}"
+        )
+
+    reference_cache = case.layer_kv_cache.clone()
+    sdpa_cache = case.layer_kv_cache.clone()
+    triton_cache = case.layer_kv_cache.clone()
+    reference_operator = ReferenceAttentionOperator()
+
+    def reference() -> object:
+        return reference_operator(
+            case.query,
+            case.key,
+            case.value,
+            reference_cache,
+            case.metadata,
+        )
+
+    def sdpa_operation() -> object:
+        return paged_sdpa_attention(
+            case.query,
+            case.key,
+            case.value,
+            sdpa_cache,
+            case.metadata,
+        )
+
+    def triton_operation() -> object:
+        return triton_paged_attention(
+            case.query,
+            case.key,
+            case.value,
+            triton_cache,
+            case.metadata,
+        )
+
+    return {
+        "shape": _shape_document(case.shape),
+        "accuracy": accuracy,
+        "latency": _measure_interleaved(
+            {
+                "reference": reference,
+                "sdpa": sdpa_operation,
+                "triton": triton_operation,
+            },
+            warmup_iterations=warmup_iterations,
+            measurement_iterations=measurement_iterations,
+            launches_per_sample=launches_per_sample,
+        ),
+        "cuda_kernel_profile": {
+            "reference": _profile_cuda_kernels(
+                reference,
+                device,
+                iterations=20,
+            ),
+            "sdpa": _profile_cuda_kernels(
+                sdpa_operation,
+                device,
+                iterations=20,
+            ),
+            "triton": _profile_cuda_kernels(
+                triton_operation,
+                device,
+                iterations=20,
+            ),
+        },
+    }
+
+
 def run_step1(
     *,
     warmup_iterations: int,
@@ -680,17 +1164,98 @@ def run_step2(
     }
 
 
+def run_step3(
+    *,
+    warmup_iterations: int,
+    measurement_iterations: int,
+    launches_per_sample: int,
+    expected_gpu_name: str | None = None,
+) -> dict[str, Any]:
+    """Run fused ragged paged-attention parity and latency cases."""
+
+    if warmup_iterations < 0:
+        raise ValueError("warmup_iterations must be non-negative")
+    if measurement_iterations <= 0:
+        raise ValueError("measurement_iterations must be positive")
+    if launches_per_sample <= 0:
+        raise ValueError("launches_per_sample must be positive")
+    if not torch.cuda.is_available():
+        raise RuntimeError("the Triton paged spike requires a CUDA GPU")
+
+    device = torch.device("cuda", torch.cuda.current_device())
+    gpu_name = torch.cuda.get_device_name(device)
+    _validate_target_gpu(gpu_name, expected_gpu_name)
+    properties = torch.cuda.get_device_properties(device)
+
+    cases = {}
+    for index, shape in enumerate(SPIKE_SHAPES):
+        case = _make_case(
+            shape,
+            device=device,
+            dtype=DTYPE,
+            seed=RANDOM_SEED + index,
+        )
+        cases[shape.name] = _attention_case_result(
+            case,
+            device,
+            warmup_iterations=warmup_iterations,
+            measurement_iterations=measurement_iterations,
+            launches_per_sample=launches_per_sample,
+        )
+
+    return {
+        "schema_version": "micro-vllm.triton-paged-step3.v2",
+        "step": "fused_ragged_paged_attention",
+        "hardware": {
+            "gpu_name": properties.name,
+            "gpu_total_memory_bytes": properties.total_memory,
+            "compute_capability": (
+                f"{properties.major}.{properties.minor}"
+            ),
+        },
+        "runtime": {
+            "python_version": platform.python_version(),
+            "pytorch_version": torch.__version__,
+            "cuda_version": torch.version.cuda,
+            "triton_version": triton.__version__,
+            "random_seed": RANDOM_SEED,
+        },
+        "measurement": {
+            "warmup_iterations": warmup_iterations,
+            "measurement_iterations": measurement_iterations,
+            "launches_per_sample": launches_per_sample,
+            "timer": "cuda_events_over_repeated_launches",
+            "sample_order": "rotating_reference_sdpa_triton",
+            "compared_complete_paths": [
+                "reference",
+                "paged_sdpa",
+                "triton_paged",
+            ],
+            "path_intermediate_gather_tensor": {
+                "reference": True,
+                "paged_sdpa": True,
+                "triton_paged": False,
+            },
+            "triton_request_mapping": (
+                "packed_query_block_gpu_binary_search"
+            ),
+            "triton_attention_accumulation": "fp32_online_softmax",
+        },
+        "cases": cases,
+    }
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--step",
-        choices=("page-write", "page-gather"),
+        choices=("page-write", "page-gather", "paged-attention"),
         default="page-write",
     )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--warmup-iterations", type=int, default=100)
     parser.add_argument("--measurement-iterations", type=int, default=20)
-    parser.add_argument("--launches-per-sample", type=int, default=1000)
+    parser.add_argument("--launches-per-sample", type=int)
     parser.add_argument(
         "--expected-gpu-name",
         help="fail instead of recording results if a different GPU is selected",
@@ -700,11 +1265,24 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    runner = run_step1 if args.step == "page-write" else run_step2
+    runners = {
+        "page-write": run_step1,
+        "page-gather": run_step2,
+        "paged-attention": run_step3,
+    }
+    default_launches_per_sample = {
+        "page-write": 1000,
+        "page-gather": 100,
+        "paged-attention": 10,
+    }
+    runner = runners[args.step]
+    launches_per_sample = args.launches_per_sample
+    if launches_per_sample is None:
+        launches_per_sample = default_launches_per_sample[args.step]
     result = runner(
         warmup_iterations=args.warmup_iterations,
         measurement_iterations=args.measurement_iterations,
-        launches_per_sample=args.launches_per_sample,
+        launches_per_sample=launches_per_sample,
         expected_gpu_name=args.expected_gpu_name,
     )
     output_path: Path = args.output
@@ -717,9 +1295,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         latency = case["latency"]
         reference_us = latency["reference"]["median_seconds"] * 1_000_000
         triton_us = latency["triton"]["median_seconds"] * 1_000_000
+        sdpa_text = ""
+        if "sdpa" in latency:
+            sdpa_us = latency["sdpa"]["median_seconds"] * 1_000_000
+            sdpa_over_triton = latency["median_speedups"][
+                "sdpa_over_triton"
+            ]
+            sdpa_text = (
+                f"sdpa={sdpa_us:.3f} us, "
+                f"sdpa/triton={sdpa_over_triton:.3f}x, "
+            )
         print(
             f"{result['step']} {case_name}: "
             f"reference={reference_us:.3f} us, "
+            f"{sdpa_text}"
             f"triton={triton_us:.3f} us, "
             f"speedup={latency['median_speedup']:.3f}x"
         )

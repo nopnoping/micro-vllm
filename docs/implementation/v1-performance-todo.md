@@ -188,19 +188,20 @@ dense-only Triton core；学习步骤从 batched page write 和 page-address map
 - [x] 第二步实现独立 Triton page-address/gather spike，用多 request、乱序 physical
       block table 和跨 page context 对拍 reference；该 tensor materialization 只用于
       学习地址映射，不进入最终性能路径。
-- [ ] 第三步实现 correctness-first 的 ragged paged-attention kernel：grid 同时覆盖
-      flattened query token 和 query head，kernel 内根据 `query_start_locations`
-      找到 request，直接通过该 request 的 `block_table` 加载 K/V。
-- [ ] 在同一个 kernel 中完成 GQA head mapping、causal/context-start mask 和 FP32
+- [x] 第三步本地实现 correctness-first 的 ragged paged-attention kernel：grid
+      覆盖 packed query block 和 KV head；每个 query block 只属于一个 request，
+      kernel 内根据 `query_start_locations` 二分找到 request，直接通过该 request
+      的 `block_table` 加载 K/V。
+- [x] 在同一个 kernel 中完成 GQA head mapping、causal/context-start mask 和 FP32
       online softmax；不生成 gathered K/V、`repeat_interleave` 结果或 dense mask。
-- [ ] mixed batch 的所有 request 在一个 kernel launch 中执行；Python/C++ 只做一次
+- [x] mixed batch 的所有 request 在一个 kernel launch 中执行；Python/C++ 只做一次
       launch，不允许逐 request 调 SDPA 或 Triton。
-- [ ] correctness-first 版本允许在 GPU 内扫描较小的
-      `query_start_locations` 来完成 flattened-query 到 request 的映射；测量后再比较
-      GPU request-index tensor、二维 padded grid 或 work queue，不能预先增加复杂调度。
-- [ ] page write、独立 gather spike、fused paged attention 分别与 reference 对拍，
+- [ ] correctness-first 版本在 GPU 内二分
+      `query_start_locations`，将 packed query block 映射到 request；测量后再比较
+      GPU request-index tensor、二维 padded grid 或 work queue。
+- [x] page write、独立 gather spike、fused paged attention 分别与 reference 对拍，
       覆盖 decode、prefill、mixed、跨 page、GQA/MQA 和非连续 physical blocks。
-- [ ] 在同一 warmup/measurement loop 中交错测量完整 reference、SDPA spike 和
+- [x] 在同一 warmup/measurement loop 中交错测量完整 reference、SDPA spike 和
       Triton paged path，避免把不同 harness 或 GPU clock state 的绝对时间直接比较。
 - [ ] 只有 fused direct-paged 版本正确且有重复收益时，才注册正式 operator；独立
       gather spike 和中间 tensor 不进入 runtime。
@@ -223,6 +224,32 @@ head dim 和 Qwen3 shape，valid output 与 reference bitwise 一致。RTX 5090 
 `3.103x/3.107x`；两者实际 gather 相同 K/V 数量。该 padded 输出约 2 MiB，只用于
 学习和对拍；Step 3 必须把 page load 直接接到 QK、online softmax 和 PV，不能把
 gather tensor 带入 runtime。
+
+Step 3 对照 vLLM unified Triton attention 后，correctness-first grid 改为
+`(packed_query_blocks, num_kv_heads)`。一个 request 可以拆成多个 program 以保留
+并行度，但每个 query block program 只属于一个 request；program 通过
+`query_start_locations` 的 prefix boundary 二分定位 request。program 内同时处理
+一个 KV head 对应的 GQA query-head group，复用 paged K/V load，并直接完成
+per-query context start、causal bound、FP32 online softmax 和 V accumulation。
+执行路径为一个 batched Triton page-write launch 加一个 batched paged-attention
+launch，不调用 Step 2 gather，也不生成 gathered K/V 或 dense mask。GPU parity
+在 RTX 5090 上覆盖 GQA、MQA、非 2 次幂 head dim、Qwen3 shape、非整除 request
+boundary、单 request 多 query block、跨 page 和非连续 physical blocks，7 项
+Step 1-3 定向测试全部通过。
+
+最终 measurement harness 在每个 warmup iteration 中依次运行完整 reference、
+gathered-SDPA 和 direct-paged Triton，并按 sample 轮转三者顺序。两轮 prefill
+median 分别为 reference `400.299/376.202 us`、SDPA `283.357/275.266 us`、
+Triton `81.301/77.251 us`，即 Triton 相对 SDPA 为 `3.485x/3.563x`。decode
+分别为 reference `411.779/405.474 us`、SDPA `337.011/331.982 us`、Triton
+`83.483/80.843 us`，Triton 相对 SDPA 为 `4.037x/4.106x`。
+
+Profiler 中完整 SDPA/Triton 路径的 device time 也稳定：prefill 为
+`69.354/69.437 us` 对 `31.261/31.205 us`，decode 为
+`61.993/61.745 us` 对 `22.178/22.082 us`。SDPA 实际使用 PyTorch
+memory-efficient CUTLASS kernel；这里测到的收益属于完整 operator 边界，来自同时
+移除 CPU request loop、paged gather、dense mask/GQA expansion 和中间 tensor，
+不能解释成 Triton QK/PV core 单独比 SDPA core 快相同倍数。
 
 ### 5.2 正式 operator
 
@@ -423,3 +450,11 @@ request/context offsets/KV heads，移除了 reference gather 的 CPU request lo
 `.item()` DtoH 同步和多个地址 tensor kernels；两轮 512-token context 结果稳定为
 约 `2.7-3.1x`。下一步不优化或注册 padded gather，而是直接实现 fused ragged
 paged attention。
+
+2026-07-26：Step 3 correctness-first fused ragged paged-attention 已在 RTX
+5090 完成首次 CUDA 编译、7 项 Step 1-3 GPU parity tests 和三路径交错 benchmark。
+packed query-block grid、GPU request 二分、GQA/MQA grouping、per-query mask、
+online softmax、page write side effect 均与 reference 对拍通过；两轮 Triton
+相对 gathered-SDPA 的 prefill speedup 为 `3.485x/3.563x`，decode 为
+`4.037x/4.106x`。feasibility gate 已通过；下一步先 review correctness-first
+kernel 的正式 operator 边界和暂不优化的调度项，再决定注册实现。

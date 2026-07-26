@@ -8,10 +8,14 @@ pytest.importorskip("triton")
 
 from benchmarks.spike_triton_paged import (
     triton_gather_kv_cache,
+    triton_paged_attention,
     triton_write_kv_cache,
 )
 from micro_vllm.attention.attention import AttentionMetadata
-from micro_vllm.attention.operators.reference import write_kv_cache
+from micro_vllm.attention.operators.reference import (
+    ReferenceAttentionOperator,
+    write_kv_cache,
+)
 
 
 def _write_metadata(
@@ -180,3 +184,108 @@ def test_triton_page_gather_matches_ragged_multi_request_reference(
             rtol=0,
             atol=0,
         )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@pytest.mark.parametrize(
+    ("num_query_heads", "num_kv_heads", "head_dim"),
+    [
+        pytest.param(4, 2, 8, id="gqa"),
+        pytest.param(4, 1, 7, id="mqa-masked-head-dimension"),
+        pytest.param(16, 8, 128, id="qwen3-gqa"),
+    ],
+)
+def test_triton_paged_attention_matches_ragged_multi_request_reference(
+    num_query_heads: int,
+    num_kv_heads: int,
+    head_dim: int,
+) -> None:
+    device = torch.device("cuda")
+    block_size = 2
+    with torch.random.fork_rng(
+        devices=(torch.cuda.current_device(),),
+    ):
+        torch.manual_seed(0)
+        query = torch.randn(
+            (6, num_query_heads, head_dim),
+            dtype=torch.float16,
+            device=device,
+        )
+        key = torch.randn(
+            (6, num_kv_heads, head_dim),
+            dtype=torch.float16,
+            device=device,
+        )
+        value = torch.randn(
+            (6, num_kv_heads, head_dim),
+            dtype=torch.float16,
+            device=device,
+        )
+        initial_cache = torch.randn(
+            (2, 6, block_size, num_kv_heads, head_dim),
+            dtype=torch.float16,
+            device=device,
+        )
+    metadata = AttentionMetadata(
+        query_positions=torch.tensor(
+            (0, 1, 2, 3, 4, 2),
+            dtype=torch.int64,
+            device=device,
+        ),
+        query_context_start_positions=torch.tensor(
+            (0, 0, 1, 1, 2, 0),
+            dtype=torch.int64,
+            device=device,
+        ),
+        query_start_locations=torch.tensor(
+            (0, 5, 6),
+            dtype=torch.int64,
+            device=device,
+        ),
+        context_lengths=torch.tensor(
+            (5, 3),
+            dtype=torch.int64,
+            device=device,
+        ),
+        block_table=torch.tensor(
+            (
+                (3, 1, 5),
+                (4, 0, -1),
+            ),
+            dtype=torch.int64,
+            device=device,
+        ),
+        slot_mapping=torch.tensor(
+            (6, 7, 2, 3, 10, 0),
+            dtype=torch.int64,
+            device=device,
+        ),
+        block_size=block_size,
+    )
+    reference_cache = initial_cache.clone()
+    triton_cache = initial_cache.clone()
+
+    expected = ReferenceAttentionOperator()(
+        query,
+        key,
+        value,
+        reference_cache,
+        metadata,
+    )
+    actual = triton_paged_attention(
+        query,
+        key,
+        value,
+        triton_cache,
+        metadata,
+    )
+    torch.cuda.synchronize(device)
+
+    torch.testing.assert_close(actual, expected, atol=5e-2, rtol=5e-2)
+    torch.testing.assert_close(
+        triton_cache,
+        reference_cache,
+        atol=0,
+        rtol=0,
+    )
