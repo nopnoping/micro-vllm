@@ -6,15 +6,15 @@ import torch
 
 pytest.importorskip("triton")
 
-from benchmarks.spike_triton_paged import (
-    triton_gather_kv_cache,
-    triton_paged_attention,
-    triton_write_kv_cache,
-)
+from benchmarks.spike_triton_paged import triton_gather_kv_cache
 from micro_vllm.attention.attention import AttentionMetadata
 from micro_vllm.attention.operators.reference import (
     ReferenceAttentionOperator,
     write_kv_cache,
+)
+from micro_vllm.attention.operators.triton_paged import (
+    TritonPagedAttentionOperator,
+    triton_write_kv_cache,
 )
 
 
@@ -53,6 +53,32 @@ def _write_metadata(
         slot_mapping=slot_mapping,
         block_size=block_size,
     )
+
+
+def test_triton_paged_operator_rejects_cpu_tensors() -> None:
+    token = torch.zeros((1, 1, 16), dtype=torch.float16)
+    cache = torch.zeros((2, 1, 1, 1, 16), dtype=torch.float16)
+    metadata = AttentionMetadata(
+        query_positions=torch.tensor((0,), dtype=torch.int64),
+        query_context_start_positions=torch.tensor((0,), dtype=torch.int64),
+        query_start_locations=torch.tensor((0, 1), dtype=torch.int64),
+        context_lengths=torch.tensor((1,), dtype=torch.int64),
+        block_table=torch.tensor(((0,),), dtype=torch.int64),
+        slot_mapping=torch.tensor((0,), dtype=torch.int64),
+        block_size=1,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="triton_paged attention requires CUDA tensors",
+    ):
+        TritonPagedAttentionOperator()(
+            token,
+            token,
+            token,
+            cache,
+            metadata,
+        )
 
 
 @pytest.mark.gpu
@@ -191,7 +217,9 @@ def test_triton_page_gather_matches_ragged_multi_request_reference(
 @pytest.mark.parametrize(
     ("num_query_heads", "num_kv_heads", "head_dim"),
     [
+        pytest.param(4, 4, 8, id="mha"),
         pytest.param(4, 2, 8, id="gqa"),
+        pytest.param(7, 1, 8, id="gqa-non-power-of-two-group"),
         pytest.param(4, 1, 7, id="mqa-masked-head-dimension"),
         pytest.param(16, 8, 128, id="qwen3-gqa"),
     ],
@@ -273,7 +301,7 @@ def test_triton_paged_attention_matches_ragged_multi_request_reference(
         reference_cache,
         metadata,
     )
-    actual = triton_paged_attention(
+    actual = TritonPagedAttentionOperator()(
         query,
         key,
         value,

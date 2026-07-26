@@ -64,8 +64,8 @@ non-null page utilization and triggered one preemption per measured repetition.
 
 ## Phase 1 SDPA feasibility spike
 
-The non-registered spike in `benchmarks/spike_sdpa.py` reuses the reference
-paged-cache write/gather helpers and measures one Qwen3-0.6B attention layer.
+The `"sdpa"` transition operator reuses the reference paged-cache write/gather
+helpers; `benchmarks/spike_sdpa.py` measures it on one Qwen3-0.6B attention layer.
 It uses 16 query heads, 8 KV heads, head dimension 128, FP16, a 512-token
 context, manual GQA expansion, and an explicit boolean visibility mask. Each
 pair below is `run-1 / run-2`, with 10 warmups and 100 synchronized
@@ -83,10 +83,10 @@ T4 for these masked shapes. The isolated SDPA core produces one Dynamo graph
 with no break. The complete paged path produces four graphs and three breaks
 because the existing gather helper calls `Tensor.item()`.
 
-The repeated benefit is sufficient to proceed to a formal, explicitly selected
-operator. This is an operator-level single-layer measurement, not evidence of
-the final end-to-end Engine speedup; parity and Engine benchmarks remain
-required before calling the backend optimized.
+The repeated benefit justified registering this path as the explicitly selected
+`"sdpa"` transition operator. This is an operator-level single-layer
+measurement, not evidence of the final end-to-end Engine speedup; parity and
+Engine benchmarks remain required before calling the backend optimized.
 
 The active Phase 1 experiment machine changed on 2026-07-24 to an NVIDIA
 GeForce RTX 5090 with 32,607 MiB memory and compute capability 12.0. PyTorch

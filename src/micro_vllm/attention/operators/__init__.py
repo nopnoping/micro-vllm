@@ -7,9 +7,11 @@ from micro_vllm.attention.operators.reference import (
 from micro_vllm.attention.operators.registry import (
     get_attention_operator_class,
 )
+from micro_vllm.attention.operators.sdpa import SDPAAttentionOperator
 
 __all__ = (
     "AttentionOperator",
     "ReferenceAttentionOperator",
+    "SDPAAttentionOperator",
     "get_attention_operator_class",
 )

@@ -156,7 +156,8 @@ operator(
 - [x] 用当前 paged gather 输出验证 `torch.nn.functional.scaled_dot_product_attention`
       在 T4/FP16 上的可用性。
 - [x] 分别测量 prefill 和 decode；记录 PyTorch 实际可用 kernel 和 graph break。
-- [x] spike 不进入 registry，不保留未证明收益的通用抽象。
+- [x] feasibility 阶段先不进入 registry；收益和边界明确后，按后续决策将其注册为
+      `"sdpa"` 过渡型 operator，不将 gathered path 描述为最终 optimized backend。
 - [x] 若 SDPA 在目标 workload 没有可测收益，记录结果并在继续前重新 review direct
       paged kernel/依赖选择，不把无收益实现命名为 optimized backend。
 
@@ -233,9 +234,9 @@ Step 3 对照 vLLM unified Triton attention 后，correctness-first grid 改为
 per-query context start、causal bound、FP32 online softmax 和 V accumulation。
 执行路径为一个 batched Triton page-write launch 加一个 batched paged-attention
 launch，不调用 Step 2 gather，也不生成 gathered K/V 或 dense mask。GPU parity
-在 RTX 5090 上覆盖 GQA、MQA、非 2 次幂 head dim、Qwen3 shape、非整除 request
-boundary、单 request 多 query block、跨 page 和非连续 physical blocks，7 项
-Step 1-3 定向测试全部通过。
+在 RTX 5090 上覆盖 MHA、GQA、7:1 非 2 次幂 head group、MQA、非 2 次幂 head
+dim、Qwen3 shape、非整除 request boundary、单 request 多 query block、跨 page
+和非连续 physical blocks，10 项 Step 1-3/operator 定向测试全部通过。
 
 最终 measurement harness 在每个 warmup iteration 中依次运行完整 reference、
 gathered-SDPA 和 direct-paged Triton，并按 sample 轮转三者顺序。两轮 prefill
@@ -253,30 +254,56 @@ memory-efficient CUTLASS kernel；这里测到的收益属于完整 operator 边
 
 ### 5.2 正式 operator
 
-- [ ] 新增 `TritonPagedAttentionOperator` 并注册为 `"triton_paged"`。
-- [ ] page write 和 fused paged read 共享当前 slot mapping/block table 语义，不复制
+- [x] 新增 `SDPAAttentionOperator` 并注册为 `"sdpa"`；复用 reference page
+      write/gather 和已验证 SDPA preparation，保留其 CPU request loop 语义。
+- [x] 新增 `TritonPagedAttentionOperator` 并注册为 `"triton_paged"`。
+- [x] page write 和 fused paged read 共享当前 slot mapping/block table 语义，不复制
       Scheduler 或 KV cache policy。
-- [ ] Full/SW/Chunked 的可见范围只读取 `AttentionMetadata`，不判断 spec class。
-- [ ] 支持 MHA、GQA 和 MQA；由 query head 直接映射 KV head，不物化展开 K/V。
-- [ ] mask 同时表达 causal upper bound 和每 query 的 context start。
-- [ ] softmax/accumulation 使用与 reference 对拍后确认的稳定精度。
-- [ ] mixed request batch 由一次 Triton launch 并发执行；不在 CPU 逐 request 切分或
+- [x] Full/SW/Chunked 的可见范围只读取 `AttentionMetadata`，不判断 spec class。
+- [x] 支持 MHA、GQA 和 MQA；由 query head 直接映射 KV head，不物化展开 K/V。
+- [x] mask 同时表达 causal upper bound 和每 query 的 context start。
+- [x] softmax/accumulation 使用与 reference 对拍后确认的稳定精度。
+- [x] mixed request batch 由一次 Triton launch 并发执行；不在 CPU 逐 request 切分或
       调用 attention。
-- [ ] CPU reference 路径继续使用 `"reference"`，不要求 optimized operator 成为通用
+- [x] CPU reference 路径继续使用 `"reference"`，不要求 optimized operator 成为通用
       CPU backend。
+
+正式模块位于 `attention/operators/triton_paged.py`。Registry 只在选择
+`"triton_paged"` 时 lazy-import Triton，因此默认 `"reference"` 的 CPU/macOS
+import path 不增加 accelerator dependency；显式在 CPU tensor 上调用 optimized
+operator 会给出可操作错误，不静默 fallback。Step 1/3 benchmark 已删除重复 kernel
+并直接复用正式模块，独立 padded gather 继续只存在于教学 spike。RTX 5090 上
+registry、CPU rejection、page write/gather 和五组 MHA/GQA/MQA attention 定向测试
+共 13 项全部通过。
+
+`attention/operators/sdpa.py` 同时提供注册名 `"sdpa"`，作为从 readable
+reference 到 direct-paged Triton 之间的过渡 backend。原 feasibility benchmark
+和 attention breakdown 已改为复用该正式模块，不再各自保留 SDPA preparation
+副本。它仍执行 page write、paged gather、CPU request slicing、GQA expansion、
+dense mask 和 per-request SDPA，因此可用于配置选择、correctness comparison 和
+fallback 实验，但不属于“单一 optimized GPU operator”的最终目标。
 
 ## 6. Phase 2：parity、fallback 和回归（对应第 4 项）
 
 ### 6.1 Operator-level correctness
 
-- [ ] full prefill：单次与 chunked prefill 对拍 reference。
-- [ ] decode：读取跨多个 physical blocks 的历史并对拍 reference。
-- [ ] chunked prefill：同时读取历史 cache 和当前 chunk。
-- [ ] sliding window：跨 window/block boundary 的 visible positions 一致。
-- [ ] chunked local：跨 aligned chunk boundary 的 visible positions 一致。
+- [x] full prefill：单次与 chunked prefill 对拍 reference。
+- [x] decode：读取跨多个 physical blocks 的历史并对拍 reference。
+- [x] chunked prefill：同时读取历史 cache 和当前 chunk。
+- [x] sliding window：跨 window/block boundary 的 visible positions 一致。
+- [x] chunked local：跨 aligned chunk boundary 的 visible positions 一致。
 - [ ] hybrid：不同 group 共享 page buffers 时，各 layer hidden/logits 一致。
-- [ ] 覆盖 MHA、GQA、MQA、不同 block size、head dimension 和 query length。
+- [x] 覆盖 MHA、GQA、MQA、不同 block size、head dimension 和 query length。
 - [ ] FP16 GPU 使用冻结容差；token-level greedy 结果必须一致。
+
+首组正式 operator semantic parity 使用 `Attention.build_metadata()` 从
+`FullAttentionSpec`、`SlidingWindowSpec(3)` 和 `ChunkedLocalSpec(4)` 生成真实
+per-query visibility。Full 一次 8-token prefill 与 `3+3+1+1` incremental
+prefill/decode 输出一致；bounded specs 在 block size 3、乱序 physical blocks
+`6 -> 1 -> 4` 下跨 window/chunk/page boundary 对拍 reference。KV cache 初始填充
+NaN sentinel，最终 cache side effect exact（含 NaN pattern），证明未读取或覆盖
+未映射 slots。合并 registry、stepwise kernel 和 semantic parity 后，RTX 5090
+定向集合共 16 项通过。
 
 ### 6.2 Engine-level correctness
 

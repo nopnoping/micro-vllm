@@ -28,15 +28,17 @@ from benchmarks.spike_sdpa import (
     SpikeCase,
     _latency_summary,
     _make_case,
-    _prepare_sdpa_inputs,
-    _sdpa_core,
     _shape_document,
     _validate_target_gpu,
-    paged_sdpa_attention,
 )
 from micro_vllm.attention.operators.reference import (
     gather_kv_cache,
     write_kv_cache,
+)
+from micro_vllm.attention.operators.sdpa import (
+    paged_sdpa_attention,
+    prepare_sdpa_inputs as _prepare_sdpa_inputs,
+    sdpa_core as _sdpa_core,
 )
 
 

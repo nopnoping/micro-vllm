@@ -1,4 +1,4 @@
-"""Device-independent checks for the non-registered SDPA feasibility spike."""
+"""Device-independent checks for the registered SDPA transition operator."""
 
 import math
 
@@ -12,9 +12,9 @@ from benchmarks.spike_sdpa import (
     _make_case,
     _validate_target_gpu,
     _visible_mask,
-    paged_sdpa_attention,
 )
 from micro_vllm.attention.operators.reference import ReferenceAttentionOperator
+from micro_vllm.attention.operators.sdpa import SDPAAttentionOperator
 
 
 def test_spike_shapes_match_frozen_qwen_prefill_and_decode() -> None:
@@ -78,7 +78,7 @@ def test_paged_sdpa_matches_reference_for_tiny_gqa_cases() -> None:
             case.layer_kv_cache.clone(),
             case.metadata,
         )
-        actual = paged_sdpa_attention(
+        actual = SDPAAttentionOperator()(
             case.query,
             case.key,
             case.value,
