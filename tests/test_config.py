@@ -112,9 +112,45 @@ def test_llm_config_groups_user_configuration() -> None:
     assert config.model_config.metadata is None
     assert config.model_config.device == "cpu"
     assert config.model_config.attention_operator == "reference"
+    assert config.model_config.enable_cuda_graph is False
     assert config.scheduler_config.max_model_len == 2048
     assert config.scheduler_config.max_num_seqs == 8
     assert config.cache_config.block_size == 16
+
+
+def test_cuda_graph_requires_supported_execution_configuration() -> None:
+    with pytest.raises(ValueError, match="requires a CUDA device"):
+        ModelConfig(
+            model="org/model",
+            device="cpu",
+            attention_operator="triton_paged",
+            enable_cuda_graph=True,
+        )
+    with pytest.raises(ValueError, match="attention_operator='triton_paged'"):
+        ModelConfig(
+            model="org/model",
+            device="cuda",
+            attention_operator="reference",
+            enable_cuda_graph=True,
+        )
+    with pytest.raises(ValueError, match="requires torch.float16"):
+        ModelConfig(
+            model="org/model",
+            device="cuda",
+            dtype=torch.bfloat16,
+            attention_operator="triton_paged",
+            enable_cuda_graph=True,
+        )
+
+    config = ModelConfig(
+        model="org/model",
+        device="cuda",
+        dtype=torch.float16,
+        attention_operator="triton_paged",
+        enable_cuda_graph=True,
+    )
+
+    assert config.enable_cuda_graph is True
 
 
 def test_llm_config_can_be_updated_during_runtime() -> None:

@@ -35,6 +35,8 @@ def _write_kv_cache_kernel(
     dim_mask = dim_offsets < HEAD_DIM
 
     physical_slot = tl.load(slot_mapping_ptr + token_index)
+    valid_slot = physical_slot >= 0
+    physical_slot = tl.where(valid_slot, physical_slot, 0)
     physical_block = physical_slot // BLOCK_SIZE
     block_offset = physical_slot % BLOCK_SIZE
 
@@ -57,11 +59,12 @@ def _write_kv_cache_kernel(
 
     key = tl.load(key_ptr + key_offsets, mask=dim_mask)
     value = tl.load(value_ptr + value_offsets, mask=dim_mask)
-    tl.store(cache_ptr + cache_offsets, key, mask=dim_mask)
+    store_mask = valid_slot & dim_mask
+    tl.store(cache_ptr + cache_offsets, key, mask=store_mask)
     tl.store(
         cache_ptr + cache_plane_stride + cache_offsets,
         value,
-        mask=dim_mask,
+        mask=store_mask,
     )
 
 
@@ -337,7 +340,7 @@ def triton_paged_attention(
         layer_kv_cache,
         metadata,
     )
-    output = torch.empty_like(query)
+    output = torch.zeros_like(query)
     num_query_heads = query.shape[1]
     num_kv_heads = key.shape[1]
     head_dim = query.shape[2]

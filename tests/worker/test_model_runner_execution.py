@@ -73,6 +73,33 @@ class FakeModel(torch.nn.Module):
         ).to(torch.float32)
 
 
+class GraphableFakeModel(torch.nn.Module):
+    """Small CUDA model for graph capture/replay coverage."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.layer_attentions = (
+            Attention(FullAttentionSpec(), "triton_paged"),
+        )
+        self.config = make_model_config()
+        self.embedding = torch.nn.Embedding(64, 64)
+        with torch.no_grad():
+            self.embedding.weight.copy_(torch.eye(64))
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        layer_kv_caches: tuple[torch.Tensor, ...],
+        layer_attention_metadata: tuple[AttentionMetadata, ...],
+    ) -> torch.Tensor:
+        del positions, layer_kv_caches, layer_attention_metadata
+        return self.embedding(input_ids)
+
+    def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return hidden_states
+
+
 def make_model_config() -> ModelConfig:
     return ModelConfig(
         model="unused",
@@ -382,6 +409,82 @@ def make_request(
         ),
         sample_index=0 if requires_sampling else None,
     )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_cuda_graph_captures_and_replays_a_padded_mixed_batch() -> None:
+    model = GraphableFakeModel()
+    _MODEL_INITIALIZERS.append(lambda: model)
+    runner = ModelRunner(
+        LLMConfig(
+            model_config=ModelConfig(
+                model="unused",
+                device="cuda",
+                dtype=torch.float16,
+                attention_operator="triton_paged",
+                enable_cuda_graph=True,
+            ),
+            cache_config=CacheConfig(block_size=2, num_blocks=8),
+            scheduler_config=SchedulerConfig(
+                max_num_batched_tokens=4,
+                max_num_seqs=2,
+                max_model_len=8,
+            ),
+        )
+    )
+    runner.initialize_model()
+    runner.initialize_kv_cache()
+    execution = runner._cuda_graph_executions[4]
+
+    first_output = runner.execute(
+        SchedulerOutput(
+            (
+                make_request(
+                    "first",
+                    (7,),
+                    num_computed_tokens=1,
+                    requires_sampling=True,
+                    block_ids=(0,),
+                ),
+                make_request(
+                    "second",
+                    (11, 12),
+                    num_computed_tokens=0,
+                    requires_sampling=True,
+                    block_ids=(1,),
+                ),
+            )
+        )
+    )
+    second_output = runner.execute(
+        SchedulerOutput(
+            (
+                make_request(
+                    "first",
+                    (13,),
+                    num_computed_tokens=2,
+                    requires_sampling=True,
+                    block_ids=(0, 2),
+                ),
+                make_request(
+                    "second",
+                    (17, 19),
+                    num_computed_tokens=0,
+                    requires_sampling=True,
+                    block_ids=(1,),
+                ),
+            )
+        )
+    )
+
+    assert execution is not None
+    assert runner._cuda_graph_executions[4] is execution
+    assert [sample.token_id for sample in first_output.sampled_tokens] == [7, 12]
+    assert [sample.token_id for sample in second_output.sampled_tokens] == [13, 19]
+    assert execution.model_input.input_ids.tolist() == [13, 17, 19, 0]
+    metadata = execution.model_input.layer_attention_metadata[0]
+    assert metadata.query_start_locations.tolist() == [0, 1, 3]
+    assert metadata.slot_mapping[-1].item() == -1
 
 
 def test_mixed_batch_selects_sampling_rows_and_preserves_plan() -> None:

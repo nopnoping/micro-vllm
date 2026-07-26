@@ -66,6 +66,62 @@ class ModelInput:
         object.__setattr__(self, "request_ids", tuple(self.request_ids))
 
 
+@dataclass(slots=True)
+class _CudaGraphExecution:
+    """One captured mixed-batch capacity and its fixed-address storage."""
+
+    graph: torch.cuda.CUDAGraph
+    model_input: ModelInput
+    hidden_states: torch.Tensor
+    null_block_id: int
+
+    def copy_input(self, model_input: ModelInput) -> None:
+        """Copy an actual mixed batch and pad the remaining capacity."""
+
+        target = self.model_input
+        num_tokens = model_input.input_ids.numel()
+        num_requests = len(model_input.request_ids)
+
+        target.input_ids.zero_()
+        target.input_ids[:num_tokens].copy_(model_input.input_ids)
+        target.positions.zero_()
+        target.positions[:num_tokens].copy_(model_input.positions)
+
+        target_metadata = target.layer_attention_metadata[0]
+        source_metadata = model_input.layer_attention_metadata[0]
+        target_metadata.query_start_locations.fill_(num_tokens)
+        target_metadata.query_start_locations[: num_requests + 1].copy_(
+            source_metadata.query_start_locations
+        )
+        target_metadata.context_lengths.zero_()
+        target_metadata.context_lengths[:num_requests].copy_(
+            source_metadata.context_lengths
+        )
+
+        copied: set[int] = set()
+        for target_layer, source_layer in zip(
+            target.layer_attention_metadata,
+            model_input.layer_attention_metadata,
+            strict=True,
+        ):
+            if id(target_layer) in copied:
+                continue
+            copied.add(id(target_layer))
+            target_layer.query_context_start_positions.zero_()
+            target_layer.query_context_start_positions[:num_tokens].copy_(
+                source_layer.query_context_start_positions
+            )
+            target_layer.block_table.fill_(self.null_block_id)
+            target_layer.block_table[
+                :num_requests,
+                : source_layer.block_table.shape[1],
+            ].copy_(source_layer.block_table)
+            target_layer.slot_mapping.fill_(-1)
+            target_layer.slot_mapping[:num_tokens].copy_(
+                source_layer.slot_mapping
+            )
+
+
 class ModelRunner:
     """Own model initialization and execute plans against physical KV cache."""
 
@@ -73,6 +129,7 @@ class ModelRunner:
         "_available_kv_cache_memory_bytes",
         "_block_size",
         "_config",
+        "_cuda_graph_executions",
         "_device",
         "_dtype",
         "_is_shutdown",
@@ -93,6 +150,7 @@ class ModelRunner:
         self._kv_cache_layout: KVCacheLayout | None = None
         self._kv_cache_buffers: tuple[torch.Tensor, ...] | None = None
         self._config = config
+        self._cuda_graph_executions: dict[int, _CudaGraphExecution] = {}
         self._device = torch.device(config.model_config.device)
         self._dtype = config.model_config.dtype
         self._block_size = config.cache_config.block_size
@@ -143,8 +201,13 @@ class ModelRunner:
         )
         self._config.cache_config.num_blocks = num_blocks
         kv_cache_buffers = self._allocate_kv_cache(layout)
+        cuda_graph_executions = self._capture_cuda_graphs(
+            layout,
+            kv_cache_buffers,
+        )
         self._kv_cache_layout = layout
         self._kv_cache_buffers = kv_cache_buffers
+        self._cuda_graph_executions = cuda_graph_executions
         self._available_kv_cache_memory_bytes = available_memory_bytes
         trace_sink = self._config.trace_sink
         if trace_sink is not None:
@@ -177,24 +240,29 @@ class ModelRunner:
         kv_cache_buffers = self._kv_cache_buffers
         if model is None or kv_cache_buffers is None:
             raise RuntimeError("model runner is not initialized")
-        model_input = self._build_model_input(
-            plan,
-            cast(KVCacheLayout, self._kv_cache_layout).num_blocks - 1,
+        null_block_id = (
+            cast(KVCacheLayout, self._kv_cache_layout).num_blocks - 1
+        )
+        model_input = self._build_model_input(plan, null_block_id)
+        graph_execution = self._find_cuda_graph(
+            model_input.input_ids.numel()
         )
         layer_kv_caches = self._bind_layer_kv_caches(kv_cache_buffers)
 
         with torch.inference_mode():
-            hidden_states = model(
-                model_input.input_ids,
-                model_input.positions,
-                layer_kv_caches,
-                model_input.layer_attention_metadata,
-            )
-            sampling_hidden_states = hidden_states.index_select(
-                0,
+            if graph_execution is None:
+                hidden_states = self._forward_model(
+                    model_input,
+                    layer_kv_caches,
+                )
+            else:
+                graph_execution.copy_input(model_input)
+                graph_execution.graph.replay()
+                hidden_states = graph_execution.hidden_states
+            logits = self._compute_logits(
+                hidden_states,
                 model_input.sampling_row_indices,
             )
-            logits = model.compute_logits(sampling_hidden_states)
 
         sampling_request_ids = tuple(
             request.request_id
@@ -218,11 +286,222 @@ class ModelRunner:
             sample_indices,
         )
 
+    def _run_model(
+        self,
+        model_input: ModelInput,
+        layer_kv_caches: tuple[torch.Tensor, ...],
+    ) -> torch.Tensor:
+        """Run one eager model-to-logits execution."""
+
+        hidden_states = self._forward_model(model_input, layer_kv_caches)
+        return self._compute_logits(
+            hidden_states,
+            model_input.sampling_row_indices,
+        )
+
+    def _forward_model(
+        self,
+        model_input: ModelInput,
+        layer_kv_caches: tuple[torch.Tensor, ...],
+    ) -> torch.Tensor:
+        """Run the model section captured by CUDA Graph."""
+
+        model = cast(_RunnerModel, self._model)
+        return model(
+            model_input.input_ids,
+            model_input.positions,
+            layer_kv_caches,
+            model_input.layer_attention_metadata,
+        )
+
+    def _compute_logits(
+        self,
+        hidden_states: torch.Tensor,
+        sampling_row_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        """Select actual sampling rows outside CUDA Graph."""
+
+        model = cast(_RunnerModel, self._model)
+        sampling_hidden_states = hidden_states.index_select(
+            0,
+            sampling_row_indices,
+        )
+        return model.compute_logits(sampling_hidden_states)
+
+    def _find_cuda_graph(
+        self,
+        num_tokens: int,
+    ) -> _CudaGraphExecution | None:
+        """Return the smallest captured token capacity that fits the batch."""
+
+        if num_tokens == 0:
+            return None
+        for graph_size in sorted(self._cuda_graph_executions):
+            if num_tokens <= graph_size:
+                return self._cuda_graph_executions[graph_size]
+        return None
+
+    def _capture_cuda_graphs(
+        self,
+        layout: KVCacheLayout,
+        kv_cache_buffers: tuple[torch.Tensor, ...],
+    ) -> dict[int, _CudaGraphExecution]:
+        """Capture mixed-batch token capacities during initialization."""
+
+        if not self._config.model_config.enable_cuda_graph:
+            return {}
+
+        layer_kv_caches = self._bind_layer_kv_caches(kv_cache_buffers)
+        pool = torch.cuda.graph_pool_handle()
+        executions: dict[int, _CudaGraphExecution] = {}
+        for num_tokens in reversed(self._cuda_graph_sizes()):
+            num_requests = min(
+                num_tokens,
+                self._config.scheduler_config.max_num_seqs,
+            )
+            model_input = self._make_cuda_graph_input(
+                num_tokens,
+                num_requests,
+                layout.num_blocks - 1,
+            )
+            executions[num_tokens] = self._capture_cuda_graph(
+                model_input,
+                layer_kv_caches,
+                pool,
+                layout.num_blocks - 1,
+            )
+        return executions
+
+    def _cuda_graph_sizes(self) -> tuple[int, ...]:
+        """Use power-of-two token buckets plus the configured maximum."""
+
+        max_tokens = self._config.scheduler_config.max_num_batched_tokens
+        sizes: list[int] = []
+        size = 1
+        while size < max_tokens:
+            sizes.append(size)
+            size *= 2
+        sizes.append(max_tokens)
+        return tuple(sizes)
+
+    def _make_cuda_graph_input(
+        self,
+        num_tokens: int,
+        num_requests: int,
+        null_block_id: int,
+    ) -> ModelInput:
+        """Create one fully padded mixed-batch input with fixed capacities."""
+
+        positions = torch.zeros(
+            num_tokens,
+            dtype=torch.int64,
+            device=self._device,
+        )
+        query_start_locations = torch.zeros(
+            num_requests + 1,
+            dtype=torch.int64,
+            device=self._device,
+        )
+        context_lengths = torch.zeros(
+            num_requests,
+            dtype=torch.int64,
+            device=self._device,
+        )
+        block_table_width = math.ceil(
+            self._config.scheduler_config.max_model_len
+            / self._block_size
+        )
+        topology = cast(KVCacheTopology, self._kv_cache_topology)
+        group_metadata = tuple(
+            AttentionMetadata(
+                query_positions=positions,
+                query_context_start_positions=torch.zeros_like(positions),
+                query_start_locations=query_start_locations,
+                context_lengths=context_lengths,
+                block_table=torch.full(
+                    (num_requests, block_table_width),
+                    null_block_id,
+                    dtype=torch.int64,
+                    device=self._device,
+                ),
+                slot_mapping=torch.full(
+                    (num_tokens,),
+                    -1,
+                    dtype=torch.int64,
+                    device=self._device,
+                ),
+                block_size=self._block_size,
+            )
+            for _ in topology.groups
+        )
+        layer_metadata = [group_metadata[0]] * topology.num_layers
+        for metadata, group in zip(
+            group_metadata,
+            topology.groups,
+            strict=True,
+        ):
+            for layer_index in group.layer_indices:
+                layer_metadata[layer_index] = metadata
+
+        return ModelInput(
+            input_ids=torch.zeros(
+                num_tokens,
+                dtype=torch.int64,
+                device=self._device,
+            ),
+            positions=positions,
+            layer_attention_metadata=tuple(layer_metadata),
+            request_ids=tuple(
+                f"__cuda_graph__-{index}"
+                for index in range(num_requests)
+            ),
+            sampling_row_indices=torch.empty(
+                0,
+                dtype=torch.int64,
+                device=self._device,
+            ),
+        )
+
+    def _capture_cuda_graph(
+        self,
+        model_input: ModelInput,
+        layer_kv_caches: tuple[torch.Tensor, ...],
+        pool: tuple[int, int],
+        null_block_id: int,
+    ) -> _CudaGraphExecution:
+        """Warm up and capture one padded mixed-batch execution."""
+
+        current_stream = torch.cuda.current_stream(self._device)
+        warmup_stream = torch.cuda.Stream(device=self._device)
+        warmup_stream.wait_stream(current_stream)
+        with torch.cuda.stream(warmup_stream):
+            for _ in range(3):
+                warmup_hidden_states = self._forward_model(
+                    model_input,
+                    layer_kv_caches,
+                )
+        current_stream.wait_stream(warmup_stream)
+        del warmup_hidden_states
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=pool):
+            hidden_states = self._forward_model(
+                model_input,
+                layer_kv_caches,
+            )
+        return _CudaGraphExecution(
+            graph=graph,
+            model_input=model_input,
+            hidden_states=hidden_states,
+            null_block_id=null_block_id,
+        )
+
     # Resource release
 
     def shutdown(self) -> None:
         """Drop model and cache references owned by the runner."""
 
+        self._cuda_graph_executions = {}
         self._kv_cache_buffers = None
         self._kv_cache_layout = None
         self._kv_cache_topology = None
