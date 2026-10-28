@@ -31,15 +31,30 @@ class ModelConfig:
     token: str | bool | None = None
     local_files_only: bool = False
     attention_operator: str = "reference"
+    enable_cuda_graph: bool = False
     device: torch.device | str = "cuda"
     dtype: torch.dtype = torch.float16
     metadata: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
-        if torch.device(self.device).type not in {"cpu", "cuda"}:
+        device_type = torch.device(self.device).type
+        if device_type not in {"cpu", "cuda"}:
             raise ValueError("device must be 'cpu' or 'cuda'")
         if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
             raise ValueError("dtype must be float32, float16, or bfloat16")
+        if self.enable_cuda_graph:
+            if device_type != "cuda":
+                raise ValueError("CUDA Graph execution requires a CUDA device")
+            if self.attention_operator != "triton_paged":
+                raise ValueError(
+                    "CUDA Graph execution currently requires "
+                    "attention_operator='triton_paged'"
+                )
+            if self.dtype != torch.float16:
+                raise ValueError(
+                    "CUDA Graph execution with triton_paged currently "
+                    "requires torch.float16"
+                )
         if self.metadata is not None:
             self.set_metadata(self.metadata)
 

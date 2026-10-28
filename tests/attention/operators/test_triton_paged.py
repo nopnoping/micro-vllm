@@ -177,6 +177,78 @@ def test_full_prefill_and_chunked_decode_match_reference() -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_mixed_graph_padding_does_not_write_cache_or_return_garbage() -> None:
+    device = torch.device("cuda")
+    query, key, value, initial_cache = _make_inputs(4, device)
+
+    expected_cache = initial_cache.clone()
+    expected = _run_chunks(
+        Attention(FullAttentionSpec(), "reference"),
+        query[:3],
+        key[:3],
+        value[:3],
+        expected_cache,
+        ((0, 3),),
+    )
+
+    block_table = torch.tensor(
+        (BLOCK_TABLE, (0, 0, 0)),
+        dtype=torch.int64,
+        device=device,
+    )
+    actual_cache = initial_cache.clone()
+    attention = Attention(FullAttentionSpec(), "triton_paged")
+    metadata = attention.build_metadata(
+        query_positions=torch.tensor(
+            (0, 1, 2, 0),
+            dtype=torch.int64,
+            device=device,
+        ),
+        query_start_locations=torch.tensor(
+            (0, 3, 3),
+            dtype=torch.int64,
+            device=device,
+        ),
+        context_lengths=torch.tensor(
+            (3, 0),
+            dtype=torch.int64,
+            device=device,
+        ),
+        block_table=block_table,
+        slot_mapping=torch.tensor(
+            (
+                BLOCK_TABLE[0] * BLOCK_SIZE,
+                BLOCK_TABLE[0] * BLOCK_SIZE + 1,
+                BLOCK_TABLE[0] * BLOCK_SIZE + 2,
+                -1,
+            ),
+            dtype=torch.int64,
+            device=device,
+        ),
+        block_size=BLOCK_SIZE,
+    )
+
+    actual = attention(
+        query,
+        key,
+        value,
+        actual_cache,
+        metadata,
+    )
+
+    torch.testing.assert_close(actual[:3], expected, atol=ATOL, rtol=RTOL)
+    torch.testing.assert_close(actual[3], torch.zeros_like(actual[3]))
+    torch.testing.assert_close(
+        actual_cache,
+        expected_cache,
+        atol=0,
+        rtol=0,
+        equal_nan=True,
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
 @pytest.mark.parametrize(
     "attention_spec",
     [
